@@ -318,14 +318,21 @@ Todas las terminales acceden al POS a través del Servidor Local de Sucursal:
 
 | Terminal | URL de Acceso | Dispositivo |
 |---|---|---|
-| T6 (Servidor) | `http://192.168.1.117:5000/?terminal=T6` | Mini PC servidor + monitor táctil (servidor y terminal) |
-| T5 | `http://192.168.1.117:5000/?terminal=T5` | Mini PC + monitor táctil (LAN) |
-| T4 | `http://192.168.1.117:5000/?terminal=T4` | Mini PC + monitor táctil (LAN) |
-| T3 | `http://192.168.1.117:5000/?terminal=T3` | Mini PC + monitor táctil (LAN) |
-| T2 | `http://192.168.1.117:5000/?terminal=T2` | Mini PC + monitor táctil (LAN) |
-| T1 (CAJA) | `http://192.168.1.117:5000/?terminal=CAJA` | Punto de cobro principal (LAN) |
+| T6 (Servidor) | `http://192.168.1.124:5000/?terminal=T6` | Mini PC servidor + monitor táctil (servidor y terminal) |
+| T5 | `http://192.168.1.124:5000/?terminal=T5` | Mini PC + monitor táctil (LAN) |
+| T4 | `http://192.168.1.124:5000/?terminal=T4` | Mini PC + monitor táctil (LAN) |
+| T3 | `http://192.168.1.124:5000/?terminal=T3` | Mini PC + monitor táctil (LAN) |
+| T2 | `http://192.168.1.124:5000/?terminal=T2` | Mini PC + monitor táctil (LAN) |
+| T1 (CAJA) | `http://192.168.1.124:5000/?terminal=CAJA` | Punto de cobro principal (LAN) |
 
-**Nota:** La IP `192.168.1.117` corresponde al Servidor Local de Sucursal. Si cambia la IP del servidor (por DHCP o reconfiguración de red), estas URLs deberán actualizarse en los accesos directos de cada terminal.
+**Nota:** La IP `192.168.1.124` está configurada como **IP estática directamente en el adaptador Ethernet de Windows** (InterfaceIndex 5), con gateway `192.168.1.1` y DNS `192.168.1.1` + `8.8.8.8`. Esta configuración es independiente del router (que no permite reservar IPs por DHCP) y garantiza que la IP no cambie tras apagones. Si por alguna razón se pierde la configuración estática (reinstalación de Windows, reset del adaptador), restaurar con:
+```powershell
+# Ejecutar como Administrador:
+Remove-NetIPAddress -InterfaceIndex 5 -AddressFamily IPv4 -Confirm:$false
+Remove-NetRoute -InterfaceIndex 5 -DestinationPrefix "0.0.0.0/0" -Confirm:$false
+New-NetIPAddress -InterfaceIndex 5 -IPAddress 192.168.1.124 -PrefixLength 24 -DefaultGateway 192.168.1.1
+Set-DnsClientServerAddress -InterfaceIndex 5 -ServerAddresses @("192.168.1.1","8.8.8.8")
+```
 
 ---
 
@@ -781,6 +788,91 @@ const apiHost = CONFIG.API_BASE_URL.replace(/\/api\/v1$/, '');
 - **PROHIBIDO** construir URLs de API manualmente con `window.location.hostname + ':5001'` o cualquier otra combinación de host+puerto. Siempre derivar desde `CONFIG.API_BASE_URL` (de `apps/pos/config.js`).
 - **OBLIGATORIO** que todo servicio auxiliar del frontend (monitores de red, GPS trackers, sincronización offline) derive su URL de API desde la misma fuente de verdad que usa el resto de la aplicación (`CONFIG`).
 - **LECCIÓN:** Cuando una parte de la app funciona (datos cargan) pero otra no (monitor de red dice offline), buscar **inconsistencias en la construcción de URLs** entre los diferentes servicios del frontend. La duplicación de lógica de resolución de URLs es una violación del principio DRY que causa bugs difíciles de diagnosticar.
+
+### 16.7 Caída por Apagón: Docker Zombi, wslrelay y Pérdida de IP (08/Agosto/2026)
+
+**Terminal afectada:** Todas (servidor completo).
+**Síntoma:** Tras un corte de energía eléctrica, al volver la luz el servidor encendió normalmente pero el ERP no cargaba en ningún navegador. Los contenedores Docker aparecían como "Running" pero el frontend devolvía errores.
+
+**Diagnóstico — Cuádruple Causa Raíz (cadena de fallos post-apagón):**
+
+1. **Error de I/O en el filesystem del contenedor frontend:** El apagón abrupto corrompió el filesystem montado del contenedor `rderico-pos-dev`. Vite crasheó con `FSWatcher._handleError: errno: -5, code: 'EIO', syscall: 'stat'`. Aunque Docker reinició el contenedor automáticamente (`restart: always`), el volumen anónimo de `node_modules` quedó en estado inconsistente — Vite reportaba "ready" en los logs pero **no escuchaba en ningún puerto** (conexión rechazada desde dentro del contenedor).
+
+2. **`wslrelay.exe` secuestrando el puerto 5000 en IPv6:** Después del reinicio, el proceso `wslrelay.exe` (parte de WSL/Docker Desktop) se levantó antes que Docker y tomó el puerto `5000` en `[::1]:5000` (IPv6 loopback). Cuando los navegadores o herramientas intentaban conectar a `localhost:5000`, Windows resolvía a IPv6 primero y conectaba al `wslrelay` (que devolvía 404) en lugar de al proxy de Docker (que escuchaba en `0.0.0.0:5000` IPv4). **Dentro del contenedor**, `wget http://127.0.0.1:3000/` devolvía el HTML correctamente — confirmando que Vite funcionaba pero la petición nunca llegaba desde el host.
+
+3. **Docker Desktop cambió a Windows Containers:** Durante el proceso de diagnóstico, al ejecutar `wsl --shutdown` para reiniciar el subsistema WSL, Docker Desktop quedó en un estado inconsistente. Al reabrirse, su archivo de configuración `%APPDATA%\Docker\settings-store.json` tenía `"UseWindowsContainers": true`, lo que hacía que Docker intentara usar **Hyper-V** (no habilitado en el servidor) en lugar de WSL2. Docker mostraba el error: *"Docker Desktop - Hyper-V not enabled"*.
+
+4. **Cambio de IP por DHCP:** El router (ZTE F6201B de Megacable, sin opción de reserva DHCP accesible) reasignó la IP del servidor de `192.168.1.124` a `192.168.1.27` tras el apagón. Todos los accesos directos de las terminales apuntaban a la IP anterior y mostraban `ERR_CONNECTION_TIMED_OUT`.
+
+**Línea de Tiempo del Incidente:**
+```
+T=0        Corte de energía eléctrica. Servidor se apaga abruptamente.
+
+T=?        Regresa la luz. Servidor enciende. Docker Desktop arranca con restart:always.
+           - rderico-pos-dev: Vite crashea por EIO, se reinicia pero node_modules corrupto.
+           - wslrelay.exe toma [::1]:5000 antes que Docker.
+           - Router asigna IP 192.168.1.27 en vez de 192.168.1.124.
+
+T+20min    Usuario reporta: "el navegador no abre el ERP".
+
+T+25min    Diagnóstico: contenedores "Up" pero puerto 5000 secuestrado por wslrelay.
+           Se mata wslrelay (PID 15472). Se reconstruyen contenedores.
+
+T+35min    wsl --shutdown desencadena cambio a Windows Containers.
+           Docker Desktop muestra error de Hyper-V.
+
+T+45min    Se corrige settings-store.json: UseWindowsContainers = false.
+           Docker Desktop reinicia con WSL2. Contenedores levantan.
+           Nuevo wslrelay (PID 22332) vuelve a tomar [::1]:5000. Se mata.
+
+T+50min    curl.exe confirma HTTP 200 desde 127.0.0.1:5000.
+           Se descubre que IP cambió a 192.168.1.27.
+           Se configura IP estática 192.168.1.124 en adaptador Ethernet de Windows.
+
+T+55min    ERP operativo en todas las terminales.
+```
+
+**Soluciones Aplicadas:**
+
+1. **wslrelay eliminado:** `taskkill /F /PID <pid_wslrelay>`. Se identifica buscando procesos en `[::1]:5000` con `netstat -ano | findstr ":5000"` y verificando con `Get-Process -Id <PID>`.
+
+2. **Docker Desktop restaurado a Linux Containers:** Se editó `%APPDATA%\Docker\settings-store.json` cambiando `"UseWindowsContainers": false`. Se reinició Docker Desktop.
+
+3. **IP estática configurada en Windows:** Se asignó `192.168.1.124` directamente en el adaptador Ethernet (ver sección 3.4.5 para el comando de restauración).
+
+4. **Contenedores reconstruidos:** `docker compose down -v && docker compose up -d --build` para eliminar volúmenes anónimos corruptos (los datos de negocio en `ERP-R-DE-RICO-DATA/` no se tocan).
+
+**Procedimiento de Recuperación Post-Apagón (checklist para futuros incidentes):**
+
+```
+1. Verificar que Docker Desktop está en modo Linux Containers:
+   - Revisar %APPDATA%\Docker\settings-store.json → UseWindowsContainers = false
+   - Si muestra error de Hyper-V, corregir el JSON y reiniciar Docker Desktop.
+
+2. Verificar que no hay wslrelay secuestrando puertos:
+   - netstat -ano | findstr ":5000"
+   - Si hay un PID diferente al de Docker en [::1]:5000, matarlo con taskkill /F /PID <PID>
+
+3. Verificar IP del servidor:
+   - ipconfig | findstr "IPv4"
+   - Si no es 192.168.1.124, restaurar con los comandos de la sección 3.4.5.
+
+4. Reconstruir contenedores si Vite no responde:
+   - docker compose down -v
+   - docker compose up -d --build
+   - Esperar ~30 segundos y verificar con: curl.exe http://127.0.0.1:5000/
+
+5. Verificar que el ERP carga:
+   - curl.exe http://192.168.1.124:5000/?terminal=T6
+   - Debe devolver HTML con "<title>R de Rico - ERP Local</title>"
+```
+
+**Reglas Arquitectónicas Derivadas:**
+- **OBLIGATORIO** verificar el estado de Docker Desktop (Linux vs Windows Containers) después de cualquier apagón o reinicio forzado del servidor. El cambio silencioso a Windows Containers es un fallo conocido de Docker Desktop en Windows.
+- **OBLIGATORIO** verificar con `netstat -ano | findstr ":5000"` que no haya procesos `wslrelay.exe` secuestrando puertos después de un reinicio. Este proceso es parte de la infraestructura WSL/Docker pero puede entrar en estado zombi tras apagones.
+- **PROHIBIDO** ejecutar `wsl --shutdown` mientras Docker Desktop está corriendo, ya que puede causar la pérdida de la configuración del backend (WSL2 → Windows Containers) y dejar Docker inoperante.
+- **IMPORTANTE:** La IP estática `192.168.1.124` está configurada en el adaptador Ethernet de Windows (no en el router). Si se reinstala Windows o se resetea la configuración de red, se debe restaurar manualmente (ver sección 3.4.5).
+- **NOTA:** `curl.exe` (el binario real) es la herramienta confiable para verificar conectividad HTTP en Windows. PowerShell `Invoke-WebRequest` puede dar falsos negativos (reportar 404) debido a diferencias en la resolución de IPv4/IPv6.
 
 ---
 
