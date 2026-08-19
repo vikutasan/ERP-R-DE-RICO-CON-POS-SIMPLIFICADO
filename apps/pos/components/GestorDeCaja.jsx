@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { cashService, securityService } from '../services/cashService';
 import { CorteTicketTemplate } from './CorteTicketTemplate';
+import { CONFIG } from '../config';
 
 // ─── Componentes de UI reutilizables ─────────────────────────────────────────
 
@@ -95,6 +96,13 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
     const [fisicoCash, setFisicoCash] = useState('');
     const [fisicoCredito, setFisicoCredito] = useState('');
     const [fisicoDebito, setFisicoDebito] = useState('');
+
+    // Estado: Contexto diario post-cierre (no bloqueante)
+    const [showDailyContext, setShowDailyContext] = useState(false);
+    const [dailyContextSaved, setDailyContextSaved] = useState(false);
+    const [ctxWeather, setCtxWeather] = useState(null);
+    const [ctxAtypical, setCtxAtypical] = useState(false);
+    const [ctxNotes, setCtxNotes] = useState('');
 
     // Estado general
     const [cargando, setCargando] = useState(false);
@@ -339,6 +347,7 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
             setConfirmandoCierre(false);
             setResumen(resultado.resumen);
             onCajaDeshabilitada();
+            setShowDailyContext(true); // Mostrar popup de contexto diario
             
             // Disparar impresión automática del corte
             setTimeout(handlePrintCorte, 500);
@@ -348,6 +357,30 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
         } finally {
             setCargando(false);
         }
+    };
+
+    // Guardar contexto diario (fire-and-forget, no bloquea nada)
+    const handleSaveDailyContext = async () => {
+        try {
+            const mexicoDate = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit'
+            }).format(new Date());
+            await fetch(`${CONFIG.API_BASE_URL}/analytics/context?target_date=${mexicoDate}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target_date: mexicoDate,
+                    is_atypical: ctxAtypical,
+                    weather_condition: ctxWeather,
+                    notes: ctxNotes || null
+                })
+            });
+            setDailyContextSaved(true);
+        } catch (e) {
+            console.error('Error guardando contexto diario:', e);
+            // No mostrar error al cajero — no es crítico
+        }
+        setShowDailyContext(false);
     };
 
     const handleNuevoTurno = () => {
@@ -364,6 +397,11 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
         setFisicoCash('');
         setFisicoCredito('');
         setFisicoDebito('');
+        setShowDailyContext(false);
+        setDailyContextSaved(false);
+        setCtxWeather(null);
+        setCtxAtypical(false);
+        setCtxNotes('');
     };
 
     const formatHora = (iso) => {
@@ -669,6 +707,73 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
                                         <FilaDiferencia label="Crédito" esperado={resumen?.total_credito} capturado={fisicoCredito} active={false} />
                                         <FilaDiferencia label="Débito" esperado={resumen?.total_debito} capturado={fisicoDebito} active={false} />
                                     </div>
+
+                                    {/* Contexto diario post-cierre (no bloqueante) */}
+                                    {showDailyContext && !dailyContextSaved && (
+                                        <div className="bg-blue-500/10 border border-blue-400/20 rounded-2xl p-4 mb-4 space-y-3 animate-pulse-once">
+                                            <p className="text-xs font-black text-blue-300 uppercase tracking-widest">📝 ¿Cómo estuvo el día?</p>
+                                            <div className="flex items-center gap-2">
+                                                {[
+                                                    { val: 'SOLEADO', emoji: '☀️' },
+                                                    { val: 'NUBLADO', emoji: '🌤️' },
+                                                    { val: 'LLUVIA', emoji: '🌧️' },
+                                                    { val: 'TORMENTA', emoji: '⛈️' },
+                                                    { val: 'MUCHO_CALOR', emoji: '🥵' },
+                                                    { val: 'FRIO', emoji: '❄️' }
+                                                ].map(w => (
+                                                    <button
+                                                        key={w.val}
+                                                        onClick={() => setCtxWeather(ctxWeather === w.val ? null : w.val)}
+                                                        className={`text-2xl p-2 rounded-xl transition-all ${
+                                                            ctxWeather === w.val
+                                                                ? 'bg-white/20 ring-2 ring-blue-400 scale-110'
+                                                                : 'hover:bg-white/10 opacity-60 hover:opacity-100'
+                                                        }`}
+                                                        title={w.val.replace('_', ' ')}
+                                                    >
+                                                        {w.emoji}
+                                                    </button>
+                                                ))}
+                                                <span className="text-white/20 mx-2">|</span>
+                                                <button
+                                                    onClick={() => setCtxAtypical(!ctxAtypical)}
+                                                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+                                                        ctxAtypical
+                                                            ? 'bg-red-500/20 border-red-400/30 text-red-300'
+                                                            : 'border-white/10 text-white/30 hover:text-white/60'
+                                                    }`}
+                                                >
+                                                    ⚠️ Atípico
+                                                </button>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                value={ctxNotes}
+                                                onChange={e => setCtxNotes(e.target.value)}
+                                                placeholder="Notas del día (opcional)..."
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white/80 placeholder-white/20 font-bold focus:outline-none focus:border-blue-400/50"
+                                            />
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={handleSaveDailyContext}
+                                                    className="flex-1 bg-blue-500/20 hover:bg-blue-500/40 border border-blue-400/30 text-blue-300 font-black py-2.5 rounded-xl uppercase tracking-widest text-[10px] transition"
+                                                >
+                                                    ✓ Guardar
+                                                </button>
+                                                <button
+                                                    onClick={() => setShowDailyContext(false)}
+                                                    className="flex-1 bg-white/5 hover:bg-white/10 text-white/40 font-black py-2.5 rounded-xl uppercase tracking-widest text-[10px] transition"
+                                                >
+                                                    Omitir →
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {dailyContextSaved && (
+                                        <div className="bg-emerald-500/10 border border-emerald-400/20 rounded-2xl px-4 py-3 mb-4 text-center">
+                                            <p className="text-xs font-black text-emerald-400">✅ Contexto del día registrado</p>
+                                        </div>
+                                    )}
 
                                     <div className="flex gap-2">
                                         <button
