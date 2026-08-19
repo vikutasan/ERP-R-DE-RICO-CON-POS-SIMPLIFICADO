@@ -311,7 +311,7 @@ const ProductStatsView = ({ period, showMonetary, onEditPeriod }) => {
     setIsLoading(true);
     setFetchError(null);
     try {
-      const url = `${API_BASE}/analytics/product-daily-sales?start=${thirtyAgoStr}&end=${todayStr}`;
+      const url = `${API_BASE}/analytics/product-daily-sales?start=${thirtyAgoStr}&end=${todayStr}&include_prev_year=true`;
       const resp = await fetch(url);
       if (!resp.ok) {
         const detail = resp.status === 400 ? (await resp.json())?.detail : `Error ${resp.status}`;
@@ -427,6 +427,25 @@ const ProductStatsView = ({ period, showMonetary, onEditPeriod }) => {
     return alerts;
   }, [rawData]);
 
+  // C5: Comparativa interanual (promedio actual vs año anterior)
+  const yearOverYear = useMemo(() => {
+    if (!rawData?.prev_year?.products) return {};
+    const prevProds = rawData.prev_year.products;
+    const prevDates = rawData.prev_year.dates || [];
+    if (!prevDates.length) return {};
+    const deltas = {};
+    // Calcular promedio del año anterior por producto
+    for (const [pidStr, pData] of Object.entries(prevProds)) {
+      const pid = parseInt(pidStr);
+      const sales = prevDates.map(d => pData.daily_sales[d] || 0);
+      const nonZero = sales.filter(v => v > 0);
+      const prevAvg = nonZero.length > 0 ? nonZero.reduce((a, b) => a + b, 0) / nonZero.length : 0;
+      if (prevAvg >= 1) {
+        deltas[pid] = prevAvg;
+      }
+    }
+    return deltas;
+  }, [rawData]);
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -726,9 +745,23 @@ const ProductStatsView = ({ period, showMonetary, onEditPeriod }) => {
                           </div>
                         </button>
                       </td>
-                      {/* Average */}
+                      {/* Average + YoY delta */}
                       <td className="p-3 text-center sticky z-10 bg-white group-hover:bg-blue-50/30 transition-colors" style={{left: COL_AVG_LEFT, width: COL_AVG_W, minWidth: COL_AVG_W}}>
                         <span className="font-black text-blue-600 text-sm">{product.average}</span>
+                        {yearOverYear[product.product_id] != null && (() => {
+                          const prevAvg = yearOverYear[product.product_id];
+                          const delta = ((product.average - prevAvg) / prevAvg) * 100;
+                          if (Math.abs(delta) < 5) return null; // ignore insignificant changes
+                          const isUp = delta > 0;
+                          return (
+                            <span
+                              className={`block text-[8px] font-bold mt-0.5 ${isUp ? 'text-emerald-600' : 'text-red-500'}`}
+                              title={`Año anterior: ${prevAvg.toFixed(1)} prom/día`}
+                            >
+                              {isUp ? '↑' : '↓'} {Math.abs(Math.round(delta))}% vs '25
+                            </span>
+                          );
+                        })()}
                       </td>
                       {/* Daily values */}
                       {dates.map(d => {

@@ -630,6 +630,72 @@ const SalesKPIsView = ({ allData, showMonetary, ticketMetrics, timeSeriesMetrics
           </div>
         </div>
       )}
+
+      {/* C3: Peak Hours — Horario Pico */}
+      {timeSeriesMetrics?.by_hour?.length > 0 && (() => {
+        const byHour = timeSeriesMetrics.by_hour;
+        const maxHourRev = Math.max(...byHour.map(h => h.revenue), 1);
+        const peakHour = byHour.reduce((best, h) => h.revenue > best.revenue ? h : best, byHour[0]);
+        // Solo mostrar horas de operación (5 AM - 21 PM)
+        const opHours = [];
+        for (let h = 5; h <= 21; h++) {
+          const found = byHour.find(x => x.hour === h);
+          opHours.push({ hour: h, revenue: found ? found.revenue : 0 });
+        }
+        return (
+          <div className="bg-white rounded-2xl p-6 shadow-[0_5px_20px_rgba(0,0,0,0.03)] border border-slate-100 dashboard-section-enter" style={{ animationDelay: '250ms' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800 text-lg flex items-center gap-2">
+                🕐 Horario de Ventas
+              </h3>
+              <span className="text-[10px] font-bold bg-amber-50 text-amber-700 px-2.5 py-1 rounded-full border border-amber-200">
+                ⭐ Hora pico: {peakHour.hour}:00 — {showMonetary ? `$${Math.round(peakHour.revenue).toLocaleString()}` : '•••'}
+              </span>
+            </div>
+            <div className="flex items-end gap-[3px] h-28">
+              {opHours.map(h => {
+                const pct = maxHourRev > 0 ? (h.revenue / maxHourRev) : 0;
+                const isPeak = h.hour === peakHour.hour;
+                let bg = 'bg-slate-100';
+                if (pct > 0.8) bg = 'bg-emerald-500';
+                else if (pct > 0.5) bg = 'bg-blue-400';
+                else if (pct > 0.25) bg = 'bg-blue-300';
+                else if (pct > 0.05) bg = 'bg-slate-200';
+                return (
+                  <div key={h.hour} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                    <div
+                      className={`w-full rounded-t-md transition-all duration-300 ${bg} ${isPeak ? 'ring-2 ring-amber-400 ring-offset-1' : ''} group-hover:opacity-80`}
+                      style={{ height: `${Math.max(pct * 100, 2)}%` }}
+                      title={`${h.hour}:00 — $${Math.round(h.revenue).toLocaleString()}`}
+                    />
+                    <span className={`text-[8px] mt-1 font-bold ${isPeak ? 'text-amber-600' : 'text-slate-400'}`}>
+                      {h.hour}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-4 mt-3 justify-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-emerald-500" />
+                <span className="text-[9px] font-bold text-slate-400">Alta</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-blue-400" />
+                <span className="text-[9px] font-bold text-slate-400">Media</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-blue-300" />
+                <span className="text-[9px] font-bold text-slate-400">Moderada</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-slate-200" />
+                <span className="text-[9px] font-bold text-slate-400">Baja</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
