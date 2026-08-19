@@ -643,32 +643,6 @@ const ProductStatsView = ({ period, showMonetary, onEditPeriod }) => {
             </span>
           )}
         </div>
-        {filteredProducts.length > 0 && (
-          <button
-            onClick={() => {
-              // Generar CSV client-side
-              const headers = ['#', 'Producto', 'Categoría', 'Promedio', ...dates.map(d => formatDateHeader(d))];
-              const rows = filteredProducts.map((p, i) => [
-                i + 1,
-                `"${p.product_name}"`,
-                `"${p.category_name}"`,
-                p.average,
-                ...dates.map(d => p.daily_sales[d] || 0)
-              ]);
-              const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-              const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `estadistica_productos_${new Date().toISOString().split('T')[0]}.csv`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200 transition-colors"
-          >
-            <Download size={14} /> Exportar CSV
-          </button>
-        )}
       </div>
 
       {/* Table */}
