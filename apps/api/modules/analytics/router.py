@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, Query, Body, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+# Zona horaria de México Central (UTC-6) — Regla 4.6 del contexto maestro
+# Toluca no observa horario de verano desde la reforma 2022
+MEXICO_TZ = timezone(timedelta(hours=-6))
 
 from core.database import get_db
 from modules.analytics import schemas, service
@@ -32,7 +36,13 @@ async def get_rankings(
         start_date = start
         end_date = end
     else:
-        end_date = date.today()
+        # Regla día de negocio: antes de 5 AM, usar "ayer" como hoy
+        # (la panadería está cerrada, evita datos vacíos del día nuevo)
+        mexico_now = datetime.now(MEXICO_TZ)
+        if mexico_now.hour < 5:
+            end_date = (mexico_now - timedelta(days=1)).date()
+        else:
+            end_date = mexico_now.date()
         start_date = end_date - timedelta(days=days)
     
     rankings = await service.get_product_rankings(db, start_date, end_date)
@@ -69,3 +79,26 @@ async def custom_query(
     Motor de consultas personalizadas. Ejemplo: Todos los Churros vendidos los viernes de este mes.
     """
     return await service.execute_custom_query(db, payload)
+
+@router.get("/product-daily-sales")
+async def get_product_daily_sales(
+    start: date = Query(..., description="Fecha inicio YYYY-MM-DD"),
+    end: date = Query(..., description="Fecha fin YYYY-MM-DD"),
+    weekday: Optional[int] = Query(None, description="Día de semana: 0=Lun, 6=Dom"),
+    last_n: Optional[int] = Query(None, description="Últimas N ocurrencias"),
+    include_prev_year: bool = Query(False, description="Incluir año anterior"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retorna ventas diarias por producto para la tabla de Estadística de Productos.
+    Soporta filtrado por día de semana, últimas N ocurrencias, y comparativa interanual.
+    """
+    # Validar rango máximo (180 días) para evitar queries masivas
+    if (end - start).days > 180:
+        raise HTTPException(status_code=400, detail="Rango máximo permitido: 180 días")
+    if end < start:
+        raise HTTPException(status_code=400, detail="La fecha fin debe ser posterior a la fecha inicio")
+    return await service.get_product_daily_sales(
+        db, start, end, weekday, last_n, include_prev_year
+    )
+
