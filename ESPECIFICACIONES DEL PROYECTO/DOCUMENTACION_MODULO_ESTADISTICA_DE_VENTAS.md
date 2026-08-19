@@ -1,9 +1,9 @@
 # 📊 DOCUMENTACIÓN — MÓDULO DE ESTADÍSTICAS DE VENTAS
 
-> **Versión:** 2.1.0  
-> **Última actualización:** 18 de agosto de 2026  
+> **Versión:** 2.2.0  
+> **Última actualización:** 19 de agosto de 2026  
 > **Autor:** Sistema de IA / Arquitectura R de Rico  
-> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 12 mejoras críticas implementadas
+> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 22 mejoras implementadas (v2.1 + v2.2)
 
 ---
 
@@ -529,3 +529,28 @@ Los KPIs (Promedio, Máximo, Mínimo, Tendencia) se **recalculan dinámicamente*
 
 **Resultado:** Cambiar de "Todos los días" a "Solo Martes" o ajustar el alcance a "Últimos 4" es **instantáneo** (0ms, sin spinner de carga, sin request al servidor).
 
+### 11.6 Auditoría v2.2 — Mejoras adicionales (19 agosto 2026)
+
+Segunda ronda de mejoras después de re-análisis crítico post-v2.1.
+
+| # | Mejora | Tipo | Detalle |
+|---|---|---|---|
+| **A1** | Import `Decimal` en loop → top | 🔴 Bug | `from decimal import Decimal` se ejecutaba N veces dentro de `for row in rows`. Movido al top de `service.py` |
+| **A2** | Validación rango de fechas | 🔴 Seguridad | Máximo 180 días. HTTP 400 si `end < start` o rango excede 180 |
+| **A3** | Error visible al usuario | 🔴 UX | Si el API falla, muestra ícono rojo + mensaje + botón "Reintentar" (antes: spinner infinito) |
+| **B5** | `func.date()` → range comparison | 🟡 Rendimiento | `Ticket.created_at >= datetime.combine(start, min_time)` permite uso de índice B-tree en PostgreSQL |
+| **B4** | `SalesKPIsView` con `useMemo` | 🟡 Rendimiento | 3 bloques memoizados: métricas principales, time series, rankings+categorías |
+| **B2** | CSV con días atípicos | 🟡 Completitud | Valores en fechas atípicas marcados como `X*` + nota al pie explicativa |
+| **B3** | Atajos de teclado en gráfico | 🟡 UX | `←→` pan, `+-` zoom, `Home` reset, `Esc` cerrar |
+| **C1** | Indicador Pareto ABC | 🔵 Feature | Badge `📊 Top N → X%` con mini barra de progreso en la barra de resumen |
+| **C4** | Alertas de caída abrupta | 🔵 Feature | Badge rojo `↓ -X%` junto al producto cuando su promedio últimos 7 días cae >50% vs periodo completo |
+| **—** | Regla de día de negocio 5 AM | 🔴 Bug | Antes de las 5 AM México, "hoy" = ayer. Evita columna vacía del día nuevo cuando la panadería está cerrada |
+
+### 11.7 Regla de Día de Negocio (Regla 9.7)
+
+Entre **00:00 y 04:59 AM hora México**, el sistema trata al día anterior como "hoy" porque la panadería está cerrada. Esto aplica en:
+
+- **Backend** (`router.py` línea 39): `if mexico_now.hour < 5: end_date = (mexico_now - timedelta(days=1)).date()`
+- **Frontend** (`ProductStatsView.jsx` línea 302): `const effectiveNow = mexicoHour < 5 ? new Date(now.getTime() - 24*60*60*1000) : now`
+
+A las 5:00 AM se "voltea" automáticamente al día actual. Esto evita que aparezca una columna con puros ceros para un día que aún no ha comenzado operaciones.
