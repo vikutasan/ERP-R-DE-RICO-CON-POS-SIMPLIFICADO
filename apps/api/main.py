@@ -12,6 +12,7 @@ from modules.delivery_settings.router import router as delivery_settings_router
 from modules.analytics.router import router as analytics_router
 from modules.network.router import router as network_router
 from modules.grandeza.router import router as grandeza_router
+from modules.hr.router import router as hr_router
 from core.database import AsyncSessionLocal, engine, Base
 from modules.catalog.models import Category, Product, ProductTechnicalSheet
 from modules.security.models import SecurityProfile, Employee
@@ -31,6 +32,17 @@ from modules.grandeza.models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
     GrandezaJourney, GrandezaInventory, GrandezaVisit, GrandezaVisitItem,
     GrandezaDriverLocation, GrandezaSettings
+)
+from modules.hr.models import (
+    HREmployeeExt, HRPosition, HRAttendance, HRRegulation,
+    HRScheduleTemplate, HRSchedule,
+    HRIncident, HRIncidentConfig, HRUniformDeposit, HRUniformMovement,
+    HRUniformConfig, HRCoverageFund, HRCoverageMovement, HRCoverageConfig,
+    HRSalaryTable, HRPayroll, HRPayrollDeduction, HRPayrollConfig,
+    HRPSG, HRPSGConfig,
+    HRVacation, HRVacationConfig, HRPsychometric, HRPsychometricConfig,
+    HRKpi, HRKpiConfig, HRExitSurvey, HRExitSurveyConfig,
+    HRSeverance, HRSeveranceConfig
 )
 
 app = FastAPI(
@@ -71,6 +83,9 @@ async def auto_seed_on_first_boot():
         migrations = [
             ("grandeza_visits", "ext_client_phone", "VARCHAR"),
             ("grandeza_orders", "client_phone", "VARCHAR"),
+            # HR Module: columnas nuevas en tabla employees
+            ("employees", "employee_number", "INTEGER"),
+            ("employees", "exclude_attendance", "BOOLEAN DEFAULT FALSE"),
         ]
         async with engine.begin() as conn:
             for table, column, col_type in migrations:
@@ -160,6 +175,12 @@ async def auto_seed_on_first_boot():
             await seed_system_settings(session)
             print("✅ Ajustes de sistema verificados.")
 
+            # Paso 5: Sembrar datos base de RRHH (puestos + reglamento)
+            from modules.hr.service import seed_puestos_base, seed_regulaciones
+            await seed_puestos_base(session)
+            await seed_regulaciones(session)
+            print("✅ Datos base de RRHH verificados.")
+
     except Exception as e:
         print(f"❌ Error en auto-seed: {e}")
 
@@ -211,6 +232,7 @@ app.include_router(delivery_settings_router, prefix="/api/v1/delivery-settings",
 app.include_router(analytics_router, prefix="/api/v1", tags=["Analytics"])
 app.include_router(network_router, prefix="/api/v1/network", tags=["Network"])
 app.include_router(grandeza_router, prefix="/api/v1/grandeza", tags=["Grandeza"])
+app.include_router(hr_router, prefix="/api/v1/hr", tags=["HR"])
 
 # Montar carpetas de archivos estáticos
 app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")

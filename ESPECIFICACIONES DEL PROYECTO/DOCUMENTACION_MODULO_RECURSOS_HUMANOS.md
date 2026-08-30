@@ -759,3 +759,69 @@ docker compose logs pos --tail 10
 ---
 
 > **Nota:** Este módulo está diseñado para crecer. La arquitectura de columnas + modales + config suites permite agregar nuevas funcionalidades sin refactorizar el código existente. Cada columna es independiente y autónoma.
+
+---
+
+## 14. INCIDENTES Y CORRECCIONES
+
+### Incidente: Hora de Check-In Desfasada +6 Horas (29/Agosto/2026)
+
+**Terminales afectadas:** Todas.
+**Síntoma:** Las horas de entrada registradas en hr_attendance.hora_entrada estaban adelantadas 6 horas respecto a la hora real de México. Ejemplo: un empleado que ingresaba a las 18:19 CST aparecía registrado a las 00:19 UTC del día siguiente. Además, hr_attendance.fecha registraba la fecha UTC, lo que causaba que entradas después de las 18:00 CST quedaran con la fecha del día siguiente.
+
+**Diagnóstico:**
+1. El contenedor Docker `rderico-api-dev` opera en zona horaria **UTC** por defecto.
+2. `datetime.now()` dentro del contenedor devuelve hora UTC, no hora de México (CST / UTC-6).
+3. `date.today()` dentro del contenedor devuelve la fecha UTC, que entre 18:00-23:59 CST ya es el día siguiente.
+4. Las funciones `check_in()` y `check_out()` en `service.py` usaban `datetime.now().time()` y `date.today()` sin ajuste de zona horaria.
+
+**Ejemplo real del desfase:**
+
+`
+Hora real México (CST):  22:23:05  |  Fecha real: 29/agosto/2026
+datetime.now() en Docker (UTC): 04:23:05  |  date.today(): 30/agosto/2026
+Diferencia: +6 horas, +1 día
+`
+
+> ⚠️ **ADVERTENCIA:** Cambiar la zona horaria del contenedor Docker (`TZ=America/Mexico_City`) **NO** es la solución correcta. Intentos anteriores demostraron que esto afecta negativamente a otros módulos del sistema (PostgreSQL, POS, Auditoría).
+
+**Solución implementada (v1.0.1 — vigente):**
+
+Se aplicó el mismo patrón ya utilizado en `modules/grandeza/service.py`: uso explícito de `zoneinfo.ZoneInfo('America/Mexico_City')` para obtener la hora local de México sin depender de la zona horaria del contenedor.
+
+**Cambios en `apps/api/modules/hr/service.py`:**
+
+`python
+# ANTES (Bug):
+from datetime import date, time, datetime, timedelta
+
+hoy = date.today()                    # Devuelve fecha UTC
+ahora = datetime.now().time()          # Devuelve hora UTC
+
+# DESPUÉS (Fix):
+from datetime import date, time, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+MEXICO_TZ = ZoneInfo('America/Mexico_City')
+
+hoy = datetime.now(MEXICO_TZ).date()  # Devuelve fecha México CST
+ahora = datetime.now(MEXICO_TZ).time()  # Devuelve hora México CST
+`
+
+**Funciones corregidas:**
+- `check_in()` — líneas 36-37
+- `check_out()` — líneas 118-119
+- `cumpleanos_del_mes()` — línea 405
+
+**Registros corregidos en BD:** 5 registros del 29/agosto/2026 (IDs 222-226) que habían quedado con fecha 30/agosto y hora UTC fueron corregidos manualmente con:
+
+`sql
+UPDATE hr_attendance
+SET fecha = fecha - INTERVAL '1 day',
+    hora_entrada = hora_entrada - INTERVAL '6 hours'
+WHERE fecha = '2026-08-30'
+  AND hora_entrada < '06:15:00';
+`
+
+**Regla para futuros desarrolladores:**
+> Todo código dentro de `apps/api/modules/hr/` que necesite la hora o fecha actual **DEBE** usar `datetime.now(MEXICO_TZ)` con la constante `MEXICO_TZ` definida al inicio del archivo. **Nunca** usar `datetime.now()` ni `date.today()` a secas, ya que el contenedor Docker opera en UTC.

@@ -27,6 +27,10 @@ import { AuditoriaUI as AuditoriaControlUI } from './AuditoriaControlUI';
 import { SystemSettingsUI } from './settings/SystemSettingsUI';
 import { NetworkMonitorUI } from './network/NetworkMonitorUI';
 import { RepartoPanGrandezaUI } from './pos/RepartoPanGrandezaUI';
+import { RecursosHumanosUI } from './hr/RecursosHumanosUI';
+import { CheckInWelcomeModal } from './hr/CheckInWelcomeModal';
+import { CheckOutModal } from './hr/CheckOutModal';
+import { hrService } from './hr/hrService';
 import { CONFIG } from './pos/config';
 import REAL_PRODUCTS from '../importar_productos_AQUI.json';
 
@@ -71,14 +75,29 @@ export const ExperimentCenterUI = () => {
     const [userPermissions, setUserPermissions] = useState({});
     const [userProfileId, setUserProfileId] = useState(null);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(defaultSidebar);
+    const [showCheckInModal, setShowCheckInModal] = useState(false);
+    const [showCheckOutModal, setShowCheckOutModal] = useState(false);
+    const [checkInData, setCheckInData] = useState(null);
 
-    const handleLogin = (user) => {
+    const handleLogin = async (user) => {
+        // 1. Login normal (siempre funciona)
         setUserRole(user.role);
         setUserName(user.name || '');
         setUserId(user.id);
         setUserProfileId(user.profile_id);
         setUserPermissions(user.permissions || {});
         setIsAuthenticated(true);
+
+        // 2. Check-in HR (si falla, no pasa nada — el ERP funciona igual)
+        try {
+            const result = await hrService.checkIn(user.id);
+            if (result && result.is_first_login) {
+                setCheckInData(result);
+                setShowCheckInModal(true);
+            }
+        } catch (err) {
+            console.warn('Check-in HR no disponible:', err);
+        }
     };
 
     const handleUpdatePermissions = (updatedProfile) => {
@@ -109,6 +128,7 @@ export const ExperimentCenterUI = () => {
         { id: 'waiter', name: 'App Mesero', color: 'bg-rose-700', icon: '📱', access: ['ADMIN', 'WAITER'] },
         { id: 'driver', name: 'App Repartidor', color: 'bg-gray-800', icon: '📱', access: ['ADMIN', 'DRIVER', 'LOGISTICS'] },
         { id: 'seguridad_acceso', name: 'Seguridad y Acceso', color: 'bg-indigo-900', icon: '🔑', access: ['ADMIN', 'MANAGER'] },
+        { id: 'recursos_humanos', name: 'Recursos Humanos', color: 'bg-teal-800', icon: '👥', access: ['ADMIN', 'MANAGER'] },
         { id: 'auditoria', name: 'Auditoría y Control', color: 'bg-slate-900', icon: '📋', access: ['ADMIN', 'MANAGER'] },
         { id: 'settings', name: 'Ajustes del Sistema', color: 'bg-red-900', icon: '⚙️', access: ['ADMIN'] },
         { id: 'network_monitor', name: 'Monitoreo de Red', color: 'bg-cyan-900', icon: '📡', access: ['ADMIN', 'MANAGER'] },
@@ -245,7 +265,20 @@ export const ExperimentCenterUI = () => {
                     </div>
                 </div>
 
-                <div className="mt-4 px-4 pb-4">
+                {/* Botón de Salida de Turno (HR) */}
+                {!isSidebarCollapsed && (
+                    <div className="mt-2 px-4">
+                        <button
+                            onClick={() => setShowCheckOutModal(true)}
+                            className="w-full p-3 font-bold uppercase tracking-widest transition-all rounded-2xl flex items-center justify-center gap-2 border bg-teal-500/10 text-teal-400 border-teal-500/20 hover:bg-teal-500/20 text-[9px]"
+                            title="Registrar salida de turno"
+                        >
+                            👋 Registrar Salida de Turno
+                        </button>
+                    </div>
+                )}
+
+                <div className="mt-2 px-4 pb-4">
                     <button
                         onClick={() => attemptNavigation(() => setIsAuthenticated(false))}
                         className={`w-full p-4 font-black uppercase tracking-widest transition-all rounded-2xl flex items-center justify-center gap-2 border 
@@ -350,6 +383,7 @@ export const ExperimentCenterUI = () => {
                         {activeModule === 'settings' && <SystemSettingsUI />}
                         {activeModule === 'network_monitor' && <NetworkMonitorUI />}
                         {activeModule === 'reparto_grandeza' && <RepartoPanGrandezaUI onBack={() => setActiveModule('overview')} userPermissions={userPermissions} userRole={userRole} />}
+                        {activeModule === 'recursos_humanos' && <RecursosHumanosUI userId={userId} userName={userName} />}
                     </div>
 
                 </div>
@@ -374,6 +408,28 @@ export const ExperimentCenterUI = () => {
                 >
                     <span className="pr-1">▶</span>
                 </button>
+            )}
+
+            {/* Modals de HR (check-in / check-out) */}
+            {showCheckInModal && checkInData && (
+                <CheckInWelcomeModal
+                    data={checkInData}
+                    onClose={() => { setShowCheckInModal(false); setCheckInData(null); }}
+                />
+            )}
+            {showCheckOutModal && (
+                <CheckOutModal
+                    employeeName={userName}
+                    onConfirm={async (tipo, obs) => {
+                        try {
+                            await hrService.checkOut(userId, tipo, obs);
+                            setShowCheckOutModal(false);
+                        } catch (err) {
+                            console.error('Error en check-out:', err);
+                        }
+                    }}
+                    onClose={() => setShowCheckOutModal(false)}
+                />
             )}
 
             <style>{`
