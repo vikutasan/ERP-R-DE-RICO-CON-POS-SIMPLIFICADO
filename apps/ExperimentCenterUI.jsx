@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 // Importación de módulos creados (Simulada para el demo)
 import { B2BManagerUI } from './b2b/B2BManagerUI';
@@ -78,6 +78,51 @@ export const ExperimentCenterUI = () => {
     const [showCheckInModal, setShowCheckInModal] = useState(false);
     const [showCheckOutModal, setShowCheckOutModal] = useState(false);
     const [checkInData, setCheckInData] = useState(null);
+
+    // Reloj en tiempo real - Vista General (zona horaria Mexico)
+    const [clockNow, setClockNow] = useState(new Date());
+    useEffect(() => {
+        const timer = setInterval(() => setClockNow(new Date()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    // Info del negocio desde system_settings (BD)
+    const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '' });
+    const [showBizModal, setShowBizModal] = useState(false);
+    const [bizForm, setBizForm] = useState({});
+
+    useEffect(() => {
+        const loadBizInfo = async () => {
+            try {
+                const res = await fetch(CONFIG.API_BASE_URL + '/settings/');
+                if (res.ok) {
+                    const data = await res.json();
+                    const info = {};
+                    for (const s of data) {
+                        if (['business_name','branch_name','business_address','business_phone'].includes(s.key)) {
+                            info[s.key] = s.value;
+                        }
+                    }
+                    if (Object.keys(info).length > 0) setBizInfo(prev => ({...prev, ...info}));
+                }
+            } catch(e) { /* degradacion elegante */ }
+        };
+        loadBizInfo();
+    }, []);
+
+    const saveBizInfo = async () => {
+        try {
+            for (const [key, value] of Object.entries(bizForm)) {
+                await fetch(CONFIG.API_BASE_URL + '/settings/' + key, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value })
+                });
+            }
+            setBizInfo(prev => ({...prev, ...bizForm}));
+            setShowBizModal(false);
+        } catch(e) { alert('Error al guardar'); }
+    };
 
     const handleLogin = async (user) => {
         // 1. Login normal (siempre funciona)
@@ -308,35 +353,74 @@ export const ExperimentCenterUI = () => {
             >
 
                 <div className="relative z-10 h-full">
-                    {activeModule === 'overview' && (
-                        <div className="p-20 max-w-6xl mx-auto space-y-20 animate-in fade-in zoom-in-95 duration-700">
-                            <section>
-                                <h2 className="text-8xl font-black uppercase tracking-tighter leading-none mb-10">Tu Imperio <br /> <span className="text-orange-500 underline decoration-orange-600/30">Digital</span>.</h2>
-                                <p className="text-2xl text-gray-400 font-medium max-w-2xl leading-relaxed">
-                                    Socio, has construido una arquitectura de nivel mundial. Selecciona un módulo en el panel izquierdo para vivir la experiencia de **R de Rico**.
-                                </p>
-                            </section>
+                    {activeModule === 'overview' && (() => {
+                        const mxOpts = { timeZone: 'America/Mexico_City' };
+                        const fechaLarga = clockNow.toLocaleDateString('es-MX', { ...mxOpts, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                        const horaStr = clockNow.toLocaleTimeString('es-MX', { ...mxOpts, hour: '2-digit', minute: '2-digit', hour12: false });
+                        const startOfYear = new Date(clockNow.getFullYear(), 0, 1);
+                        const diffMs = clockNow - startOfYear;
+                        const dayOfYear = Math.floor(diffMs / 86400000);
+                        const numSemana = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                                <div className="p-10 bg-gray-900/40 rounded-[50px] border border-gray-800">
-                                    <h3 className="text-2xl font-black uppercase mb-4 text-orange-400">Planta Toluca</h3>
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Producción hoy:</span> <span className="font-black">100%</span></div>
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Mermas:</span> <span className="text-red-500 font-black">1.2%</span></div>
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Pedidos B2B:</span> <span className="font-black text-indigo-400">12</span></div>
+                        return (
+                        <div className="animate-in fade-in zoom-in-95 duration-700 h-full flex flex-col">
+
+                            <div className="w-full bg-black py-8 px-10 text-center space-y-3 relative">
+                                <h2 className="text-8xl font-black uppercase tracking-tighter leading-none text-white">{bizInfo.business_name}</h2>
+                                <p className="text-xl text-white font-black uppercase tracking-[0.3em]">{bizInfo.branch_name}</p>
+                                <div className="h-[2px] bg-gray-500 max-w-xl mx-auto my-2"></div>
+                                <p className="text-sm text-gray-200 font-bold">{bizInfo.business_address}</p>
+                                <p className="text-lg text-orange-400 font-black tracking-wider">Tel: {bizInfo.business_phone}</p>
+                                {userPermissions?.editar_info_negocio && (
+                                    <button onClick={() => { setBizForm({...bizInfo}); setShowBizModal(true); }} className="absolute top-4 right-4 text-gray-600 hover:text-white transition-colors text-xs uppercase tracking-widest font-bold flex items-center gap-1 opacity-50 hover:opacity-100" title="Editar info del negocio">&#9998; Editar</button>
+                                )}
+                            </div>
+
+                            <div className="flex-1 flex flex-col items-center justify-center p-12">
+                                <div className="flex flex-col items-center gap-6 bg-black/60 backdrop-blur-sm rounded-[40px] p-12 border border-gray-700/30">
+                                    <div className="text-center">
+                                        <p className="text-[10rem] font-black leading-none tracking-tighter text-white" style={{fontVariantNumeric: 'tabular-nums'}}>{horaStr}</p>
                                     </div>
-                                </div>
-                                <div className="p-10 bg-gray-900/40 rounded-[50px] border border-gray-800">
-                                    <h3 className="text-2xl font-black uppercase mb-4 text-blue-400">Logística</h3>
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Rutas Activas:</span> <span className="font-black">4</span></div>
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Vehículos en Campo:</span> <span className="font-black text-blue-500">2</span></div>
-                                        <div className="flex justify-between items-center"><span className="text-gray-500 font-bold italic">Entregas Hoy:</span> <span className="text-green-500 font-black">28 / 30</span></div>
+                                    <div className="text-center space-y-3">
+                                        <p className="text-3xl font-bold text-white capitalize">{fechaLarga}</p>
+                                        <p className="text-6xl font-black uppercase tracking-[0.2em] text-orange-500 mt-4">Semana {numSemana}</p>
                                     </div>
                                 </div>
                             </div>
+
+                            {showBizModal && (
+                                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowBizModal(false)}>
+                                    <div className="bg-gray-900 rounded-3xl p-8 w-full max-w-lg border border-gray-700 space-y-6" onClick={e => e.stopPropagation()}>
+                                        <h3 className="text-2xl font-black uppercase text-orange-500 tracking-wider">Informacion del Negocio</h3>
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Nombre del Negocio</label>
+                                                <input type="text" value={bizForm.business_name || ''} onChange={e => setBizForm(p => ({...p, business_name: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Nombre de la Sucursal</label>
+                                                <input type="text" value={bizForm.branch_name || ''} onChange={e => setBizForm(p => ({...p, branch_name: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Direccion</label>
+                                                <input type="text" value={bizForm.business_address || ''} onChange={e => setBizForm(p => ({...p, business_address: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Telefono</label>
+                                                <input type="text" value={bizForm.business_phone || ''} onChange={e => setBizForm(p => ({...p, business_phone: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-4 pt-2">
+                                            <button onClick={() => setShowBizModal(false)} className="flex-1 p-3 rounded-xl border border-gray-600 text-gray-400 font-bold uppercase text-sm hover:bg-gray-800 transition-colors">Cancelar</button>
+                                            <button onClick={saveBizInfo} className="flex-1 p-3 rounded-xl bg-orange-500 text-white font-black uppercase text-sm hover:bg-orange-600 transition-colors">Guardar</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                         </div>
-                    )}
+                        );
+                    })()}
 
                     {/* Area de Experiencia real */}
                     <div className="h-full">

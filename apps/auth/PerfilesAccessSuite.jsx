@@ -30,6 +30,7 @@ const SYSTEM_MODULES = [
     { id: 'grandeza_daily', name: 'Herramienta Gerente Grandeza', icon: '📅🍞' },
     { id: 'grandeza_driver', name: 'Herramienta Repartidor Grandeza', icon: '🚗🍞' },
     { id: 'grandeza_edit_clients', name: 'Editar Información de Clientes Pan Grandeza', icon: '✏️👥' },
+    { id: 'editar_info_negocio', name: 'Editar Info del Negocio en Vista General', icon: '🏪' },
 ];
 
 export const PerfilesAccessSuite = ({ onClose, onPermissionsUpdate }) => {
