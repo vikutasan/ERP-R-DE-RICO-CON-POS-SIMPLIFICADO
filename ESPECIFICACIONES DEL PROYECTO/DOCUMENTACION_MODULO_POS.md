@@ -230,6 +230,19 @@ T=32s+  Yami cambia a otra cuenta → la cuenta de $453 se pierde
 
 ---
 
+
+### Incidente Bug de Terminales Fantasma V2 (31/Agosto/2026)
+
+**Sntoma:** Constantemente las terminales aparecan como INACTIVAS (lockAge > 25 min) a pesar de estar siendo operadas, y los heartbeats devolvan error 404 (lock no encontrado). Las terminales liberaban su estado sin motivo.
+
+**Anlisis Forense:**
+Se descubri que la seal posService.unlockTerminal() se estaba enviando de forma silente por culpa de un useEffect de limpieza (cleanup) en useTerminalLocking.js. Este efecto dependa de [selectedTerminal, currentUser].
+El componente padre ExperimentCenterUI.jsx estaba enviando currentUser como un objeto en lnea (currentUser={{ id: userId... }}). Como en React los objetos en lnea generan una nueva referencia en memoria en cada re-render, el useEffect detectaba un cambio, disparaba el cleanup (destruyendo el candado en la DB) y se volva a registrar, ocasionando que la sesin se perdiera.
+
+**Resolucin (Nueva Regla de Componentes Reactivos):**
+- Se impuso la regla del useMemo() en componentes de alto nivel para props tipo objeto que no mutan sus valores reales.
+- **Cambio Crtico en Cleanups de Desmontaje:** Se reescribi el useEffect de limpieza de la terminal para usar un array de dependencias vaco []. Para evitar cierres de estado obsoletos (*stale closures*), se implementaron useRef locales (selectedTerminalRef, currentUserRef) que apuntan a los valores actualizados. As, el cleanup solo se invoca cuando el componente **realmente se destruye** al salir del mdulo o cerrar la pestaa, leyendo los valores directamente de las referencias.
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
