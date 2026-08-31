@@ -413,7 +413,26 @@ export const ExperimentCenterUI = () => {
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Zona Horaria</label>
-                                                <select value={bizForm.business_timezone || 'America/Mexico_City'} onChange={e => setBizForm(p => ({...p, business_timezone: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none appearance-none cursor-pointer">
+                                                <select value={bizForm.business_timezone || 'America/Mexico_City'} onChange={e => {
+                                                    const newTz = e.target.value;
+                                                    const oldTz = bizForm.business_timezone || 'America/Mexico_City';
+                                                    if (newTz !== oldTz && !window.confirm(
+                                                        '⚠️ ADVERTENCIA: CAMBIO DE ZONA HORARIA\n\n' +
+                                                        'Estás cambiando la zona horaria del sistema.\n\n' +
+                                                        'Esto afectará:\n' +
+                                                        '• Cómo se muestran las horas en TODO el ERP\n' +
+                                                        '• Check-in / Check-out de empleados\n' +
+                                                        '• Reportes y estadísticas\n' +
+                                                        '• Regla de día de negocio (antes de 5 AM)\n\n' +
+                                                        'Los datos existentes NO se modifican.\n\n' +
+                                                        '¿Estás seguro de cambiar de\n' +
+                                                        oldTz + '\na\n' + newTz + '?'
+                                                    )) {
+                                                        e.target.value = oldTz;
+                                                        return;
+                                                    }
+                                                    setBizForm(p => ({...p, business_timezone: newTz}));
+                                                }} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none appearance-none cursor-pointer">
                                                     <option value="America/Mexico_City">🇲🇽 México Central (UTC-6) — CDMX, Toluca, Guadalajara</option>
                                                     <option value="America/Cancun">🇲🇽 México Sureste (UTC-5) — Cancún, Chetumal</option>
                                                     <option value="America/Mazatlan">🇲🇽 México Pacífico (UTC-7) — Mazatlán, Sinaloa</option>
