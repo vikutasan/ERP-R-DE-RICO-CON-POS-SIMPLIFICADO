@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - '**'
-  tags:
-    - '**'
+    tags:
+      - '**'
 
 jobs:
   mirror:
@@ -19,8 +19,7 @@ jobs:
       - name: Mirror to Target Repository
         env:
           # Usamos el token para autenticarnos en el repo destino
-          TARGET_REPO: https://x-access-token:${{ secrets.ENTERPRISE_PAT }}@github.com/rdericosanpablo-commits/ERP-R-DE-RICO-SAN-PABLO.git
+          TARGET_REPO: https://${{ secrets.ENTERPRISE_PAT }}@github.com/rdericosanpablo-commits/ERP-R-DE-RICO-SAN-PABLO.git
         run: |
           # El flag --mirror empuja todas las ramas (refs/heads) y tags (refs/tags)
           git push --mirror $TARGET_REPO
-
