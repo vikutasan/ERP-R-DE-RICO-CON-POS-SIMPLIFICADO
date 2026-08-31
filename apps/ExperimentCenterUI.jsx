@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+﻿import React, { useState, useMemo, useEffect } from 'react';
 
 // Importación de módulos creados (Simulada para el demo)
 import { B2BManagerUI } from './b2b/B2BManagerUI';
@@ -31,6 +31,7 @@ import { RecursosHumanosUI } from './hr/RecursosHumanosUI';
 import { CheckInWelcomeModal } from './hr/CheckInWelcomeModal';
 import { CheckOutModal } from './hr/CheckOutModal';
 import { hrService } from './hr/hrService';
+import { HeladeriaHubUI } from './heladeria/HeladeriaHubUI';
 import { CONFIG } from './pos/config';
 import REAL_PRODUCTS from '../importar_productos_AQUI.json';
 
@@ -178,6 +179,7 @@ export const ExperimentCenterUI = () => {
         { id: 'settings', name: 'Ajustes del Sistema', color: 'bg-red-900', icon: '⚙️', access: ['ADMIN'] },
         { id: 'network_monitor', name: 'Monitoreo de Red', color: 'bg-cyan-900', icon: '📡', access: ['ADMIN', 'MANAGER'] },
         { id: 'reparto_grandeza', name: 'Reparto Pan Grandeza', color: 'bg-amber-700', icon: `${CONFIG.API_BASE_URL.replace(/\/api\/v1$/, '')}/static/images/grandeza/logo.png`, access: ['ADMIN', 'MANAGER', 'LOGISTICS', 'DRIVER'] },
+        { id: 'heladeria', name: 'Heladería', color: 'bg-pink-600', icon: '🍦', access: ['ADMIN', 'MANAGER'] },
     ];
 
 
@@ -371,7 +373,7 @@ export const ExperimentCenterUI = () => {
                                 <div className="h-[2px] bg-gray-500 max-w-xl mx-auto my-2"></div>
                                 <p className="text-sm text-gray-200 font-bold">{bizInfo.business_address}</p>
                                 <p className="text-lg text-orange-400 font-black tracking-wider">Tel: {bizInfo.business_phone}</p>
-                                {userPermissions?.editar_info_negocio && (
+                                {(userPermissions?.editar_info_negocio || userPermissions?.all === 'full') && (
                                     <button onClick={() => { setBizForm({...bizInfo}); setShowBizModal(true); }} className="absolute top-4 right-4 text-gray-600 hover:text-white transition-colors text-xs uppercase tracking-widest font-bold flex items-center gap-1 opacity-50 hover:opacity-100" title="Editar info del negocio">&#9998; Editar</button>
                                 )}
                             </div>
@@ -468,6 +470,7 @@ export const ExperimentCenterUI = () => {
                         {activeModule === 'network_monitor' && <NetworkMonitorUI />}
                         {activeModule === 'reparto_grandeza' && <RepartoPanGrandezaUI onBack={() => setActiveModule('overview')} userPermissions={userPermissions} userRole={userRole} />}
                         {activeModule === 'recursos_humanos' && <RecursosHumanosUI userId={userId} userName={userName} />}
+                        {activeModule === 'heladeria' && <HeladeriaHubUI onBack={() => setActiveModule('overview')} />}
                     </div>
 
                 </div>
