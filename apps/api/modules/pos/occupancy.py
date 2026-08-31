@@ -43,17 +43,6 @@ async def lock_terminal(db: AsyncSession, terminal_id: str, occupier_id: int, oc
     """Intenta bloquear una terminal. Retorna True si tuvo éxito."""
     await _purge_stale_locks(db, ttl_minutes)
 
-    # Un usuario solo puede ocupar 1 terminal a la vez: limpiar locks anteriores
-    stale_user = await db.execute(
-        select(TerminalLock).where(
-            TerminalLock.occupier_id == occupier_id,
-            TerminalLock.terminal_id != terminal_id
-        )
-    )
-    for old_lock in stale_user.scalars().all():
-        await db.delete(old_lock)
-    await db.flush()
-
     # Verificar si la terminal ya está ocupada
     existing = await db.execute(
         select(TerminalLock).where(TerminalLock.terminal_id == terminal_id)
@@ -110,23 +99,10 @@ async def force_unlock(db: AsyncSession, terminal_id: str):
 async def heartbeat(db: AsyncSession, terminal_id: str, occupier_id: int, ttl_minutes: int = 15) -> bool:
     """
     Renueva el timestamp del candado para evitar que expire por TTL.
-    v4.3: También purga locks expirados y elimina locks del mismo usuario
-    en OTRAS terminales (regla 1-usuario-1-terminal).
+    También purga locks expirados de cualquier terminal (TTL natural).
     """
     # Purgar locks expirados de cualquier terminal
     await _purge_stale_locks(db, ttl_minutes)
-
-    # Limpiar locks de este usuario en OTRAS terminales (1-usuario-1-terminal)
-    stale_user = await db.execute(
-        select(TerminalLock).where(
-            TerminalLock.occupier_id == occupier_id,
-            TerminalLock.terminal_id != terminal_id
-        )
-    )
-    for old_lock in stale_user.scalars().all():
-        print(f"Heartbeat: Limpiando lock duplicado de usuario {occupier_id} en terminal {old_lock.terminal_id}")
-        await db.delete(old_lock)
-    await db.flush()
 
     # Renovar el lock actual
     result = await db.execute(
