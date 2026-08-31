@@ -336,6 +336,51 @@ Set-DnsClientServerAddress -InterfaceIndex 5 -ServerAddresses @("192.168.1.1","8
 
 ---
 
+
+### 3.4.6 Estrategia de Respaldo de Datos — Repositorios y Automatización
+
+El sistema mantiene **dos repositorios de GitHub** con propósitos complementarios:
+
+| Repositorio | Propósito | Tipo | Contenido |
+|---|---|---|---|
+| [ERP-R-DE-RICO-CON-POS-SIMPLIFICADO](https://github.com/vikutasan/ERP-R-DE-RICO-CON-POS-SIMPLIFICADO) | **Código fuente** del ERP | Público | Apps, packages, configuración Docker, especificaciones |
+| [RESPALDO-ERP-R-DE-RICO-DEL-SERVIDOR](https://github.com/vikutasan/RESPALDO-ERP-R-DE-RICO-DEL-SERVIDOR) | **Datos de negocio** (backup diario) | Privado | Dump SQL de PostgreSQL, credenciales |
+
+#### Mecanismo de Respaldo Automático
+
+Una **tarea programada de Windows** (\RdeRico-BackupDiario) ejecuta diariamente a las **12:00 PM (mediodía)** el script ackup_diario.ps1, que realiza:
+
+1. **Verificación:** Confirma que el contenedor Docker 
+derico-db-dev está corriendo.
+2. **Dump de PostgreSQL:** Ejecuta `pg_dump` dentro del contenedor para generar `respaldo_YYYY-MM-DD.sql`.
+3. **Validación:** Verifica que el archivo no esté vacío ni sospechosamente pequeño (<1KB).
+4. **Rotación:** Conserva los últimos **7 respaldos** y elimina automáticamente los más antiguos.
+5. **Credenciales:** Copia el archivo `.env` como `credenciales.env` al repositorio.
+6. **Push a GitHub:** Hace `git add -A`, `commit` y `push` automático al repositorio privado.
+7. **Logging:** Registra cada operación (éxito o error) en `backup_log.txt`.
+
+**Archivos en el repositorio de respaldo:**
+`
+RESPALDO-ERP-R-DE-RICO-DEL-SERVIDOR/
+├── README.md                       → Documentación del respaldo
+├── backup_diario.ps1               → Script de respaldo automático
+├── backup_log.txt                  → Log histórico de ejecuciones
+├── credenciales.env                → Copia del .env con credenciales de DB
+├── respaldo_YYYY-MM-DD.sql         → Dump SQL del día (últimos 7 días)
+└── ...
+`
+
+**Manejo de fallos:** Si el push a GitHub falla (sin internet), el respaldo queda guardado localmente y se reintenta en el siguiente ciclo. La operación del ERP no se ve afectada.
+
+#### Procedimiento de Restauración de Emergencia
+
+Si se necesita restaurar la base de datos desde un respaldo:
+`ash
+docker exec -i rderico-db-dev psql -U user -d rderico < respaldo_YYYY-MM-DD.sql
+`
+
+> ⚠️ **IMPORTANTE:** El repositorio de respaldo es **PRIVADO** porque contiene datos sensibles del negocio (ventas, clientes, inventario, credenciales). Nunca cambiar su visibilidad a público.
+
 ### 3.5 Event Sourcing (Inventario y Mermas)
 
 El inventario es un **libro contable inmutable**, no un campo sobreescribible.
@@ -374,9 +419,23 @@ Aplica seguridad en 4 capas redundantes obligatorias:
 3. **Backend:** Valida independientemente.
 4. **Base de Datos:** Constraints e integridad referencial.
 
-### 4.6 MANEJO DE TIEMPOS Y ZONAS HORARIAS (REGLA MÃ‰XICO CST)
-- **Backend:** EstÃ¡ **estrictamente prohibido** el uso de `datetime.utcnow()`. Todo el sistema operativo del servidor, la base de datos y la lÃ³gica de negocio (POS, AuditorÃ­a, Sesiones de Caja) operan nativamente en la hora local de MÃ©xico (CST). Utiliza exclusivamente `datetime.now()` para no romper la coherencia temporal de los tickets y sesiones.
-- **Frontend:** Siempre que el dispositivo mÃ³vil deba calcular "Hoy" (ej. para cargar rutas del dÃ­a), se debe **forzar explÃ­citamente** la zona horaria `America/Mexico_City` usando `Intl.DateTimeFormat` para prevenir que tablets configuradas incorrectamente soliciten datos de fechas futuras o pasadas.
+### 4.6 MANEJO DE TIEMPOS Y ZONAS HORARIAS — STORE UTC, DISPLAY LOCAL (Actualizado 31 Ago 2026)
+
+**Principio arquitectonico:** El sistema almacena SIEMPRE en UTC y convierte a hora local del negocio solo para display y logica de negocio (puntualidad, regla de 5 AM, etc.).
+
+- **Docker/PostgreSQL:** Operan en UTC (no se modifica la zona horaria de los contenedores).
+- **Backend:** Usa `datetime.now()` para almacenar (que en Docker = UTC). Para logica que necesite hora local, usa la utilidad centralizada `core/timezone.py` que lee el setting `business_timezone` de `system_settings`.
+- **Frontend:** Usa `Intl.DateTimeFormat` con la zona horaria configurada en `business_timezone` para mostrar horas al usuario.
+- **Zona horaria configurable:** Se administra desde Vista General -> Editar Informacion del Negocio -> selector de Zona Horaria. Cambiar el timezone NO modifica datos existentes, solo cambia la presentacion.
+
+**Utilidad centralizada:** `apps/api/core/timezone.py`
+```python
+from core.timezone import get_business_tz, local_now
+tz = await get_business_tz(db)  # Lee de system_settings, cacheado 5 min
+ahora_local = local_now(tz)      # Hora actual en zona del negocio
+```
+
+**PROHIBIDO:** Hardcodear `ZoneInfo('America/Mexico_City')` o `timedelta(hours=-6)` en cualquier modulo. Siempre usar `core/timezone.py`.
 
 ---
 
@@ -531,27 +590,25 @@ Variables que cambian frecuentemente provienen de la tabla `SystemSetting`, no d
 - BD: PostgreSQL 15, Alembic
 - Contenedores: Docker + Docker Compose
 
-### 12.1 Zona Horaria â€” LEY ABSOLUTA: `America/Mexico_City` (UTC-6 / UTC-5 DST)
+### 12.1 Zona Horaria — CONFIGURABLE via system_settings (Actualizado 31 Ago 2026)
 
-**El sistema opera EXCLUSIVAMENTE en horario local de Toluca, MÃ©xico.** Esta regla es inquebrantable y aplica a todas las capas del stack sin excepciÃ³n. Violarla compromete directamente la integridad financiera del negocio (cortes de caja, auditorÃ­as, declaraciones fiscales).
+**El sistema usa el principio "Store UTC, Display Local".** La zona horaria se configura desde la UI en `system_settings.business_timezone` (default: `America/Mexico_City`).
 
-**ConfiguraciÃ³n obligatoria por capa:**
+**Configuracion por capa:**
 
-| Capa | ConfiguraciÃ³n | Archivo / UbicaciÃ³n |
-|------|--------------|---------------------|
-| **PostgreSQL** | `timezone = 'America/Mexico_City'` | `postgresql.conf` o variable de entorno `TZ` del contenedor |
-| **Docker** | `TZ=America/Mexico_City` | `docker-compose.yml` â†’ `environment` de cada servicio |
-| **Python (FastAPI)** | `from zoneinfo import ZoneInfo; TZ_LOCAL = ZoneInfo('America/Mexico_City')` | Archivo de configuraciÃ³n central del backend |
-| **Frontend (Day.js)** | `dayjs.tz.setDefault('America/Mexico_City')` | `main.jsx` o archivo de inicializaciÃ³n global |
-| **Frontend (Date nativo)** | `new Date().toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })` | Cualquier uso de `Date` para display |
+| Capa | Configuracion | Detalles |
+|------|--------------|----------|
+| **Docker/PostgreSQL** | UTC (no se toca) | Los contenedores operan en UTC por best practice |
+| **Python (FastAPI)** | `core/timezone.py` | Lee `business_timezone` de `system_settings`, cachea 5 min |
+| **Frontend** | `Intl.DateTimeFormat` | Usa el timezone configurado para display |
+| **Vista General** | Modal "Editar Info" | Selector de zona horaria con modal de advertencia |
 
-**Reglas de programaciÃ³n:**
-1. **PROHIBIDO** usar `UTC` o `datetime.utcnow()` en cualquier parte del cÃ³digo. Siempre usar `datetime.now(TZ_LOCAL)`.
-2. **PROHIBIDO** guardar timestamps sin zona horaria explÃ­cita. Todo campo `TIMESTAMP` en PostgreSQL debe ser `TIMESTAMP WITH TIME ZONE`.
-3. **PROHIBIDO** asumir que el reloj del servidor o contenedor estÃ¡ en la zona correcta. Siempre especificar la zona explÃ­citamente en el cÃ³digo.
-4. Todo timestamp mostrado al usuario debe reflejar la hora local de Toluca, **nunca** UTC ni la hora del navegador del cliente.
-5. Los cortes de caja, reportes financieros y auditorÃ­as usan el concepto de "dÃ­a fiscal" que inicia y termina a medianoche hora local (`America/Mexico_City`).
-
+**Reglas de programacion:**
+1. **PROHIBIDO** usar `datetime.utcnow()` — usar `datetime.now()` (que en Docker = UTC).
+2. **PROHIBIDO** hardcodear `ZoneInfo('America/Mexico_City')` o `timedelta(hours=-6)` — usar `core/timezone.py`.
+3. Para logica que necesite hora local (puntualidad HR, regla 5 AM analytics), usar `local_now(await get_business_tz(db))`.
+4. Todo timestamp mostrado al usuario pasa por conversion UTC -> local usando el setting configurado.
+5. Cambiar la zona horaria en el setting NO modifica datos historicos, solo cambia la presentacion.
 ---
 
 ## 13. SISTEMA DE ROLES Y PERMISOS (RBAC)
@@ -936,7 +993,7 @@ Si la respuesta es **si**, ese valor **NO debe estar escrito directamente en el 
 | Colores del tema (naranja R de Rico) | Media | Hardcodeado en CSS/JSX |
 | Imagen de fondo (textura de madera) | Baja | Hardcodeado en CSS |
 | Moneda y formato numerico | Alta | Hardcodeado como MXN |
-| Zona horaria | Alta | Hardcodeado como America/Mexico_City |
+| Zona horaria | ✅ IMPLEMENTADO | Configurable via `system_settings.business_timezone` y UI |
 | Nombre del sistema ("Imperial ERP") | Baja | Hardcodeado en el sidebar |
 
 ### Reglas para Desarrolladores e IAs
@@ -947,7 +1004,7 @@ Si la respuesta es **si**, ese valor **NO debe estar escrito directamente en el 
 
 3. **Los modulos deben poder activarse/desactivarse** por configuracion, no por codigo. La tabla `system_settings` ya soporta esto con claves booleanas.
 
-4. **La zona horaria debe ser configurable por instancia** (actualmente fija a Mexico City). Cuando se implemente multi-tenancy, cada tenant tendra su propia zona.
+4. **La zona horaria YA es configurable por instancia** via `system_settings.business_timezone` y el selector en Vista General (implementado 31 Ago 2026).
 
 5. **Todas las imagenes institucionales** (logo, fondos, iconos de marca) deben poder subirse desde la interfaz, no requerir despliegue de codigo.
 

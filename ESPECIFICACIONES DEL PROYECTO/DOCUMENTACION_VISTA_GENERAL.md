@@ -1,7 +1,7 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.0.0
-> **Ultima actualizacion:** 30 de agosto de 2026
+> **Version:** 1.1.0
+> **Ultima actualizacion:** 31 de agosto de 2026
 > **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview)
 
 ---
@@ -49,12 +49,13 @@ Un boton discreto "Editar" aparece en la esquina superior derecha del encabezado
 
 ### 3.2 Modal de Edicion
 
-Al presionar "Editar" se abre un modal con 4 campos:
+Al presionar "Editar" se abre un modal con 5 campos:
 
 1. **Nombre del Negocio** (clave: `business_name`)
 2. **Nombre de la Sucursal** (clave: `branch_name`)
 3. **Direccion** (clave: `business_address`)
 4. **Telefono** (clave: `business_phone`)
+5. **Zona Horaria** (clave: `business_timezone`) — Selector con 12 zonas horarias de America Latina, EEUU y España
 
 ### 3.3 Persistencia
 
@@ -141,3 +142,62 @@ INSERT INTO system_settings (key, value, description, category, input_type) VALU
 ---
 
 > **Nota:** Esta seccion esta disenada para crecer. En el futuro podria incluir KPIs en tiempo real, alertas del sistema, o un dashboard ejecutivo conectado a datos reales de ventas, produccion e inventario.
+
+## 5. ZONA HORARIA CONFIGURABLE (Implementado 31 Ago 2026)
+
+### 5.1 Principio: "Store UTC, Display Local"
+
+El sistema almacena todos los timestamps en UTC (hora del contenedor Docker). La zona horaria del negocio se usa exclusivamente para:
+- **Mostrar** horas al usuario en la UI
+- **Logica de negocio** que depende de hora local (puntualidad HR, regla "antes de 5 AM" en analytics)
+
+### 5.2 Selector de Zona Horaria
+
+El campo **Zona Horaria** en el modal de edicion ofrece 12 opciones:
+
+| Zona | Descripcion |
+|------|-------------|
+| `America/Mexico_City` | Mexico Central (UTC-6) — Default |
+| `America/Cancun` | Mexico Sureste (UTC-5) |
+| `America/Mazatlan` | Mexico Pacifico (UTC-7) |
+| `America/Tijuana` | Mexico Noroeste (UTC-8) |
+| `America/Bogota` | Colombia (UTC-5) |
+| `America/Lima` | Peru (UTC-5) |
+| `America/Santiago` | Chile (UTC-4) |
+| `America/Argentina/Buenos_Aires` | Argentina (UTC-3) |
+| `America/New_York` | Este EEUU (UTC-5) |
+| `America/Chicago` | Centro EEUU (UTC-6) |
+| `America/Los_Angeles` | Pacifico EEUU (UTC-8) |
+| `Europe/Madrid` | Espana (UTC+1) |
+
+### 5.3 Modal de Advertencia
+
+Al intentar cambiar la zona horaria, el sistema muestra un modal de advertencia premium (no `window.confirm`) que informa:
+- Que modulos se ven afectados (HR, reportes, estadisticas, regla de 5 AM)
+- La zona anterior (tachada en rojo) y la nueva (en verde)
+- Que los datos existentes NO se modifican
+- Botones Cancelar / Confirmar
+
+### 5.4 Arquitectura Backend
+
+La zona horaria se lee desde `system_settings` mediante la utilidad centralizada `apps/api/core/timezone.py`:
+
+| Funcion | Proposito |
+|---------|-----------|
+| `get_business_tz(db)` | Lee `business_timezone` de DB, cachea 5 minutos |
+| `local_now(tz)` | Retorna hora actual en la zona del negocio (naive) |
+| `utc_to_local(dt, tz)` | Convierte un datetime UTC a hora local (naive) |
+
+### 5.5 Modulos que usan la utilidad
+
+| Modulo | Archivo | Uso |
+|--------|---------|-----|
+| HR (check-in) | `modules/hr/service.py` | Determinar puntualidad con hora local |
+| Analytics | `modules/analytics/router.py` | Regla "antes de 5 AM = dia anterior" |
+| Grandeza | `modules/grandeza/service.py` | Timestamps de despacho y visitas |
+| POS (locks) | `modules/pos/occupancy.py` | NO usa — opera en UTC internamente |
+| POS (tickets) | `modules/pos/service.py` | NO usa — almacena UTC |
+
+---
+
+> **Esta documentacion refleja el estado del sistema al 31 de agosto de 2026.**
