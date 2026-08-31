@@ -88,7 +88,7 @@ export const ExperimentCenterUI = () => {
     }, []);
 
     // Info del negocio desde system_settings (BD)
-    const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '' });
+    const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '', business_timezone: 'America/Mexico_City' });
     const [showBizModal, setShowBizModal] = useState(false);
     const [bizForm, setBizForm] = useState({});
 
@@ -410,6 +410,23 @@ export const ExperimentCenterUI = () => {
                                             <div>
                                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Telefono</label>
                                                 <input type="text" value={bizForm.business_phone || ''} onChange={e => setBizForm(p => ({...p, business_phone: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Zona Horaria</label>
+                                                <select value={bizForm.business_timezone || 'America/Mexico_City'} onChange={e => setBizForm(p => ({...p, business_timezone: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none appearance-none cursor-pointer">
+                                                    <option value="America/Mexico_City">🇲🇽 México Central (UTC-6) — CDMX, Toluca, Guadalajara</option>
+                                                    <option value="America/Cancun">🇲🇽 México Sureste (UTC-5) — Cancún, Chetumal</option>
+                                                    <option value="America/Mazatlan">🇲🇽 México Pacífico (UTC-7) — Mazatlán, Sinaloa</option>
+                                                    <option value="America/Tijuana">🇲🇽 México Noroeste (UTC-8) — Tijuana, Mexicali</option>
+                                                    <option value="America/Bogota">🇨🇴 Colombia (UTC-5)</option>
+                                                    <option value="America/Lima">🇵🇪 Perú (UTC-5)</option>
+                                                    <option value="America/Santiago">🇨🇱 Chile (UTC-4)</option>
+                                                    <option value="America/Argentina/Buenos_Aires">🇦🇷 Argentina (UTC-3)</option>
+                                                    <option value="America/New_York">🇺🇸 Este EEUU (UTC-5)</option>
+                                                    <option value="America/Chicago">🇺🇸 Centro EEUU (UTC-6)</option>
+                                                    <option value="America/Los_Angeles">🇺🇸 Pacífico EEUU (UTC-8)</option>
+                                                    <option value="Europe/Madrid">🇪🇸 España (UTC+1)</option>
+                                                </select>
                                             </div>
                                         </div>
                                         <div className="flex gap-4 pt-2">
