@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 
 // Importación de módulos creados (Simulada para el demo)
 import { B2BManagerUI } from './b2b/B2BManagerUI';
@@ -75,6 +75,12 @@ export const ExperimentCenterUI = () => {
     const [activeModule, setActiveModule] = useState(defaultModule);
     const [userPermissions, setUserPermissions] = useState({});
     const [userProfileId, setUserProfileId] = useState(null);
+
+    // Memoizar currentUser para evitar que useEffect cleanups espurios
+    // destruyan los terminal_locks en cada re-render (Bug Terminal Fantasma v2)
+    const currentUser = useMemo(() => ({
+        id: userId, name: userName, role: userRole, permissions: userPermissions
+    }), [userId, userName, userRole, userPermissions]);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(defaultSidebar);
     const [showCheckInModal, setShowCheckInModal] = useState(false);
     const [showCheckOutModal, setShowCheckOutModal] = useState(false);
@@ -490,7 +496,7 @@ export const ExperimentCenterUI = () => {
                                 <RetailVisionPOS 
                                     initialCategories={categories} 
                                     initialProducts={REAL_PRODUCTS}
-                                    currentUser={{ id: userId, name: userName, role: userRole, permissions: userPermissions }}
+                                    currentUser={currentUser}
                                     onForceLogout={() => setIsAuthenticated(false)}
                                     assignedTerminal={new URLSearchParams(window.location.search).get('terminal')}
                                 />

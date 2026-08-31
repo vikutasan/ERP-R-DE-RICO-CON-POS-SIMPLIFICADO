@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { posService } from '../services/POSService';
 
 /**
@@ -24,6 +24,13 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
         checkLockPolling: 15000,
         heartbeatInterval: 20000
     });
+
+    // Refs para el cleanup — evita que el efecto dependa de currentUser/selectedTerminal
+    // y dispare unlocks espurios al cambiar la referencia del objeto (Bug Terminal Fantasma v2)
+    const selectedTerminalRef = useRef(selectedTerminal);
+    const currentUserRef = useRef(currentUser);
+    selectedTerminalRef.current = selectedTerminal;
+    currentUserRef.current = currentUser;
 
     // Cargar ajustes del sistema al montar
     useEffect(() => {
@@ -102,14 +109,18 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
         return () => clearInterval(intervalId);
     }, [selectedTerminal, currentUser, forceLogoutModal, settings.checkLockPolling]);
 
-    // Limpieza al desmontar: liberar terminal si el usuario cierra sesiÃ³n o cierra la pestaÃ±a
+    // Limpieza al desmontar: liberar terminal si el usuario cierra sesion o cierra la pestana
+    // SOLO se ejecuta al desmontar el componente ([] vacio) — usa refs para leer valores actuales
+    // sin causar re-ejecuciones del efecto que disparen unlocks espurios (Bug Terminal Fantasma v2)
     useEffect(() => {
         return () => {
-            if (selectedTerminal && currentUser?.id) {
-                posService.unlockTerminal(selectedTerminal, currentUser.id).catch(e => console.warn("Auto-unlock en limpieza fallÃ³", e));
+            const terminal = selectedTerminalRef.current;
+            const user = currentUserRef.current;
+            if (terminal && user?.id) {
+                posService.unlockTerminal(terminal, user.id).catch(e => console.warn("Auto-unlock en limpieza fallo", e));
             }
         };
-    }, [selectedTerminal, currentUser]);
+    }, []); // Dependencias vacias: solo se ejecuta al DESMONTAR
 
     // Heartbeat: renueva el timestamp del candado para evitar que expire por TTL
     useEffect(() => {
