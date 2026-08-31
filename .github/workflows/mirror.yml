@@ -1,0 +1,25 @@
+﻿name: Mirror to San Pablo
+
+on:
+  push:
+    branches:
+      - '**'
+  tags:
+    - '**'
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necesario para traer todo el historial, ramas y tags
+
+      - name: Mirror to Target Repository
+        env:
+          # Usamos el token para autenticarnos en el repo destino
+          TARGET_REPO: https://x-access-token:${{ secrets.ENTERPRISE_PAT }}@github.com/rdericosanpablo-commits/ERP-R-DE-RICO-SAN-PABLO.git
+        run: |
+          # El flag --mirror empuja todas las ramas (refs/heads) y tags (refs/tags)
+          git push --mirror $TARGET_REPO
