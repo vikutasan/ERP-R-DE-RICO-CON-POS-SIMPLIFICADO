@@ -90,6 +90,7 @@ export const ExperimentCenterUI = () => {
     // Info del negocio desde system_settings (BD)
     const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '', business_timezone: 'America/Mexico_City' });
     const [showBizModal, setShowBizModal] = useState(false);
+    const [tzWarning, setTzWarning] = useState(null); // { oldTz, newTz }
     const [bizForm, setBizForm] = useState({});
 
     useEffect(() => {
@@ -416,22 +417,9 @@ export const ExperimentCenterUI = () => {
                                                 <select value={bizForm.business_timezone || 'America/Mexico_City'} onChange={e => {
                                                     const newTz = e.target.value;
                                                     const oldTz = bizForm.business_timezone || 'America/Mexico_City';
-                                                    if (newTz !== oldTz && !window.confirm(
-                                                        '⚠️ ADVERTENCIA: CAMBIO DE ZONA HORARIA\n\n' +
-                                                        'Estás cambiando la zona horaria del sistema.\n\n' +
-                                                        'Esto afectará:\n' +
-                                                        '• Cómo se muestran las horas en TODO el ERP\n' +
-                                                        '• Check-in / Check-out de empleados\n' +
-                                                        '• Reportes y estadísticas\n' +
-                                                        '• Regla de día de negocio (antes de 5 AM)\n\n' +
-                                                        'Los datos existentes NO se modifican.\n\n' +
-                                                        '¿Estás seguro de cambiar de\n' +
-                                                        oldTz + '\na\n' + newTz + '?'
-                                                    )) {
-                                                        e.target.value = oldTz;
-                                                        return;
+                                                    if (newTz !== oldTz) {
+                                                        setTzWarning({ oldTz, newTz });
                                                     }
-                                                    setBizForm(p => ({...p, business_timezone: newTz}));
                                                 }} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none appearance-none cursor-pointer">
                                                     <option value="America/Mexico_City">🇲🇽 México Central (UTC-6) — CDMX, Toluca, Guadalajara</option>
                                                     <option value="America/Cancun">🇲🇽 México Sureste (UTC-5) — Cancún, Chetumal</option>
@@ -454,6 +442,36 @@ export const ExperimentCenterUI = () => {
                                         </div>
                                     </div>
                                 </div>
+                            )}
+
+                            {tzWarning && (
+                            <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[60]">
+                                <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-8 max-w-md w-full mx-4 shadow-[0_0_60px_rgba(249,115,22,0.3)]">
+                                    <div className="text-center mb-6">
+                                        <div className="text-5xl mb-3">⚠️</div>
+                                        <h3 className="text-xl font-black text-orange-400 uppercase tracking-wider">Cambio de Zona Horaria</h3>
+                                    </div>
+                                    <div className="space-y-3 text-sm text-gray-300 mb-6">
+                                        <p className="font-bold text-white">Esto afectará todo el sistema:</p>
+                                        <ul className="space-y-1.5 ml-2">
+                                            <li className="flex items-center gap-2"><span className="text-orange-400">•</span> Horas mostradas en TODO el ERP</li>
+                                            <li className="flex items-center gap-2"><span className="text-orange-400">•</span> Check-in / Check-out de empleados</li>
+                                            <li className="flex items-center gap-2"><span className="text-orange-400">•</span> Reportes y estadísticas</li>
+                                            <li className="flex items-center gap-2"><span className="text-orange-400">•</span> Regla de día de negocio (5 AM)</li>
+                                        </ul>
+                                        <div className="bg-black/40 rounded-xl p-3 mt-4 border border-gray-700">
+                                            <p className="text-gray-500 text-xs uppercase font-bold mb-1">Cambio solicitado</p>
+                                            <p className="text-red-400 line-through text-xs">{tzWarning.oldTz}</p>
+                                            <p className="text-green-400 font-bold text-xs mt-1">→ {tzWarning.newTz}</p>
+                                        </div>
+                                        <p className="text-gray-500 text-xs italic mt-2">Los datos existentes no se modifican.</p>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button onClick={() => setTzWarning(null)} className="flex-1 p-3 rounded-xl border border-gray-600 text-gray-400 font-bold uppercase text-sm hover:bg-gray-800 transition-colors">Cancelar</button>
+                                        <button onClick={() => { setBizForm(p => ({...p, business_timezone: tzWarning.newTz})); setTzWarning(null); }} className="flex-1 p-3 rounded-xl bg-orange-500 text-white font-black uppercase text-sm hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/30">Confirmar</button>
+                                    </div>
+                                </div>
+                            </div>
                             )}
 
                         </div>
