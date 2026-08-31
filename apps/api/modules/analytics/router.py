@@ -1,11 +1,9 @@
-from fastapi import APIRouter, Depends, Query, Body, HTTPException
+﻿from fastapi import APIRouter, Depends, Query, Body, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from datetime import date, datetime, timedelta, timezone
 
-# Zona horaria de México Central (UTC-6) — Regla 4.6 del contexto maestro
-# Toluca no observa horario de verano desde la reforma 2022
-MEXICO_TZ = timezone(timedelta(hours=-6))
+from core.timezone import get_business_tz, local_now
 
 from core.database import get_db
 from modules.analytics import schemas, service
@@ -38,7 +36,8 @@ async def get_rankings(
     else:
         # Regla día de negocio: antes de 5 AM, usar "ayer" como hoy
         # (la panadería está cerrada, evita datos vacíos del día nuevo)
-        mexico_now = datetime.now(MEXICO_TZ)
+        tz = await get_business_tz(db)
+        mexico_now = local_now(tz)
         if mexico_now.hour < 5:
             end_date = (mexico_now - timedelta(days=1)).date()
         else:

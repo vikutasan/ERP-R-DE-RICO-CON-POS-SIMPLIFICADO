@@ -1,4 +1,4 @@
-"""
+﻿"""
 Módulo de Recursos Humanos — Lógica de Negocio (Fase 1)
 
 Servicios principales:
@@ -14,9 +14,11 @@ from sqlalchemy import select, func, and_, extract
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from datetime import date, time, datetime, timedelta
-from zoneinfo import ZoneInfo
+from core.timezone import get_business_tz, local_now
 
-MEXICO_TZ = ZoneInfo('America/Mexico_City')
+async def _biz_now(db):
+    """Hora actual en la zona horaria configurada del negocio."""
+    return local_now(await get_business_tz(db))
 from typing import Optional
 
 from . import models, schemas
@@ -33,8 +35,8 @@ async def check_in(db: AsyncSession, employee_id: int) -> dict:
     Determina si fue puntual basándose en el turno asignado.
     SEGURO: Si falla, no afecta el login del ERP.
     """
-    hoy = datetime.now(MEXICO_TZ).date()
-    ahora = datetime.now(MEXICO_TZ).time()
+    hoy = (await _biz_now(db)).date()
+    ahora = (await _biz_now(db)).time()
 
     # Verificar si el empleado está excluido de attendance
     emp_result = await db.execute(
@@ -115,8 +117,8 @@ async def check_in(db: AsyncSession, employee_id: int) -> dict:
 
 async def check_out(db: AsyncSession, employee_id: int, tipo_salida: str = "normal", observaciones: str = None) -> dict:
     """Registra la salida del empleado."""
-    hoy = datetime.now(MEXICO_TZ).date()
-    ahora = datetime.now(MEXICO_TZ).time()
+    hoy = (await _biz_now(db)).date()
+    ahora = (await _biz_now(db)).time()
 
     existing = await db.execute(
         select(models.HRAttendance).where(
@@ -402,7 +404,7 @@ async def obtener_cumpleaños_mes(db: AsyncSession, mes: int = None) -> list[dic
     )
 
     cumpleaños = []
-    hoy = datetime.now(MEXICO_TZ).date()
+    hoy = (await _biz_now(db)).date()
     for hr_ext, emp in result.all():
         if hr_ext.fecha_nacimiento:
             edad = hoy.year - hr_ext.fecha_nacimiento.year

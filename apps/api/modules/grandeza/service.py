@@ -1,4 +1,4 @@
-"""
+﻿"""
 MÓDULO: grandeza/service.py
 Servicios de negocio para el módulo Reparto Pan Grandeza.
 Fase 0: Solo operaciones CRUD base. La lógica inteligente se agrega en fases posteriores.
@@ -8,16 +8,16 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import date, datetime
-from zoneinfo import ZoneInfo
+
 
 # ─── Timezone: Hora oficial de México para todos los timestamps de Grandeza ───
 # Los contenedores Docker corren en UTC por defecto. Esta función garantiza
 # que los timestamps se guarden en hora local de México sin depender del SO.
-MEXICO_TZ = ZoneInfo('America/Mexico_City')
+from core.timezone import get_business_tz, local_now
 
-def _now_mexico():
-    """Retorna datetime naive en hora de Ciudad de México (sin tzinfo, compatible con PostgreSQL)."""
-    return datetime.now(MEXICO_TZ).replace(tzinfo=None)
+async def _now_mexico(db):
+    """Retorna datetime naive en hora del negocio (configurable via system_settings)."""
+    return local_now(await get_business_tz(db))
 
 from .models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
@@ -341,7 +341,7 @@ class GrandezaService:
             return None
             
         if data.get("status") == "EN_RUTA" and journey.status != "EN_RUTA" and not journey.dispatched_at:
-            journey.dispatched_at = _now_mexico()
+            journey.dispatched_at = await _now_mexico(db)
             
         for key, value in data.items():
             if value is not None and hasattr(journey, key):
@@ -481,7 +481,7 @@ class GrandezaService:
                     detail=f"Ya existe una visita completada para este cliente (ID: {client_id}) en esta jornada."
                 )
 
-        ahora_mexico = _now_mexico()
+        ahora_mexico = await _now_mexico(db)
         visit = GrandezaVisit(
             journey_id=journey_id,
             client_id=client_id,
@@ -689,7 +689,7 @@ class GrandezaService:
             journey_id=journey_id,
             description=data["description"],
             amount=float(data["amount"]),
-            created_at=_now_mexico(),
+            created_at=await _now_mexico(db),
         )
         db.add(expense)
         await db.flush()
