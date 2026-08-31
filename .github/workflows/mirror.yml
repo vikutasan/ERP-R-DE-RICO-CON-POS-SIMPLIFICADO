@@ -22,3 +22,4 @@ jobs:
           TARGET_REPO: https://x-access-token:${{ secrets.ENTERPRISE_PAT }}@github.com/rdericosanpablo-commits/ERP-R-DE-RICO-SAN-PABLO.git
         run: |
           git push --mirror $TARGET_REPO
+
