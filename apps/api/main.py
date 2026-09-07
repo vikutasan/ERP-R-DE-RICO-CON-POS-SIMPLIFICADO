@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from modules.catalog.router import router as catalog_router
@@ -14,6 +14,7 @@ from modules.network.router import router as network_router
 from modules.grandeza.router import router as grandeza_router
 from modules.hr.router import router as hr_router
 from modules.warehouse.router import router as warehouse_router
+from modules.heladeria.router import router as heladeria_router
 from core.database import AsyncSessionLocal, engine, Base
 from modules.catalog.models import Category, Product, ProductTechnicalSheet
 from modules.security.models import SecurityProfile, Employee
@@ -23,6 +24,7 @@ from modules.settings.service import seed_settings as seed_system_settings
 # Importar TODOS los modelos para que Base.metadata los conozca
 from modules.pos.models import Ticket, TerminalSession, TerminalLock
 from modules.cash.models import CashSession, CashMovement
+from modules.heladeria.models import HeladeriaProductConfig, TicketItemComponent
 from modules.settings.models import SystemSetting
 from modules.production.models import Dough, DoughBatchConfig, DoughIngredient, DoughProcedureStep, DoughProductRelation, ProductionEquipment
 from modules.orders.models import Order
@@ -238,6 +240,7 @@ app.include_router(network_router, prefix="/api/v1/network", tags=["Network"])
 app.include_router(grandeza_router, prefix="/api/v1/grandeza", tags=["Grandeza"])
 app.include_router(hr_router, prefix="/api/v1/hr", tags=["HR"])
 app.include_router(warehouse_router, prefix="/api/v1/warehouse", tags=["Warehouse"])
+app.include_router(heladeria_router, prefix="/api/v1/heladeria", tags=["Heladeria"])
 
 # Montar carpetas de archivos estÃƒÂ¡ticos
 app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")
