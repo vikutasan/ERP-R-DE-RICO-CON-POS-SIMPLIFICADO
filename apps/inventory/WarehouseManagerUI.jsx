@@ -1,6 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import axios from 'axios';
 import REAL_PRODUCTS from '../../importar_productos_AQUI.json';
 import { PROVIDERS_MASTER } from './PurchaseManagerUI';
+import { CONFIG } from '../pos/config';
+
+const API_BASE = CONFIG.API_BASE_URL.replace('/api/v1', '');
 
 /**
  * R DE RICO - WAREHOUSE & STORAGE MANAGER
@@ -10,17 +14,10 @@ import { PROVIDERS_MASTER } from './PurchaseManagerUI';
  */
 
 const INITIAL_TYPES = {
-    EX_PT: { label: 'Exhibición Pan Terminado', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-    EX_REV: { label: 'Exhibición Reventa', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
-    EX_HEL: { label: 'Exhibición Helados', color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
-    EX_PAL: { label: 'Exhibición Paletas', color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
-    AL_HEL_PAL: { label: 'Alm. Helados y Paletas', color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
-    AL_INS_PAN: { label: 'Alm. Insumos Panadería', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
-    AL_EMP: { label: 'Alm. Empaques', color: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/20' },
-    AL_REV: { label: 'Alm. Productos Reventa', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20' },
-    AL_LIM: { label: 'Alm. Equipo/Limpieza', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
-    AL_PED: { label: 'Alm. Pedidos Listos', color: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/20' },
-    AL_KIOSKO: { label: 'Alm. Insumos Kiosko', color: 'text-lime-400', bg: 'bg-lime-500/10', border: 'border-lime-500/20' }
+    ALMACEN: { label: 'Almacén General', color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
+    ALMACEN_EXHIBIDOR: { label: 'Almacén/Exhibidor', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+    EXHIBIDOR_PAN_DULCE: { label: 'Exhibidor Pan Dulce', color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
+    EXHIBIDOR_PAN_BLANCO: { label: 'Exhibidor Pan Blanco', color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20' },
 };
 
 const INITIAL_WAREHOUSES = [
@@ -47,7 +44,21 @@ const UNIT_OPTIONS = {
 };
 
 export const WarehouseManagerUI = () => {
-    const [warehouses, setWarehouses] = useState(INITIAL_WAREHOUSES);
+    const [warehouses, setWarehouses] = useState([]);
+    const [showAiScanner, setShowAiScanner] = useState(false);
+    
+    const fetchWarehouses = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
+            setWarehouses(res.data);
+        } catch(e) {
+            console.error(e);
+        }
+    };
+
+    useEffect(() => {
+        fetchWarehouses();
+    }, []);
     const [warehouseTypes, setWarehouseTypes] = useState(INITIAL_TYPES);
     const [selectedWH, setSelectedWH] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -118,87 +129,64 @@ export const WarehouseManagerUI = () => {
     const [whInventories, setWhInventories] = useState({});
 
     const getWHContent = (whId) => {
-        if (!whInventories[whId]) {
-            // Inicializar con data detallada mock
-            return REAL_PRODUCTS.slice(0, 5).map(p => ({
-                ...p,
-                stock: Math.floor(Math.random() * 50),
-                provider: 'Planta R de Rico',
-                weight: Math.floor(Math.random() * 1000) + 100, // gr/ml
-                volume: Math.floor(Math.random() * 500) + 50,
-                presentation: 'UNIDAD', // UNIDAD, KILO, CAJA
-                unitsPerBox: 12,
-                costPerPresentation: p.price,
-                imgUrl: null,
-                unit: (p.unit || 'PZA').toUpperCase(),
-                unitQuantity: 1
-            }));
-        }
-        return whInventories[whId];
+        const wh = warehouses.find(w => w.id === whId);
+        return wh ? wh.items : [];
     };
 
-    const handleSaveWH = (formData) => {
-        if (formData.id) {
-            // Actualizar existente
-            setWarehouses(warehouses.map(wh => wh.id === formData.id ? { ...wh, ...formData } : wh));
-            if (selectedWH && selectedWH.id === formData.id) {
-                setSelectedWH({ ...selectedWH, ...formData });
+    const handleSaveWH = async (formData) => {
+        try {
+            if (formData.id && !formData.id.startsWith('wh_')) {
+                await axios.put(`${API_BASE}/api/v1/warehouse/${formData.id}`, formData);
+            } else {
+                const payload = {
+                    name: formData.name,
+                    type: formData.type,
+                    icon: formData.icon,
+                    capacity: formData.capacity,
+                    active: true
+                };
+                await axios.post(`${API_BASE}/api/v1/warehouse`, payload);
             }
-        } else {
-            // Crear nuevo
-            const newWH = {
-                ...formData,
-                id: `wh_${Date.now()}`,
-                current: 0
-            };
-            setWarehouses([...warehouses, newWH]);
+            fetchWarehouses();
+            setShowWHEditor(false);
+            setEditingWHData(null);
+        } catch(e) {
+            alert('Error guardando almacén');
         }
-        setShowWHEditor(false);
-        setEditingWHData(null);
     };
 
-    const handleDeleteWH = (whId) => {
-        setWarehouses(warehouses.filter(wh => wh.id !== whId));
-        // Limpieza de inventario mock
-        const newInvs = { ...whInventories };
-        delete newInvs[whId];
-        setWhInventories(newInvs);
-        
-        setWhToDelete(null);
-        setSelectedWH(null);
+    const handleDeleteWH = async (whId) => {
+        try {
+            await axios.delete(`${API_BASE}/api/v1/warehouse/${whId}`);
+            setWarehouses(warehouses.filter(wh => wh.id !== whId));
+            setWhToDelete(null);
+            setSelectedWH(null);
+        } catch(e) {
+            alert(e.response?.data?.detail || 'Error eliminando almacén');
+        }
     };
 
-    const addItemToWH = (product) => {
-        const currentContent = getWHContent(selectedWH.id);
-        if (currentContent.find(item => item.sku === product.sku)) {
-            alert('Este producto ya existe en este almacén.');
-            return;
-        }
-
-        const newItem = { 
-            ...product, 
-            stock: 0, 
-            provider: selectedWH.type.startsWith('EX_') ? 'Producción Interna' : 'Proveedor Externo',
-            weight: 0,
-            volume: 0,
-            presentation: 'UNIDAD',
-            unitsPerBox: 1,
-            costPerPresentation: product.price,
-            imgUrl: null,
-            unit: (product.unit || 'PZA').toUpperCase(),
-            unitQuantity: 1,
-            minStock: 5 // Valor por defecto para alertas
+    const addItemToWH = async (product) => {
+        const payload = {
+            sku: product.sku,
+            name: product.name,
+            quantity: 0,
+            unit: product.unit || 'PZA',
+            category: product.category || 'NA',
+            price: product.price || 0
         };
-        
-        const newContent = [...currentContent, newItem];
-        
-        setWhInventories({
-            ...whInventories,
-            [selectedWH.id]: newContent
-        });
-        setShowItemPicker(false);
-        // Abrir automáticamente la ficha técnica para que el usuario ingrese los datos
-        setEditingItem({ whId: selectedWH.id, productSku: product.sku, data: newItem });
+        try {
+            await axios.post(`${API_BASE}/api/v1/warehouse/${selectedWH.id}/items`, payload);
+            fetchWarehouses();
+            
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
+            const updated = res.data.find(w => w.id === selectedWH.id);
+            if(updated) setSelectedWH(updated);
+            
+            setShowItemPicker(false);
+        } catch(e) {
+            alert('Error agregando artículo');
+        }
     };
 
     const handleUpdateItemInventory = (whId, sku, updatedData) => {
@@ -227,6 +215,24 @@ export const WarehouseManagerUI = () => {
             [whId]: newContent
         });
         setEditingItem(null);
+    };
+
+    const handleImageUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await axios.post(`${API_BASE}/api/v1/warehouse/upload-image`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setEditingItem({
+                ...editingItem,
+                data: { ...editingItem.data, imgUrl: res.data.image_url }
+            });
+        } catch(err) {
+            alert("Error al subir imagen");
+        }
     };
 
     const handleRemoveItemFromWH = (whId, sku, itemName) => {
@@ -525,6 +531,14 @@ export const WarehouseManagerUI = () => {
                             >
                                 📦⬇️ Bóveda ({discontinuedItems.length})
                             </button>
+                            {(selectedWH.type === 'EXHIBIDOR_PAN_DULCE' || selectedWH.type === 'EXHIBIDOR_PAN_BLANCO') && (
+                                <button 
+                                    onClick={() => setShowAiScanner(true)}
+                                    className="bg-pink-600 h-14 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest text-white hover:scale-105 active:scale-95 transition-all shadow-xl shadow-pink-600/20 flex items-center gap-2"
+                                >
+                                    <span>👁️</span> Escáner IA
+                                </button>
+                            )}
                             <button 
                                 onClick={() => setShowItemPicker(true)}
                                 className="bg-[#c1d72e] h-14 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest text-black hover:scale-105 active:scale-95 transition-all"
@@ -786,6 +800,37 @@ export const WarehouseManagerUI = () => {
                 </div>
             )}
 
+            {/* Modal Escáner IA */}
+            {showAiScanner && (
+                <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowAiScanner(false)} />
+                    <div className="relative w-full max-w-2xl bg-[#0a0a0a] border border-pink-900/50 rounded-[40px] shadow-2xl overflow-hidden flex flex-col h-[70vh]">
+                        <header className="p-8 border-b border-gray-800">
+                            <h3 className="text-2xl font-black uppercase italic tracking-tighter text-pink-500">Escáner IA de Charolas</h3>
+                            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-1">Conteo automatizado mediante Visión Computacional</p>
+                        </header>
+                        <div className="flex-1 flex flex-col items-center justify-center p-10 relative">
+                            <div className="w-full h-full border-2 border-dashed border-pink-500/30 rounded-3xl flex items-center justify-center relative overflow-hidden bg-black/40">
+                                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 animate-pulse"></div>
+                                <div className="text-center z-10">
+                                    <span className="text-6xl block mb-4">📷</span>
+                                    <h4 className="text-white font-bold mb-2">Apuntando a charola...</h4>
+                                    <p className="text-xs text-gray-400">La cámara está lista para procesar el conteo</p>
+                                </div>
+                                <div className="absolute top-0 left-0 w-full h-1 bg-pink-500 animate-[scan_2s_ease-in-out_infinite]" />
+                            </div>
+                        </div>
+                        <footer className="p-8 border-t border-gray-800 bg-black/40 flex justify-end gap-4">
+                            <button onClick={() => setShowAiScanner(false)} className="px-6 py-3 rounded-xl bg-gray-800 text-xs font-bold hover:bg-gray-700 text-white">Cancelar</button>
+                            <button className="px-8 py-3 rounded-xl bg-pink-600 text-xs font-bold hover:bg-pink-500 shadow-lg shadow-pink-600/20 text-white" onClick={() => {
+                                alert('Simulando escaneo: 12 piezas de Concha Blanca detectadas.');
+                                setShowAiScanner(false);
+                            }}>Capturar y Contar</button>
+                        </footer>
+                    </div>
+                </div>
+            )}
+
             {/* Modal: Ficha Técnica de Artículo (Logística) */}
             {editingItem && (
                 <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
@@ -807,9 +852,15 @@ export const WarehouseManagerUI = () => {
                                                 <div className="absolute inset-0 border-4 border-red-600/50 rounded-[32px] animate-pulse pointer-events-none" />
                                             )}
                                         </div>
-                                        <button className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all text-white">
-                                            <span className="text-xl">🖨️</span> QR
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <button className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all text-white">
+                                                <span className="text-xl">🔲</span> QR
+                                            </button>
+                                            <input type="file" id="imageUpload" style={{display: 'none'}} onChange={handleImageUpload} />
+                                            <button onClick={() => document.getElementById('imageUpload').click()} className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all text-white">
+                                                <span className="text-xl">📷</span> FOTO
+                                            </button>
+                                        </div>
                                     </div>
                                     
                                     {/* Datos Maestros */}

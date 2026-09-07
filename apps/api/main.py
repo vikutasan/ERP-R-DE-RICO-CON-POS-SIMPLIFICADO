@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from modules.catalog.router import router as catalog_router
@@ -13,6 +13,7 @@ from modules.analytics.router import router as analytics_router
 from modules.network.router import router as network_router
 from modules.grandeza.router import router as grandeza_router
 from modules.hr.router import router as hr_router
+from modules.warehouse.router import router as warehouse_router
 from core.database import AsyncSessionLocal, engine, Base
 from modules.catalog.models import Category, Product, ProductTechnicalSheet
 from modules.security.models import SecurityProfile, Employee
@@ -44,6 +45,7 @@ from modules.hr.models import (
     HRKpi, HRKpiConfig, HRExitSurvey, HRExitSurveyConfig,
     HRSeverance, HRSeveranceConfig
 )
+from modules.warehouse.models import Almacen, StockAlmacen, MovimientoInventario, WarehouseEvent, Insumo
 
 app = FastAPI(
     title="R de Rico ERP API",
@@ -60,26 +62,28 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# AUTO-SEED: Crear tablas + usuario admin en primera ejecución
+# AUTO-SEED: Crear tablas + usuario admin en primera ejecuciÃƒÂ³n
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def auto_seed_on_first_boot():
     """
-    Detecta si la base de datos está vacía (instalación nueva) y:
+    Detecta si la base de datos estÃƒÂ¡ vacÃƒÂ­a (instalaciÃƒÂ³n nueva) y:
     1. Crea todas las tablas (idempotente - no toca las existentes).
     2. Siembra los 3 perfiles de seguridad base.
-    3. Crea el usuario ADMINISTRADOR de emergencia (código 1111).
+    3. Crea el usuario ADMINISTRADOR de emergencia (cÃƒÂ³digo 1111).
     Seguro para ejecutarse en cada reinicio - no duplica ni sobreescribe datos.
     """
     try:
         # Paso 1: Crear tablas que no existan (idempotente)
         async with engine.begin() as conn:
+            await conn.execute(text('DROP TABLE IF EXISTS warehouse_items CASCADE'))
+            await conn.execute(text('DROP TABLE IF EXISTS warehouses CASCADE'))
             await conn.run_sync(Base.metadata.create_all)
-        print("✅ Tablas verificadas/creadas.")
+        print("Ã¢Å“â€¦ Tablas verificadas/creadas.")
 
         # Paso 1.5: Migraciones de columnas nuevas (idempotente)
-        # create_all no agrega columnas a tablas existentes (ver Error F — Grandeza docs).
-        # Cada migración verifica existencia antes de ejecutar ALTER TABLE.
+        # create_all no agrega columnas a tablas existentes (ver Error F Ã¢â‚¬â€ Grandeza docs).
+        # Cada migraciÃƒÂ³n verifica existencia antes de ejecutar ALTER TABLE.
         migrations = [
             ("grandeza_visits", "ext_client_phone", "VARCHAR"),
             ("grandeza_orders", "client_phone", "VARCHAR"),
@@ -98,7 +102,7 @@ async def auto_seed_on_first_boot():
                 )
                 if not check.scalar():
                     await conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {column} {col_type}'))
-                    print(f"  ✅ Migración: {table}.{column} agregada.")
+                    print(f"  Ã¢Å“â€¦ MigraciÃƒÂ³n: {table}.{column} agregada.")
 
         async with AsyncSessionLocal() as session:
             # Paso 2: Sembrar perfiles de seguridad base
@@ -118,7 +122,7 @@ async def auto_seed_on_first_boot():
                 },
                 {
                     "name": "MANAGER",
-                    "description": "Gestión operativa",
+                    "description": "GestiÃƒÂ³n operativa",
                     "permissions": {
                         "overview": "full", "pos_retail": "full", "inventory": "full",
                         "warehouse": "full", "vision_train": "full", "production": "full",
@@ -129,7 +133,7 @@ async def auto_seed_on_first_boot():
                 },
                 {
                     "name": "CAJERO",
-                    "description": "Operación de ventas",
+                    "description": "OperaciÃƒÂ³n de ventas",
                     "permissions": {
                         "overview": "full", "pos_retail": "full", "invoicing": "limited"
                     },
@@ -166,30 +170,30 @@ async def auto_seed_on_first_boot():
                     is_active=True
                 )
                 session.add(admin_user)
-                print("⚡ Primera ejecución detectada. Usuario ADMIN '1111' creado.")
+                print("Ã¢Å¡Â¡ Primera ejecuciÃƒÂ³n detectada. Usuario ADMIN '1111' creado.")
 
             await session.commit()
-            print("✅ Seed de seguridad verificado.")
+            print("Ã¢Å“â€¦ Seed de seguridad verificado.")
 
             # Paso 4: Sembrar ajustes de sistema (polling, TTL, heartbeat)
             await seed_system_settings(session)
-            print("✅ Ajustes de sistema verificados.")
+            print("Ã¢Å“â€¦ Ajustes de sistema verificados.")
 
             # Paso 5: Sembrar datos base de RRHH (puestos + reglamento)
             from modules.hr.service import seed_puestos_base, seed_regulaciones
             await seed_puestos_base(session)
             await seed_regulaciones(session)
-            print("✅ Datos base de RRHH verificados.")
+            print("Ã¢Å“â€¦ Datos base de RRHH verificados.")
 
     except Exception as e:
-        print(f"❌ Error en auto-seed: {e}")
+        print(f"Ã¢ÂÅ’ Error en auto-seed: {e}")
 
 # ---------------------------------------------------------------------------
-# Asegurar categorías de sistema
+# Asegurar categorÃƒÂ­as de sistema
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def ensure_system_categories():
-    """Asegura que la categoría 'DESCONTINUADOS' exista como categoría de sistema."""
+    """Asegura que la categorÃƒÂ­a 'DESCONTINUADOS' exista como categorÃƒÂ­a de sistema."""
     async with AsyncSessionLocal() as db:
         try:
             stmt = select(Category).where(Category.name == "DESCONTINUADOS")
@@ -199,22 +203,22 @@ async def ensure_system_categories():
             if not category:
                 new_cat = Category(
                     name="DESCONTINUADOS",
-                    icon="🗑️",
+                    icon="Ã°Å¸â€”â€˜Ã¯Â¸Â",
                     position=999,
                     vision_enabled=False,
                     is_system=True
                 )
                 db.add(new_cat)
                 await db.commit()
-                print("Categoría 'DESCONTINUADOS' creada como sistema.")
+                print("CategorÃƒÂ­a 'DESCONTINUADOS' creada como sistema.")
             else:
                 if not category.is_system:
                     category.is_system = True
                     category.vision_enabled = False
                     await db.commit()
-                    print("Categoría 'DESCONTINUADOS' actualizada como sistema.")
+                    print("CategorÃƒÂ­a 'DESCONTINUADOS' actualizada como sistema.")
         except Exception as e:
-            print(f"Error asegurando categorías de sistema: {e}")
+            print(f"Error asegurando categorÃƒÂ­as de sistema: {e}")
             await db.rollback()
 
 @app.get("/health")
@@ -233,11 +237,13 @@ app.include_router(analytics_router, prefix="/api/v1", tags=["Analytics"])
 app.include_router(network_router, prefix="/api/v1/network", tags=["Network"])
 app.include_router(grandeza_router, prefix="/api/v1/grandeza", tags=["Grandeza"])
 app.include_router(hr_router, prefix="/api/v1/hr", tags=["HR"])
+app.include_router(warehouse_router, prefix="/api/v1/warehouse", tags=["Warehouse"])
 
-# Montar carpetas de archivos estáticos
+# Montar carpetas de archivos estÃƒÂ¡ticos
 app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")
 app.mount("/static/images", StaticFiles(directory="static/images"), name="images")
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=3001, reload=True)
+
