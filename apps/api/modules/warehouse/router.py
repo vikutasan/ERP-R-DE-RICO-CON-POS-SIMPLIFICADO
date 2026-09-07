@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from core.database import get_db
@@ -69,3 +69,35 @@ async def list_insumos(db: AsyncSession = Depends(get_db)):
 @router.post("/insumos", response_model=schemas.InsumoResponse)
 async def create_insumo(payload: schemas.InsumoCreate, db: AsyncSession = Depends(get_db)):
     return await warehouse_svc.create_insumo(db, payload)
+
+# --- Endpoints nuevos (Plan V6) ---
+
+@router.put("/{warehouse_id}/stock/{stock_id}", response_model=schemas.StockAlmacenResponse)
+async def update_stock(warehouse_id: str, stock_id: str, payload: schemas.StockAlmacenUpdate, db: AsyncSession = Depends(get_db)):
+    """Actualizar stock con bloqueo optimista (409 si versión no coincide)."""
+    return await warehouse_svc.update_stock(db, warehouse_id, stock_id, payload)
+
+@router.post("/{warehouse_id}/entrada-masiva")
+async def bulk_entry(warehouse_id: str, payload: schemas.EntradaMasivaRequest, db: AsyncSession = Depends(get_db)):
+    """Entrada en lote con lote_entrada_id compartido."""
+    return await warehouse_svc.register_bulk_entry(db, warehouse_id, payload)
+
+@router.post("/{warehouse_id}/mermas", response_model=schemas.MovimientoInventarioResponse)
+async def register_merma(warehouse_id: str, payload: schemas.MermaRequest, db: AsyncSession = Depends(get_db)):
+    """Registrar merma auditable (notas obligatorias)."""
+    return await warehouse_svc.register_merma(db, warehouse_id, payload)
+
+@router.get("/movimientos", response_model=List[schemas.MovimientoInventarioResponse])
+async def list_movements(almacen_id: str = None, limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """Historial de movimientos auditable. Filtro opcional por almacén."""
+    return await warehouse_svc.get_movements(db, almacen_id, limit)
+
+@router.get("/eventos/pendientes")
+async def list_pending_events(db: AsyncSession = Depends(get_db)):
+    """Eventos del Outbox en estado PENDIENTE."""
+    return await warehouse_svc.get_pending_events(db)
+
+@router.get("/eventos/fallidos")
+async def list_failed_events(db: AsyncSession = Depends(get_db)):
+    """Dead-Letter Queue: eventos que fallaron 3+ veces."""
+    return await warehouse_svc.get_failed_events(db)

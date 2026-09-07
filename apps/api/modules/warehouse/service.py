@@ -1,4 +1,4 @@
-﻿from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
 from fastapi import HTTPException
@@ -115,30 +115,204 @@ class WarehouseService:
         return mov
         
     async def register_transfer(self, db: AsyncSession, payload: schemas.TraspasoRequest):
-        # Salida
-        salida = schemas.MovimientoInventarioCreate(
-            almacen_origen_id=payload.almacen_origen_id,
-            almacen_destino_id=payload.almacen_destino_id,
-            item_id=payload.item_id,
-            item_type=payload.item_type,
-            cantidad=-payload.cantidad,
-            tipo_movimiento=schemas.TipoMovimiento.TRASPASO_SALIDA,
-            metodo_captura=schemas.MetodoCaptura.MANUAL,
-            usuario_id=payload.usuario_id
+        # Verificar stock suficiente en origen
+        result_origen = await db.execute(
+            select(models.StockAlmacen).where(
+                models.StockAlmacen.almacen_id == payload.almacen_origen_id,
+                models.StockAlmacen.item_id == payload.item_id
+            )
         )
-        await self.register_movement(db, salida)
-        
-        # Entrada
-        entrada = schemas.MovimientoInventarioCreate(
+        stock_origen = result_origen.scalar_one_or_none()
+        if not stock_origen or stock_origen.cantidad_actual < payload.cantidad:
+            raise HTTPException(status_code=400, detail="Stock insuficiente en almacén origen")
+
+        # Salida del origen
+        mov_salida = models.MovimientoInventario(
             almacen_origen_id=payload.almacen_origen_id,
             almacen_destino_id=payload.almacen_destino_id,
             item_id=payload.item_id,
-            item_type=payload.item_type,
+            item_type=payload.item_type.value,
             cantidad=payload.cantidad,
-            tipo_movimiento=schemas.TipoMovimiento.TRASPASO_ENTRADA,
-            metodo_captura=schemas.MetodoCaptura.MANUAL,
+            tipo_movimiento=schemas.TipoMovimiento.TRASPASO_SALIDA.value,
+            metodo_captura=schemas.MetodoCaptura.MANUAL.value,
             usuario_id=payload.usuario_id
         )
-        return await self.register_movement(db, entrada)
+        db.add(mov_salida)
+        stock_origen.cantidad_actual -= payload.cantidad
+
+        # Entrada al destino
+        mov_entrada = models.MovimientoInventario(
+            almacen_origen_id=payload.almacen_origen_id,
+            almacen_destino_id=payload.almacen_destino_id,
+            item_id=payload.item_id,
+            item_type=payload.item_type.value,
+            cantidad=payload.cantidad,
+            tipo_movimiento=schemas.TipoMovimiento.TRASPASO_ENTRADA.value,
+            metodo_captura=schemas.MetodoCaptura.MANUAL.value,
+            usuario_id=payload.usuario_id
+        )
+        db.add(mov_entrada)
+
+        result_destino = await db.execute(
+            select(models.StockAlmacen).where(
+                models.StockAlmacen.almacen_id == payload.almacen_destino_id,
+                models.StockAlmacen.item_id == payload.item_id
+            )
+        )
+        stock_destino = result_destino.scalar_one_or_none()
+        if not stock_destino:
+            stock_destino = models.StockAlmacen(
+                almacen_id=payload.almacen_destino_id,
+                item_id=payload.item_id,
+                item_type=payload.item_type.value,
+                cantidad_actual=payload.cantidad
+            )
+            db.add(stock_destino)
+        else:
+            stock_destino.cantidad_actual += payload.cantidad
+
+        await db.commit()
+        await db.refresh(mov_entrada)
+        return mov_entrada
+
+    # --- Bloqueo Optimista ---
+    async def update_stock(self, db: AsyncSession, wh_id: str, stock_id: str, payload: schemas.StockAlmacenUpdate):
+        result = await db.execute(
+            select(models.StockAlmacen).where(
+                models.StockAlmacen.id == stock_id,
+                models.StockAlmacen.almacen_id == wh_id
+            )
+        )
+        stock = result.scalar_one_or_none()
+        if not stock:
+            raise HTTPException(status_code=404, detail="Stock no encontrado")
+
+        # Bloqueo optimista: verificar version
+        if stock.version != payload.version:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Conflicto de versión. Esperada: {payload.version}, actual: {stock.version}. Refresca y reintenta."
+            )
+
+        update_data = payload.model_dump(exclude_unset=True, exclude={"version"})
+        for key, value in update_data.items():
+            setattr(stock, key, value)
+        stock.version += 1
+
+        await db.commit()
+        await db.refresh(stock)
+        return stock
+
+    # --- Entrada Masiva ---
+    async def register_bulk_entry(self, db: AsyncSession, wh_id: str, payload: schemas.EntradaMasivaRequest):
+        import uuid as _uuid
+        lote_id = f"LOT-{_uuid.uuid4().hex[:8]}"
+        resultados = []
+
+        for item in payload.items:
+            mov = models.MovimientoInventario(
+                almacen_origen_id=None,  # Entrada externa
+                almacen_destino_id=wh_id,
+                item_id=item.item_id,
+                item_type=item.item_type.value,
+                cantidad=item.cantidad,
+                tipo_movimiento=schemas.TipoMovimiento.ENTRADA_COMPRA.value,
+                metodo_captura=schemas.MetodoCaptura.ENTRADA_MASIVA.value,
+                usuario_id=payload.usuario_id,
+                notas=item.notas,
+                lote_entrada_id=lote_id
+            )
+            db.add(mov)
+
+            # Actualizar stock con bloqueo optimista
+            result = await db.execute(
+                select(models.StockAlmacen).where(
+                    models.StockAlmacen.almacen_id == wh_id,
+                    models.StockAlmacen.item_id == item.item_id
+                )
+            )
+            stock = result.scalar_one_or_none()
+            if not stock:
+                stock = models.StockAlmacen(
+                    almacen_id=wh_id,
+                    item_id=item.item_id,
+                    item_type=item.item_type.value,
+                    cantidad_actual=item.cantidad
+                )
+                db.add(stock)
+            else:
+                stock.cantidad_actual += item.cantidad
+                stock.version += 1
+
+            resultados.append({"item_id": item.item_id, "cantidad": item.cantidad, "status": "OK"})
+
+        await db.commit()
+        return {"lote_id": lote_id, "total_items": len(resultados), "items": resultados}
+
+    # --- Mermas ---
+    async def register_merma(self, db: AsyncSession, wh_id: str, payload: schemas.MermaRequest):
+        # Buscar stock actual
+        result = await db.execute(
+            select(models.StockAlmacen).where(
+                models.StockAlmacen.almacen_id == wh_id,
+                models.StockAlmacen.item_id == payload.item_id
+            )
+        )
+        stock = result.scalar_one_or_none()
+        if not stock:
+            raise HTTPException(status_code=404, detail="Producto no encontrado en este almacén")
+        if stock.cantidad_actual < payload.cantidad:
+            raise HTTPException(status_code=400, detail="La merma no puede ser mayor al stock actual")
+
+        # Registrar movimiento
+        mov = models.MovimientoInventario(
+            almacen_origen_id=wh_id,
+            almacen_destino_id=None,  # Salida (merma)
+            item_id=payload.item_id,
+            item_type=payload.item_type.value,
+            cantidad=payload.cantidad,
+            tipo_movimiento=schemas.TipoMovimiento.MERMA.value,
+            metodo_captura=schemas.MetodoCaptura.MANUAL.value,
+            usuario_id=payload.usuario_id,
+            notas=payload.notas  # Notas obligatorias en merma
+        )
+        db.add(mov)
+
+        # Descontar stock
+        stock.cantidad_actual -= payload.cantidad
+        stock.version += 1
+
+        await db.commit()
+        await db.refresh(mov)
+        return mov
+
+    # --- Historial de Movimientos ---
+    async def get_movements(self, db: AsyncSession, almacen_id: str = None, limit: int = 100):
+        query = select(models.MovimientoInventario).order_by(models.MovimientoInventario.timestamp.desc()).limit(limit)
+        if almacen_id:
+            query = query.where(
+                (models.MovimientoInventario.almacen_origen_id == almacen_id) |
+                (models.MovimientoInventario.almacen_destino_id == almacen_id)
+            )
+        result = await db.execute(query)
+        return result.scalars().all()
+
+    # --- Eventos Outbox ---
+    async def get_pending_events(self, db: AsyncSession):
+        result = await db.execute(
+            select(models.WarehouseEvent)
+            .where(models.WarehouseEvent.estado == "PENDIENTE")
+            .order_by(models.WarehouseEvent.created_at.desc())
+        )
+        return result.scalars().all()
+
+    async def get_failed_events(self, db: AsyncSession):
+        result = await db.execute(
+            select(models.WarehouseEvent)
+            .where(models.WarehouseEvent.estado == "FALLIDO")
+            .order_by(models.WarehouseEvent.created_at.desc())
+        )
+        return result.scalars().all()
 
 warehouse_service = WarehouseService()
+
