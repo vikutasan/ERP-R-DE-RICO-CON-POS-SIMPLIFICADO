@@ -441,9 +441,33 @@ Script: `apps/api/migrations/seed_almacenes.py` (idempotente)
 > Sección reservada para documentar bugs críticos descubiertos en producción.
 > Formato: Síntoma → Causa Raíz → Solución → Regla de Oro.
 
-### Estado actual: 🟢 Sin bugs reportados
+### Estado actual: 🟡 1 bug resuelto
 
-El módulo fue completado el 2026-09-07. Los bugs se documentarán aquí conforme se presenten.
+### 🐛 BUG 1: Crash de UI por Desajuste de Nombres de Campos (API vs Frontend)
+
+**El Síntoma:**
+Al entrar al módulo "Gestión de Almacenes" desde cualquier terminal, la pantalla mostraba un error fatal: `TypeError: Cannot read properties of undefined (reading 'toLowerCase')`. El módulo era completamente inaccesible.
+
+**Causa Raíz:**
+1. La API de almacenes (`/api/v1/warehouse/`) devuelve objetos con nombres de campos **en español**: `{ nombre, zona_termica, proposito, ... }`.
+2. La UI (`WarehouseManagerUI.jsx`) fue construida originalmente con datos hardcodeados que usaban campos **en inglés**: `{ name, type, icon, ... }`.
+3. Al conectar la UI con la API real (línea 52: `fetchWarehouses()`), se inyectaron los datos de la API directamente al state sin mapear campos.
+4. En la línea 87, el filtro de búsqueda hacía `wh.name.toLowerCase()`. Como `wh.name` era `undefined` (el campo real era `wh.nombre`), JavaScript lanzaba el `TypeError`.
+
+**Solución Implementada:**
+- En `fetchWarehouses()`, se agregó un mapeo explícito entre los campos de la API y los que la UI espera:
+```javascript
+const mapped = res.data.map(wh => ({
+    ...wh,
+    name: wh.nombre || wh.name || 'Sin nombre',
+    type: wh.zona_termica || wh.type || 'SECO',
+    icon: wh.zona_termica === 'CONGELADO' ? '❄️' :
+          wh.zona_termica === 'REFRIGERADO' ? '🧊' : '📦',
+    capacity: 100,
+    current: 0
+}));
+```
+- **Regla de Oro:** Al conectar una UI pre-existente con una API, **SIEMPRE** verificar que los nombres de campos coincidan. Si la API usa español y la UI inglés, crear una capa de mapeo en el `fetch`, nunca asumir que los campos se llaman igual.
 
 ---
 
