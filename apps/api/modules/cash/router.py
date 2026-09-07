@@ -55,3 +55,13 @@ async def cerrar_sesion(
     session_id: int, datos: schemas.CashSessionClose, db: AsyncSession = Depends(get_db)
 ):
     return await service.cerrar_sesion(db, session_id, datos)
+
+
+@router.get("/daily-report/{fecha}")
+async def reporte_diario_consolidado(fecha: str, db: AsyncSession = Depends(get_db)):
+    """
+    Reporte diario consolidado.
+    Agrupa ventas por canal (PANADERÍA/HELADERÍA) y por cajero/terminal.
+    Formato de fecha: YYYY-MM-DD
+    """
+    return await service.generar_reporte_diario(db, fecha)

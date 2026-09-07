@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { generateTicketHTML } from './pos/utils/ticketGenerator';
+import { CONFIG } from './pos/config';
 
-const API_BASE = `http://${window.location.hostname}:5001/api/v1`;
+const API_BASE = CONFIG.API_BASE_URL; // Corregido: usar CONFIG en lugar de window.location.hostname
 
 export const AuditoriaUI = () => {
-    const [activeTab, setActiveTab] = useState('ventas'); // 'ventas' o 'cortes'
+    const [activeTab, setActiveTab] = useState('ventas'); // 'ventas', 'cortes' o 'reporte_diario'
     const [tickets, setTickets] = useState([]);
     const [cortes, setCortes] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -12,6 +13,9 @@ export const AuditoriaUI = () => {
     const [searchDate, setSearchDate] = useState('');
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [selectedCorte, setSelectedCorte] = useState(null);
+    const [reporteDate, setReporteDate] = useState(new Date().toISOString().split('T')[0]);
+    const [reporteData, setReporteData] = useState(null);
+    const [reporteLoading, setReporteLoading] = useState(false);
 
     useEffect(() => {
         if (activeTab === 'ventas') fetchTickets(searchTerm, searchDate);
@@ -106,6 +110,12 @@ export const AuditoriaUI = () => {
                         className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all ${activeTab === 'cortes' ? 'bg-white shadow-sm text-black' : 'text-gray-400 hover:text-gray-600'}`}
                     >
                         Cortes de Caja
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('reporte_diario')}
+                        className={`px-6 py-2 rounded-lg text-xs font-black uppercase transition-all ${activeTab === 'reporte_diario' ? 'bg-white shadow-sm text-black' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                        📊 Reporte Diario
                     </button>
                 </div>
             </div>
@@ -379,6 +389,113 @@ export const AuditoriaUI = () => {
                     </div>
                 )}
             </div>
+
+            {/* ═══ TAB: REPORTE DIARIO CONSOLIDADO ═══ */}
+            {activeTab === 'reporte_diario' && (
+                <div className="flex-1 overflow-y-auto p-8">
+                    <div className="flex gap-4 items-center mb-6">
+                        <input
+                            type="date"
+                            value={reporteDate}
+                            onChange={(e) => setReporteDate(e.target.value)}
+                            className="bg-gray-50 border border-gray-200 px-6 py-4 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                        />
+                        <button
+                            onClick={async () => {
+                                setReporteLoading(true);
+                                try {
+                                    const res = await fetch(`${API_BASE}/cash/daily-report/${reporteDate}`);
+                                    if (res.ok) setReporteData(await res.json());
+                                } catch(e) { console.error(e); }
+                                finally { setReporteLoading(false); }
+                            }}
+                            className="bg-black text-white px-8 py-4 rounded-2xl font-black uppercase text-xs hover:bg-gray-800 transition-all shadow active:scale-95"
+                        >
+                            {reporteLoading ? '⏳ Cargando...' : '📊 Generar Reporte'}
+                        </button>
+                    </div>
+
+                    {reporteData && (
+                        <div className="space-y-6">
+                            {/* Gran Total */}
+                            <div className="bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-3xl p-8 shadow-xl">
+                                <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-4">Gran Total Sucursal — {reporteData.fecha}</h2>
+                                <div className="flex items-baseline gap-4">
+                                    <span className="text-5xl font-black">${parseFloat(reporteData.gran_total).toLocaleString('es-MX', {minimumFractionDigits: 2})}</span>
+                                    <span className="text-gray-400 text-sm font-bold">{reporteData.total_tickets} tickets · {reporteData.turnos_cerrados} turnos cerrados</span>
+                                </div>
+                                {reporteData.diferencia_total !== 0 && (
+                                    <p className={`text-sm font-bold mt-2 ${reporteData.diferencia_total < 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                        Diferencia total: ${reporteData.diferencia_total.toFixed(2)}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Por Canal */}
+                            <div className="grid grid-cols-2 gap-4">
+                                {Object.entries(reporteData.por_canal || {}).map(([canal, data]) => (
+                                    <div key={canal} className="bg-white rounded-2xl border border-gray-100 p-6 shadow-lg">
+                                        <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">
+                                            {canal === 'PANADERIA' ? '🍞 Panadería' : '🍦 Heladería'}
+                                        </h3>
+                                        <p className="text-3xl font-black">${parseFloat(data.total).toLocaleString('es-MX', {minimumFractionDigits: 2})}</p>
+                                        <p className="text-xs text-gray-400 font-bold mt-1">{data.tickets} tickets</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Turnos */}
+                            <div className="bg-white rounded-3xl border border-gray-100 shadow-xl overflow-hidden">
+                                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100">
+                                    <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">Detalle por Turno</h3>
+                                </div>
+                                <table className="w-full text-left text-sm">
+                                    <thead className="text-[10px] font-black uppercase text-gray-400 tracking-widest bg-gray-50">
+                                        <tr>
+                                            <th className="px-6 py-3">Cajero</th>
+                                            <th className="px-6 py-3">Terminal</th>
+                                            <th className="px-6 py-3">Ventas</th>
+                                            <th className="px-6 py-3">Tickets</th>
+                                            <th className="px-6 py-3">Diferencia</th>
+                                            <th className="px-6 py-3">Estado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(reporteData.turnos || []).map(t => (
+                                            <tr key={t.session_id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                                                <td className="px-6 py-3 font-bold">{t.employee_name}</td>
+                                                <td className="px-6 py-3 font-mono text-xs">{t.terminal_id}</td>
+                                                <td className="px-6 py-3 font-black">${parseFloat(t.total_ventas).toLocaleString('es-MX', {minimumFractionDigits: 2})}</td>
+                                                <td className="px-6 py-3 text-gray-500">{t.num_tickets}</td>
+                                                <td className={`px-6 py-3 font-bold ${t.diferencia < 0 ? 'text-red-500' : t.diferencia > 0 ? 'text-green-500' : 'text-gray-400'}`}>
+                                                    ${t.diferencia.toFixed(2)}
+                                                </td>
+                                                <td className="px-6 py-3">
+                                                    <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase ${t.is_closed ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                        {t.is_closed ? '✅ Cerrado' : '⏳ Abierto'}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Alertas */}
+                            {reporteData.alertas?.length > 0 && (
+                                <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-6">
+                                    <h3 className="text-xs font-black uppercase text-yellow-700 mb-3">⚠️ Alertas</h3>
+                                    <ul className="space-y-1">
+                                        {reporteData.alertas.map((a, i) => (
+                                            <li key={i} className="text-sm text-yellow-800 font-semibold">• {a}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

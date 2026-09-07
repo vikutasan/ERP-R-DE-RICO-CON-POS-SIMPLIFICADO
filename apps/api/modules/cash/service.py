@@ -241,3 +241,94 @@ async def _obtener_tickets_pagados(
         )
     )
     return resultado.scalars().all()
+
+
+async def generar_reporte_diario(db: AsyncSession, fecha: str) -> dict:
+    """
+    Genera el reporte diario consolidado para una fecha específica.
+    Agrupa ventas por canal (PANADERÍA/HELADERÍA) y por cajero/terminal.
+    
+    Args:
+        fecha: string YYYY-MM-DD
+    
+    Returns:
+        dict con gran_total, por_canal, alertas
+    """
+    from datetime import date as date_type
+    fecha_obj = datetime.strptime(fecha, "%Y-%m-%d").date()
+    fecha_inicio = datetime.combine(fecha_obj, datetime.min.time())
+    fecha_fin = datetime.combine(fecha_obj, datetime.max.time())
+
+    # Obtener todas las sesiones de caja del día
+    resultado_sesiones = await db.execute(
+        select(models.CashSession)
+        .options(selectinload(models.CashSession.tickets))
+        .where(models.CashSession.opened_at >= fecha_inicio)
+        .where(models.CashSession.opened_at <= fecha_fin)
+    )
+    sesiones = resultado_sesiones.scalars().all()
+
+    # Obtener tickets pagados del día
+    resultado_tickets = await db.execute(
+        select(Ticket)
+        .where(Ticket.status == "PAID")
+        .where(Ticket.created_at >= fecha_inicio)
+        .where(Ticket.created_at <= fecha_fin)
+    )
+    tickets = resultado_tickets.scalars().all()
+
+    # Agrupar por canal
+    canales = {}
+    for t in tickets:
+        canal = getattr(t, 'channel', None) or 'PANADERIA'
+        if canal not in canales:
+            canales[canal] = {'total': 0, 'count': 0, 'tickets': []}
+        canales[canal]['total'] += float(t.total or 0)
+        canales[canal]['count'] += 1
+
+    # Agrupar sesiones por terminal
+    turnos = []
+    diferencia_total = 0
+    for s in sesiones:
+        tickets_sesion = [t for t in tickets if t.cash_session_id == s.id]
+        total_ventas = sum(float(t.total or 0) for t in tickets_sesion)
+        diferencia = float(s.real_cash_count or 0) - float(s.expected_cash or 0) if s.is_closed else 0
+        diferencia_total += diferencia
+
+        turnos.append({
+            'session_id': s.id,
+            'terminal_id': s.terminal_id,
+            'employee_name': s.employee_name,
+            'opened_at': s.opened_at.isoformat() if s.opened_at else None,
+            'closed_at': s.closed_at.isoformat() if s.closed_at else None,
+            'is_closed': s.is_closed,
+            'total_ventas': total_ventas,
+            'num_tickets': len(tickets_sesion),
+            'diferencia': diferencia,
+        })
+
+    # Alertas
+    alertas = []
+    sesiones_abiertas = [s for s in sesiones if not s.is_closed]
+    for s in sesiones_abiertas:
+        alertas.append(f"Sesión {s.terminal_id} ({s.employee_name}) sigue abierta")
+
+    gran_total = sum(float(t.total or 0) for t in tickets)
+
+    return {
+        'fecha': fecha,
+        'gran_total': gran_total,
+        'total_tickets': len(tickets),
+        'total_turnos': len(sesiones),
+        'turnos_cerrados': len([s for s in sesiones if s.is_closed]),
+        'diferencia_total': diferencia_total,
+        'por_canal': {
+            canal: {
+                'total': data['total'],
+                'tickets': data['count'],
+            }
+            for canal, data in canales.items()
+        },
+        'turnos': turnos,
+        'alertas': alertas,
+    }
