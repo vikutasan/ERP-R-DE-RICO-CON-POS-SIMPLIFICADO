@@ -1,28 +1,30 @@
 # 🛡️ DOCUMENTACIÓN MAESTRA: MÓDULO DE AUDITORÍA Y CONTROL — R de Rico ERP
 
-> **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Auditoría y Control **DEBE** leer este documento. Aquí se detalla la lógica de trazabilidad de tickets y cortes de caja, así como los *gotchas* (problemas ocultos) resueltos durante el desarrollo.
+> **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Auditoría y Control **DEBE** leer este documento. Aquí se detalla la lógica de trazabilidad de tickets, cortes de caja y reporte diario consolidado, así como los *gotchas* (problemas ocultos) resueltos durante el desarrollo.
 >
-> **Última actualización:** 2026-06-16
-> **Archivos gobernados:** `apps/AuditoriaControlUI.jsx`, `apps/api/modules/pos/service.py`, `apps/api/modules/cash/service.py`
+> **Última actualización:** 2026-09-07
+> **Archivos gobernados:** `apps/AuditoriaControlUI.jsx`, `apps/api/modules/pos/service.py`, `apps/api/modules/cash/service.py`, `apps/api/modules/cash/router.py`
 
 ---
 
 ## 1. PROPÓSITO Y FUNCIONAMIENTO DEL MÓDULO
 
-El **Módulo de Auditoría y Control** es el centro de monitoreo operativo donde la gerencia puede rastrear la trazabilidad de cada centavo ingresado en el sistema. Su funcionamiento se divide en dos secciones principales:
+El **Módulo de Auditoría y Control** es el centro de monitoreo operativo donde la gerencia puede rastrear la trazabilidad de cada centavo ingresado en el sistema. Su funcionamiento se divide en tres secciones principales:
 
 1. **Pestaña de Tickets (Ventas):** Muestra el historial completo de ventas, indicando no solo el folio y el monto, sino la trazabilidad humana y física: **quién capturó** el pedido, **quién lo cobró**, y **en qué terminal** (tablet física) se originó.
 2. **Pestaña de Cortes de Caja:** Lista los cierres de sesión de las terminales recaudadoras (`CashSessions`). Muestra los fondos iniciales, ventas por método de pago (Efectivo, Crédito, Débito), movimientos manuales (entradas/salidas) y el monto físico reportado por el empleado.
+3. **Pestaña de Reporte Diario (📊):** Genera un reporte consolidado de toda la sucursal para una fecha específica. Agrupa ventas por canal (Panadería/Heladería), detalla cada turno de caja, y emite alertas automáticas.
 
 ### Comportamiento de la Interfaz (Filtros y Limpieza)
 - **Por defecto / Al hacer clic en "Limpiar":** La UI envía peticiones a los endpoints `/pos/tickets` o `/cash/sessions/history` **sin parámetros**. El backend responde enviando los **últimos 100 tickets** o **últimos 50 cortes**, ordenados desde el más reciente al más antiguo.
 - **Búsqueda por Fecha:** Si el gerente selecciona una fecha, la API devuelve todos los registros correspondientes estrictamente a ese "día operativo" (ajustado a la zona horaria UTC-6).
+- **Reporte Diario:** El gerente selecciona una fecha y presiona "Generar Reporte". La API responde con un JSON consolidado que la UI renderiza en tarjetas visuales.
 
 ---
 
 ## 2. EL CEMENTERIO DE BUGS (LECCIONES APRENDIDAS Y CORREGIDAS)
 
-A continuación se documentan los 3 incidentes críticos resueltos en el desarrollo del módulo. **PROHIBIDO revertir estas soluciones o cometer los mismos errores en el futuro.**
+A continuación se documentan los 5 incidentes críticos resueltos en el desarrollo del módulo. **PROHIBIDO revertir estas soluciones o cometer los mismos errores en el futuro.**
 
 ### 🐛 BUG 1: El Secuestro de la Terminal de Origen (Ticket Extraviado)
 
@@ -84,3 +86,167 @@ Al intentar entrar al módulo de Auditoría, la pantalla se mostraba completamen
 - Se creó un nuevo esquema `ProductLightResponse` en `apps/api/modules/pos/schemas.py` exclusivo para las respuestas del POS y Auditoría.
 - Este esquema **omite** explícitamente atributos pesados como `technical_sheet`.
 - **Regla de Oro:** Nunca agregar relaciones profundas a los esquemas de respuesta Pydantic (como `ProductResponse`) sin asegurar que la consulta de base de datos correspondiente incluya el `selectinload()` para precargarlos. Para consultas masivas, es mandatorio usar esquemas *Lightweight*.
+
+---
+
+### 🐛 BUG 5: URL del API Construida con `window.location.hostname` (Rompe en Red Local)
+
+**El Síntoma:**
+La pestaña de Auditoría funcionaba perfectamente en `localhost`, pero al acceder desde otra tablet en la red local (ej. `192.168.1.124:5000`), las llamadas al API fallaban silenciosamente porque la URL del backend se construía como `http://192.168.1.124:5001/api/v1` en lugar de apuntar al servidor correcto.
+
+**Causa Raíz:**
+El código original construía la URL del API así:
+```javascript
+const API_BASE = `http://${window.location.hostname}:5001/api/v1`;
+```
+Esto funciona **solo si el API está en el mismo host que el frontend**. En una red con múltiples terminales, cada tablet genera una URL distinta apuntando a sí misma, no al servidor.
+
+**Solución Implementada:**
+- Se reemplazó por el patrón centralizado `CONFIG.API_BASE_URL` de `apps/pos/config.js`:
+```javascript
+import { CONFIG } from './pos/config';
+const API_BASE = CONFIG.API_BASE_URL;
+```
+- **Regla de Oro:** Está **ESTRICTAMENTE PROHIBIDO** construir URLs manualmente con `window.location.hostname` en cualquier parte del ERP. Todo debe usar `CONFIG.API_BASE_URL`.
+
+---
+
+## 3. REPORTE DIARIO CONSOLIDADO (📊)
+
+### 3.1 Propósito
+
+El Reporte Diario Consolidado es la **vista ejecutiva** para el dueño del negocio. En una sola pantalla muestra:
+- **Gran Total de la sucursal** para la fecha seleccionada
+- **Desglose por canal** (Panadería vs Heladería)
+- **Detalle por turno** (qué cajero, en qué terminal, cuánto vendió, cuál fue su diferencia)
+- **Alertas automáticas** (sesiones de caja que siguen abiertas)
+
+### 3.2 Arquitectura
+
+```
+┌─────────────────────┐     ┌──────────────────────────┐     ┌─────────────────────┐
+│  AuditoriaControlUI │────▶│  GET /cash/daily-report/  │────▶│  generar_reporte_    │
+│  Pestaña "📊"       │     │      {fecha}              │     │  diario()            │
+│  (React)            │     │  (cash/router.py)         │     │  (cash/service.py)   │
+└─────────────────────┘     └──────────────────────────┘     └─────────────────────┘
+                                                                      │
+                                                                      ▼
+                                                            ┌─────────────────────┐
+                                                            │  1. Query sesiones   │
+                                                            │     del día          │
+                                                            │  2. Query tickets    │
+                                                            │     PAID del día     │
+                                                            │  3. Agrupar por      │
+                                                            │     canal            │
+                                                            │  4. Agrupar por      │
+                                                            │     turno/cajero     │
+                                                            │  5. Calcular         │
+                                                            │     diferencias      │
+                                                            │  6. Generar alertas  │
+                                                            └─────────────────────┘
+```
+
+### 3.3 Endpoint
+
+| Método | Ruta | Archivo |
+|---|---|---|
+| `GET` | `/api/v1/cash/daily-report/{fecha}` | `apps/api/modules/cash/router.py` |
+
+**Parámetro:** `fecha` en formato `YYYY-MM-DD` (ej. `2026-09-06`).
+
+### 3.4 Lógica del Backend (`generar_reporte_diario`)
+
+**Archivo:** `apps/api/modules/cash/service.py`
+
+**Paso 1 — Obtener sesiones de caja del día:**
+```python
+select(CashSession)
+    .options(selectinload(CashSession.tickets))
+    .where(CashSession.opened_at >= fecha_inicio)
+    .where(CashSession.opened_at <= fecha_fin)
+```
+
+**Paso 2 — Obtener tickets pagados del día:**
+```python
+select(Ticket)
+    .where(Ticket.status == "PAID")
+    .where(Ticket.created_at >= fecha_inicio)
+    .where(Ticket.created_at <= fecha_fin)
+```
+
+**Paso 3 — Agrupar por canal:**
+```python
+canal = getattr(ticket, 'channel', None) or 'PANADERIA'
+```
+El campo `channel` fue agregado a la tabla `tickets` como parte del módulo de Heladería. Si es `NULL` (tickets pre-heladería), se asume `'PANADERIA'`. Tickets de heladería tienen `channel='HELADERIA'`.
+
+**Paso 4 — Agrupar por turno/cajero:**
+Para cada `CashSession`, se filtran los tickets que pertenecen a esa sesión (`ticket.cash_session_id == session.id`) y se suman sus totales.
+
+**Paso 5 — Calcular diferencias:**
+```python
+diferencia = float(session.real_cash_count or 0) - float(session.expected_cash or 0)
+```
+- `real_cash_count`: Lo que el cajero reportó al contar su caja físicamente.
+- `expected_cash`: Lo que el sistema calculó que debería haber.
+- **Diferencia negativa** = faltante (🔴 rojo). **Positiva** = sobrante (🟢 verde).
+- Solo se calcula para sesiones cerradas (`is_closed == True`).
+
+**Paso 6 — Alertas automáticas:**
+Se detectan sesiones de caja que **siguen abiertas** al final del día y se generan mensajes de alerta:
+```
+"Sesión T5 (María López) sigue abierta"
+```
+
+### 3.5 Respuesta JSON
+
+```json
+{
+    "fecha": "2026-09-06",
+    "gran_total": 77761.0,
+    "total_tickets": 508,
+    "total_turnos": 4,
+    "turnos_cerrados": 3,
+    "diferencia_total": -15.50,
+    "por_canal": {
+        "PANADERIA": { "total": 65000.0, "tickets": 420 },
+        "HELADERIA": { "total": 12761.0, "tickets": 88 }
+    },
+    "turnos": [
+        {
+            "session_id": 12,
+            "terminal_id": "CAJA",
+            "employee_name": "María López",
+            "opened_at": "2026-09-06T08:00:00",
+            "closed_at": "2026-09-06T16:00:00",
+            "is_closed": true,
+            "total_ventas": 42000.0,
+            "num_tickets": 280,
+            "diferencia": -5.50
+        }
+    ],
+    "alertas": [
+        "Sesión H-CAJA (Juan Pérez) sigue abierta"
+    ]
+}
+```
+
+### 3.6 Frontend (UI)
+
+La pestaña "📊 Reporte Diario" en `AuditoriaControlUI.jsx` renderiza 4 bloques visuales:
+
+| Bloque | Diseño | Contenido |
+|---|---|---|
+| **Gran Total** | Tarjeta negra con gradiente, texto 5XL | Monto total + total tickets + turnos cerrados + diferencia total |
+| **Por Canal** | Grid 2 columnas, tarjetas blancas | 🍞 Panadería y 🍦 Heladería con total y tickets por canal |
+| **Detalle por Turno** | Tabla con filas hover | Cajero, terminal, ventas, tickets, diferencia (rojo/verde), estado (cerrado/abierto) |
+| **Alertas** | Tarjeta amarilla condicional | Solo aparece si hay sesiones abiertas. Lista con bullets |
+
+### 3.7 Limitaciones Conocidas
+
+> [!WARNING]
+> **Zona horaria:** Actualmente `generar_reporte_diario()` usa `datetime.min.time()` y `datetime.max.time()` sin ajuste UTC-6. Esto puede causar el mismo problema del Bug 2 (tickets nocturnos desaparecidos) si PostgreSQL guarda timestamps en UTC. Si se detecta este problema, aplicar la misma solución: sumar 6 horas al rango de búsqueda.
+
+> [!NOTE]
+> **Tickets sin sesión de caja:** Si un ticket fue pagado pero NO tiene `cash_session_id` (por ejemplo, cobros directos sin abrir sesión de caja), aparecerá en el gran total y en el desglose por canal, pero NO se asignará a ningún turno. No se pierde dinero del reporte, pero puede haber diferencia entre la suma de turnos y el gran total.
+
