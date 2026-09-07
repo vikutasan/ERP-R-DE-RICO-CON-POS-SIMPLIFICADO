@@ -300,9 +300,32 @@ export const WarehouseManagerUI = () => {
     // Mock de inventario dentro de un almacén
     const [whInventories, setWhInventories] = useState({});
 
+    // Cargar el stock real del almacén seleccionado
+    useEffect(() => {
+        const loadStock = async () => {
+            if (selectedWH) {
+                const stockData = await fetchWarehouseStock(selectedWH.id);
+                const mappedStock = stockData.map(item => ({
+                    sku: item.item_id,
+                    name: item.item_name || item.item_id,
+                    category: item.item_type,
+                    stock: item.cantidad_actual,
+                    unit: item.item_unit || 'PZA',
+                    minStock: item.stock_minimo,
+                    alertDays: item.dias_anaquel_alerta || 0,
+                    presentation: '1 ' + (item.item_unit || 'PZA'),
+                    costPerPresentation: item.item_price || 0,
+                    imgUrl: item.item_image_url || null,
+                    provider: 'PROVEEDOR GENERAL' // Default temporal
+                }));
+                setWhInventories(prev => ({ ...prev, [selectedWH.id]: mappedStock }));
+            }
+        };
+        loadStock();
+    }, [selectedWH]);
+
     const getWHContent = (whId) => {
-        const wh = warehouses.find(w => w.id === whId);
-        return wh ? wh.items : [];
+        return whInventories[whId] || [];
     };
 
     const handleSaveWH = async (formData) => {

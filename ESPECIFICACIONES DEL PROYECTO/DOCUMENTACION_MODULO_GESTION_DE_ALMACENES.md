@@ -441,7 +441,7 @@ Script: `apps/api/migrations/seed_almacenes.py` (idempotente)
 > Sección reservada para documentar bugs críticos descubiertos en producción.
 > Formato: Síntoma → Causa Raíz → Solución → Regla de Oro.
 
-### Estado actual: 🟡 1 bug resuelto
+### Estado actual: 🟡 2 bugs resueltos
 
 ### 🐛 BUG 1: Crash de UI por Desajuste de Nombres de Campos (API vs Frontend)
 
@@ -469,6 +469,23 @@ const mapped = res.data.map(wh => ({
 ```
 - **Regla de Oro:** Al conectar una UI pre-existente con una API, **SIEMPRE** verificar que los nombres de campos coincidan. Si la API usa español y la UI inglés, crear una capa de mapeo en el `fetch`, nunca asumir que los campos se llaman igual.
 
+### 🐛 BUG 2: Crash en el Detalle del Almacén por `.map()` (Stock UI vs Stock Backend)
+
+**El Síntoma:**
+Al entrar a cualquier almacén en específico (ej. "Bodega Insumos"), la UI crasheaba mostrando `TypeError: Cannot read properties of undefined (reading 'map')`.
+
+**Causa Raíz:**
+1. La variable `whContent` obtenía su valor de la función `getWHContent(whId)`.
+2. Esta función hacía `return wh ? wh.items : []`, confiando en que el almacén tuviera un arreglo interno `items`.
+3. Esto era cierto para los mock data locales, pero la estructura `AlmacenResponse` del backend no devuelve los items anidados.
+4. Al tratar de hacer `whContent.map()` en la tabla, como `wh.items` era `undefined`, la app lanzaba una excepción fatal.
+
+**Solución Implementada:**
+- Se desacopló la obtención del stock anidado. `getWHContent(whId)` ahora lee de un estado local `whInventories`.
+- Se añadió un `useEffect` que detecta cuando cambia `selectedWH` y hace un fetch a `/{id}/stock` (datos reales).
+- Los datos devueltos se mapean explícitamente a las propiedades de UI esperadas (ej. `cantidad_actual` → `stock`, `item_id` → `sku`).
+- **Regla de Oro:** Nunca depender de objetos anidados (como `.items`) en respuestas HTTP si el schema Pydantic no lo incluye explícitamente. Consultar sub-recursos en peticiones separadas o adaptar el schema.
+
 ---
 
 ## 14. FASES PENDIENTES
@@ -479,9 +496,8 @@ const mapped = res.data.map(wh => ({
 | 1B | Router completo (16 endpoints) | ✅ Completada |
 | 1C | Outbox POS (6 líneas en create_ticket) | ✅ Completada |
 | 1D | Processor background (polling 30s) | ✅ Completada |
-| 1E | Seed (7 almacenes + 12 insumos) | ✅ Completada |
-| 1F | Evaluar/completar frontend + offlineQueue | ⏸️ Pendiente |
-| 1G | PWA offline (sw.js + manifest) + AI Gateway stubs | ⏸️ Pendiente |
+| 1F | Funciones 5 pestañas operativas y conexión Backend | ✅ Completada |
+| 1G | PWA offline (sw.js + manifest + offlineQueue.js) | ⏸️ Pendiente |
 | 2 | Escáner IA (visión de charolas) | ⏸️ Pendiente |
 | 3 | AI Gateway real (Whisper + LLM local) | ⏸️ Futuro (depende de módulo IA Local) |
 
