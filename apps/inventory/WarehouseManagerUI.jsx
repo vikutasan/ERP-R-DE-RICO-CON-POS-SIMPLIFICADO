@@ -50,7 +50,16 @@ export const WarehouseManagerUI = () => {
     const fetchWarehouses = async () => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
-            setWarehouses(res.data);
+            // Mapear campos API (español) → campos UI (inglés)
+            const mapped = res.data.map(wh => ({
+                ...wh,
+                name: wh.nombre || wh.name || 'Sin nombre',
+                type: wh.zona_termica || wh.type || 'SECO',
+                icon: wh.zona_termica === 'CONGELADO' ? '❄️' : wh.zona_termica === 'REFRIGERADO' ? '🧊' : '📦',
+                capacity: 100,
+                current: 0
+            }));
+            setWarehouses(mapped);
         } catch(e) {
             console.error(e);
         }
