@@ -74,6 +74,7 @@ export const WarehouseManagerUI = () => {
     const [filterType, setFilterType] = useState('ALL');
     const [activeTab, setActiveTab] = useState('existencias');
     const [selectedZone, setSelectedZone] = useState(null); // null = landing, 'SECO'|'REFRIGERADO'|'CONGELADO' = suite
+    const [suiteTab, setSuiteTab] = useState('existencias'); // Pestaña activa en la suite de zona
 
     const [showItemPicker, setShowItemPicker] = useState(false);
     const [pickerSearch, setPickerSearch] = useState('');
@@ -84,6 +85,22 @@ export const WarehouseManagerUI = () => {
     const [newTypeLabel, setNewTypeLabel] = useState('');
     const [editingItem, setEditingItem] = useState(null); // { whId, productSku, data }
 
+    // --- Fase 1F: Estados operativos ---
+    const [insumos, setInsumos] = useState([]);
+    const [movements, setMovements] = useState([]);
+    const [loadingOp, setLoadingOp] = useState(false);
+    const [opMessage, setOpMessage] = useState({ text: '', type: '' }); // type: 'success' | 'error'
+    // Entrada Masiva
+    const [bulkEntryItems, setBulkEntryItems] = useState([]);
+    const [bulkTargetWH, setBulkTargetWH] = useState('');
+    const [bulkInsumoSearch, setBulkInsumoSearch] = useState('');
+    // Mermas
+    const [mermaForm, setMermaForm] = useState({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
+    // Traspasos
+    const [traspasoForm, setTraspasoForm] = useState({ almacen_origen_id: '', almacen_destino_id: '', item_id: '', item_type: 'INSUMO', cantidad: '' });
+    // Historial filtro
+    const [historialFilter, setHistorialFilter] = useState('ALL');
+
     // Bóveda de Insumos Descontinuados
     const [discontinuedItems, setDiscontinuedItems] = useState([]);
     const [showDiscontinuedVault, setShowDiscontinuedVault] = useState(false);
@@ -92,6 +109,150 @@ export const WarehouseManagerUI = () => {
     const [confirmArchiveDialog, setConfirmArchiveDialog] = useState({ isOpen: false, whId: null, productSku: null, itemName: '' });
     const [confirmDestroyDialog, setConfirmDestroyDialog] = useState({ isOpen: false, itemIndex: null, itemName: '' });
     const [restoreDialog, setRestoreDialog] = useState({ isOpen: false, itemIndex: null, itemName: '', originalWhId: '', targetWhId: '' });
+
+    // --- Fase 1F: Fetch Functions ---
+    const fetchInsumos = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse/insumos`);
+            setInsumos(res.data || []);
+        } catch(e) { console.error('Error fetching insumos:', e); }
+    };
+
+    const fetchMovements = async (almacenId = null) => {
+        try {
+            const url = almacenId 
+                ? `${API_BASE}/api/v1/warehouse/movimientos?almacen_id=${almacenId}&limit=200`
+                : `${API_BASE}/api/v1/warehouse/movimientos?limit=200`;
+            const res = await axios.get(url);
+            setMovements(res.data || []);
+        } catch(e) { console.error('Error fetching movements:', e); }
+    };
+
+    const fetchWarehouseStock = async (whId) => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse/${whId}/stock`);
+            return res.data || [];
+        } catch(e) { console.error('Error fetching stock:', e); return []; }
+    };
+
+    // Cargar insumos al montar
+    useEffect(() => { fetchInsumos(); }, []);
+
+    // Cargar movimientos cuando cambia a pestaña historial
+    useEffect(() => {
+        if (suiteTab === 'historial') fetchMovements();
+    }, [suiteTab]);
+
+    // --- Fase 1F: Submit Functions ---
+    const showOpMessage = (text, type = 'success') => {
+        setOpMessage({ text, type });
+        setTimeout(() => setOpMessage({ text: '', type: '' }), 4000);
+    };
+
+    const handleSubmitBulkEntry = async () => {
+        if (!bulkTargetWH || bulkEntryItems.length === 0) {
+            showOpMessage('Selecciona un almacén destino y agrega al menos un insumo', 'error');
+            return;
+        }
+        const invalidItems = bulkEntryItems.filter(i => !i.cantidad || i.cantidad <= 0);
+        if (invalidItems.length > 0) {
+            showOpMessage('Todos los items deben tener cantidad mayor a 0', 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            const payload = {
+                items: bulkEntryItems.map(i => ({
+                    item_id: i.item_id,
+                    item_type: i.item_type || 'INSUMO',
+                    cantidad: parseFloat(i.cantidad),
+                    notas: i.notas || null
+                })),
+                usuario_id: 'VICTOR'
+            };
+            await axios.post(`${API_BASE}/api/v1/warehouse/${bulkTargetWH}/entrada-masiva`, payload);
+            showOpMessage(`✅ Entrada masiva registrada: ${bulkEntryItems.length} items en lote`);
+            setBulkEntryItems([]);
+            setBulkTargetWH('');
+        } catch(e) {
+            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
+        } finally { setLoadingOp(false); }
+    };
+
+    const handleSubmitMerma = async () => {
+        const { almacen_id, item_id, item_type, cantidad, notas } = mermaForm;
+        if (!almacen_id || !item_id || !cantidad || !notas) {
+            showOpMessage('Todos los campos son obligatorios (especialmente las notas/motivo)', 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            await axios.post(`${API_BASE}/api/v1/warehouse/${almacen_id}/mermas`, {
+                item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: 'VICTOR'
+            });
+            showOpMessage(`✅ Merma registrada correctamente`);
+            setMermaForm({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
+        } catch(e) {
+            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
+        } finally { setLoadingOp(false); }
+    };
+
+    const handleSubmitTraspaso = async () => {
+        const { almacen_origen_id, almacen_destino_id, item_id, item_type, cantidad } = traspasoForm;
+        if (!almacen_origen_id || !almacen_destino_id || !item_id || !cantidad) {
+            showOpMessage('Todos los campos son obligatorios', 'error');
+            return;
+        }
+        if (almacen_origen_id === almacen_destino_id) {
+            showOpMessage('Origen y destino no pueden ser el mismo almacén', 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            await axios.post(`${API_BASE}/api/v1/warehouse/traspasos`, {
+                almacen_origen_id, almacen_destino_id, item_id, item_type,
+                cantidad: parseFloat(cantidad), usuario_id: 'VICTOR'
+            });
+            showOpMessage(`✅ Traspaso ejecutado correctamente`);
+            setTraspasoForm({ almacen_origen_id: '', almacen_destino_id: '', item_id: '', item_type: 'INSUMO', cantidad: '' });
+        } catch(e) {
+            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
+        } finally { setLoadingOp(false); }
+    };
+
+    const addBulkItem = (insumo) => {
+        if (bulkEntryItems.find(i => i.item_id === insumo.id)) return;
+        setBulkEntryItems([...bulkEntryItems, {
+            item_id: insumo.id,
+            item_type: 'INSUMO',
+            nombre: insumo.nombre,
+            unidad: insumo.unidad_base,
+            cantidad: '',
+            notas: ''
+        }]);
+        setBulkInsumoSearch('');
+    };
+
+    const updateBulkItem = (index, field, value) => {
+        const updated = [...bulkEntryItems];
+        updated[index] = { ...updated[index], [field]: value };
+        setBulkEntryItems(updated);
+    };
+
+    const removeBulkItem = (index) => {
+        setBulkEntryItems(bulkEntryItems.filter((_, i) => i !== index));
+    };
+
+    // Helpers de movimiento
+    const MOV_TYPE_META = {
+        ENTRADA_COMPRA: { label: 'Entrada Compra', color: 'text-emerald-400', bg: 'bg-emerald-500/15', icon: '📥' },
+        PRODUCCION_ENTRADA: { label: 'Producción', color: 'text-lime-400', bg: 'bg-lime-500/15', icon: '🏭' },
+        TRASPASO_SALIDA: { label: 'Traspaso Salida', color: 'text-blue-400', bg: 'bg-blue-500/15', icon: '📤' },
+        TRASPASO_ENTRADA: { label: 'Traspaso Entrada', color: 'text-blue-300', bg: 'bg-blue-400/15', icon: '📥' },
+        SALIDA_VENTA: { label: 'Venta', color: 'text-purple-400', bg: 'bg-purple-500/15', icon: '🛒' },
+        MERMA: { label: 'Merma', color: 'text-orange-400', bg: 'bg-orange-500/15', icon: '⚠️' },
+        AJUSTE_INVENTARIO: { label: 'Ajuste', color: 'text-gray-400', bg: 'bg-gray-500/15', icon: '🔧' },
+    };
 
     const filteredWH = warehouses.filter(wh => {
         const matchesSearch = (wh.name || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -508,19 +669,57 @@ export const WarehouseManagerUI = () => {
                 </div>
             )}
 
+            {/* === BARRA DE PESTAÑAS OPERATIVAS === */}
+            <div className="mb-6 flex items-center gap-1 bg-slate-900/60 border border-slate-500/30 rounded-2xl p-1.5 backdrop-blur-md shadow-inner overflow-x-auto">
+                {[
+                    { key: 'existencias', label: 'Existencias', icon: '📊' },
+                    { key: 'entrada', label: 'Entrada Masiva', icon: '📥' },
+                    { key: 'mermas', label: 'Mermas', icon: '⚠️' },
+                    { key: 'traspasos', label: 'Traspasos', icon: '🔄' },
+                    { key: 'historial', label: 'Historial', icon: '📜' },
+                ].map(tab => (
+                    <button
+                        key={tab.key}
+                        onClick={() => { setSuiteTab(tab.key); setSelectedWH(null); }}
+                        className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                            suiteTab === tab.key 
+                                ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30' 
+                                : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                    >
+                        <span className="text-sm">{tab.icon}</span>
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Toast de operación */}
+            {opMessage.text && (
+                <div className={`mb-4 px-6 py-3 rounded-xl font-bold text-sm border backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 duration-300 ${
+                    opMessage.type === 'error' 
+                        ? 'bg-red-900/60 border-red-500/40 text-red-200' 
+                        : 'bg-emerald-900/60 border-emerald-500/40 text-emerald-200'
+                }`}>
+                    {opMessage.text}
+                </div>
+            )}
+
+            {/* ===== PESTAÑA: EXISTENCIAS (contenido original) ===== */}
+            {suiteTab === 'existencias' && (
+                <>
             {/* Header y Filtros */}
             {!selectedWH ? (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <header className="mb-12 flex justify-between items-end">
                         <div>
-                            <h1 className="text-5xl font-black uppercase italic tracking-tighter text-indigo-500">Gestión de Almacenes</h1>
-                            <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em] mt-2">Centro Logístico de Inventarios | R DE RICO</p>
+                            <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-lg">Almacenes {zoneMeta.label}</h1>
+                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mt-2">Zona {selectedZone} | {zoneWarehouses.length} almacenes</p>
                         </div>
                         <div className="flex gap-4 flex-1 justify-end max-w-[70%]">
-                            <div className="bg-black/40 border border-gray-800 rounded-2xl p-1 flex overflow-x-auto custom-scrollbar no-scrollbar flex-1">
+                            <div className="bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1 flex overflow-x-auto custom-scrollbar no-scrollbar flex-1">
                                 <button 
                                     onClick={() => setFilterType('ALL')}
-                                    className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === 'ALL' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                                    className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === 'ALL' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}
                                 >
                                     Todos
                                 </button>
@@ -528,7 +727,7 @@ export const WarehouseManagerUI = () => {
                                     <button 
                                         key={key}
                                         onClick={() => setFilterType(key)}
-                                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === key ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === key ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}
                                     >
                                         {info.label}
                                     </button>
@@ -536,7 +735,7 @@ export const WarehouseManagerUI = () => {
                             </div>
                             <button 
                                 onClick={() => setShowTypeManager(true)}
-                                className="w-12 h-12 bg-gray-900 border border-gray-800 rounded-2xl flex items-center justify-center hover:border-indigo-500 transition-all text-xs"
+                                className="w-12 h-12 bg-slate-800/80 border border-slate-500/30 rounded-2xl flex items-center justify-center hover:border-slate-300 transition-all text-xs"
                                 title="Gestionar Categorías"
                             >
                                 ⚙️
@@ -546,7 +745,7 @@ export const WarehouseManagerUI = () => {
                                     setEditingWHData({ name: '', type: 'EX_PT', icon: '📦', capacity: 100 });
                                     setShowWHEditor(true);
                                 }}
-                                className="bg-indigo-600 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-indigo-600/20 whitespace-nowrap"
+                                className="bg-slate-600 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-slate-600/20 whitespace-nowrap text-white"
                             >
                                 + Nuevo Almacén
                             </button>
@@ -557,7 +756,7 @@ export const WarehouseManagerUI = () => {
                         <input 
                             type="text" 
                             placeholder="Buscar almacén por nombre..."
-                            className="w-full bg-black/40 border border-gray-800 p-6 rounded-[32px] outline-none focus:border-indigo-500 font-bold text-lg transition-all"
+                            className="w-full bg-slate-900/50 border border-slate-500/30 p-6 rounded-[32px] outline-none focus:border-slate-300 font-bold text-lg transition-all text-white placeholder-slate-400"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -572,7 +771,7 @@ export const WarehouseManagerUI = () => {
                                 <div 
                                     key={wh.id}
                                     onClick={() => setSelectedWH(wh)}
-                                    className={`group relative bg-gray-900/40 border ${typeInfo.border} p-8 rounded-[40px] hover:bg-gray-900/60 transition-all cursor-pointer overflow-hidden`}
+                                    className={`group relative bg-slate-900/50 border border-slate-500/25 p-8 rounded-[40px] hover:bg-slate-800/60 transition-all cursor-pointer overflow-hidden`}
                                 >
                                     <div className="flex justify-between items-start mb-6">
                                         <span className="text-5xl group-hover:scale-110 transition-transform duration-500">{wh.icon}</span>
@@ -581,18 +780,18 @@ export const WarehouseManagerUI = () => {
                                         </span>
                                     </div>
 
-                                    <h3 className="text-xl font-black uppercase italic tracking-tighter mb-2 group-hover:text-indigo-400 transition-colors">
+                                    <h3 className="text-xl font-black uppercase italic tracking-tighter mb-2 group-hover:text-slate-100 transition-colors">
                                         {wh.name}
                                     </h3>
                                     
                                     <div className="mt-8 space-y-2">
-                                        <div className="flex justify-between text-[9px] font-black uppercase text-gray-500">
+                                        <div className="flex justify-between text-[9px] font-black uppercase text-slate-400">
                                             <span>Ocupación</span>
-                                            <span className={fillPercent > 90 ? 'text-red-500' : 'text-white'}>{wh.current} / {wh.capacity}</span>
+                                            <span className={fillPercent > 90 ? 'text-red-400' : 'text-white'}>{wh.current} / {wh.capacity}</span>
                                         </div>
-                                        <div className="h-2 bg-black/60 rounded-full overflow-hidden">
+                                        <div className="h-2 bg-black/40 rounded-full overflow-hidden">
                                             <div 
-                                                className={`h-full transition-all duration-1000 ${fillPercent > 90 ? 'bg-red-500' : 'bg-indigo-500'}`} 
+                                                className={`h-full transition-all duration-1000 ${fillPercent > 90 ? 'bg-red-500' : 'bg-slate-400'}`} 
                                                 style={{ width: `${fillPercent}%` }}
                                             />
                                         </div>
@@ -608,12 +807,12 @@ export const WarehouseManagerUI = () => {
                 </div>
             ) : (
                 /* Vista Detalle: Dentro del Almacén */
-                <div className="animate-in slide-in-from-right-8 duration-500 flex flex-col h-full bg-gray-900/60 rounded-[48px] border border-gray-800 overflow-hidden">
-                    <header className="p-10 border-b border-gray-800 flex justify-between items-center bg-black/20">
+                <div className="animate-in slide-in-from-right-8 duration-500 flex flex-col h-full bg-slate-900/50 rounded-[48px] border border-slate-500/25 overflow-hidden">
+                    <header className="p-10 border-b border-slate-600/30 flex justify-between items-center bg-slate-900/30">
                         <div className="flex items-center gap-6">
                             <button 
                                 onClick={() => setSelectedWH(null)}
-                                className="w-12 h-12 rounded-2xl bg-gray-800 flex items-center justify-center hover:bg-indigo-600 transition-all group"
+                                className="w-12 h-12 rounded-2xl bg-slate-700 flex items-center justify-center hover:bg-slate-600 transition-all group"
                             >
                                 <span className="text-xl group-hover:scale-125 transition-transform">←</span>
                             </button>
@@ -625,7 +824,7 @@ export const WarehouseManagerUI = () => {
                                         {warehouseTypes[selectedWH.type]?.label || selectedWH.type}
                                     </span>
                                 </div>
-                                <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Explorando contenido y existencias</p>
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Explorando contenido y existencias</p>
                             </div>
                         </div>
                         <div className="flex gap-4">
@@ -634,7 +833,7 @@ export const WarehouseManagerUI = () => {
                                     setEditingWHData(selectedWH);
                                     setShowWHEditor(true);
                                 }}
-                                className="bg-gray-800 h-14 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-700 transition-all font-black"
+                                className="bg-slate-700 h-14 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-600 transition-all"
                             >
                                 Editar Almacén
                             </button>
@@ -672,7 +871,7 @@ export const WarehouseManagerUI = () => {
                     <div className="flex-1 overflow-y-auto p-10 custom-scrollbar">
                         <table className="w-full text-left border-separate border-spacing-y-4">
                             <thead>
-                                <tr className="text-[9px] font-black uppercase text-gray-600 tracking-[0.2em]">
+                                <tr className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em]">
                                     <th className="px-6 pb-2">Imagen</th>
                                     <th className="px-6 pb-2">Artículo</th>
                                     <th className="px-6 pb-2">SKU</th>
@@ -686,27 +885,26 @@ export const WarehouseManagerUI = () => {
                             </thead>
                             <tbody>
                                 {whContent.map(item => (
-                                    <tr key={item.sku} className="bg-black/40 hover:bg-black/60 transition-all group rounded-2xl overflow-hidden">
+                                    <tr key={item.sku} className="bg-slate-900/40 hover:bg-slate-800/60 transition-all group rounded-2xl overflow-hidden">
                                         <td className="px-6 py-4 rounded-l-3xl">
-                                            <div className="w-12 h-12 bg-black/40 border border-gray-800 rounded-xl flex items-center justify-center text-xl overflow-hidden shadow-inner uppercase">
+                                            <div className="w-12 h-12 bg-slate-800/60 border border-slate-600/30 rounded-xl flex items-center justify-center text-xl overflow-hidden shadow-inner uppercase">
                                                 {item.imgUrl ? <img src={item.imgUrl} alt={item.name} className="w-full h-full object-cover" /> : '📦'}
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
                                             <p className="text-sm font-black uppercase italic">{item.name}</p>
-                                            <p className="text-[8px] text-gray-500 font-black uppercase">{item.category}</p>
+                                            <p className="text-[8px] text-slate-400 font-black uppercase">{item.category}</p>
                                         </td>
-                                        <td className="px-6 py-4 font-mono text-[10px] text-gray-500">{item.sku}</td>
+                                        <td className="px-6 py-4 font-mono text-[10px] text-slate-400">{item.sku}</td>
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col gap-1">
                                                 <div className="flex items-center gap-2">
                                                     <span className={`text-sm font-bold ${item.stock <= (item.minStock || 0) ? 'text-red-500' : 'text-white'}`}>{item.stock}</span>
-                                                    <span className="text-[9px] font-black text-gray-600 uppercase">{item.unit}</span>
+                                                    <span className="text-[9px] font-black text-slate-500 uppercase">{item.unit}</span>
                                                 </div>
                                                 {item.stock <= (item.minStock || 0) && (
                                                     <span className="text-[7px] font-black text-red-600 uppercase tracking-widest whitespace-nowrap bg-red-500/10 px-1 py-0.5 rounded border border-red-500/20 w-max">⚠️ CRÍTICO ({item.minStock})</span>
                                                 )}
-                                                {/* Simulación de alerta de caducidad si los alertDays > 0 (asumiendo que hay una caducidad en el futuro cercano, aquí se valida estáticamente por ahora) */}
                                                 {(item.alertDays > 0) && (
                                                     <span className="text-[7px] font-black text-pink-500 uppercase tracking-widest whitespace-nowrap bg-pink-500/10 px-1 py-0.5 rounded border border-pink-500/20 w-max">⏳ REVISAR CADUCIDAD</span>
                                                 )}
@@ -719,7 +917,7 @@ export const WarehouseManagerUI = () => {
                                         </td>
                                         <td className="px-6 py-4 font-mono text-sm text-emerald-400 font-bold">${item.costPerPresentation}</td>
                                         <td className="px-6 py-4 font-mono text-sm text-[#c1d72e] font-black">${calculateItemValue(item)}</td>
-                                        <td className="px-6 py-4 text-[10px] font-bold text-gray-400">{item.provider}</td>
+                                        <td className="px-6 py-4 text-[10px] font-bold text-slate-300">{item.provider}</td>
                                         <td className="px-6 py-4 rounded-r-3xl">
                                             <div className="flex gap-2">
                                                 <button 
@@ -744,11 +942,373 @@ export const WarehouseManagerUI = () => {
                     </div>
                 </div>
             )}
+                </>
+            )}
 
-            <footer className="fixed bottom-6 left-10 text-[8px] text-gray-700 font-black uppercase tracking-[0.4em] flex items-center gap-4 pointer-events-none">
-                <span>R DE RICO ERP | WAREHOUSE LOGISTICS V2.0</span>
-                <div className="w-1 h-1 bg-gray-900 rounded-full" />
-                <span className="text-emerald-900/40">Sincronizado - Planta Central</span>
+            {/* ===== PESTAÑA: ENTRADA MASIVA ===== */}
+            {suiteTab === 'entrada' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="bg-slate-900/50 border border-slate-500/25 rounded-[32px] p-8">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-emerald-300 to-emerald-500 bg-clip-text text-transparent">📥 Entrada Masiva de Mercancía</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Registra lotes completos de insumos recibidos de proveedores</p>
+
+                        {/* Selector de almacén destino */}
+                        <div className="mb-6">
+                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén Destino</label>
+                            <select 
+                                value={bulkTargetWH}
+                                onChange={(e) => setBulkTargetWH(e.target.value)}
+                                className="w-full max-w-md bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-emerald-400 appearance-none text-white"
+                            >
+                                <option value="">Selecciona un almacén...</option>
+                                {warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
+                                    <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Buscador de insumos */}
+                        <div className="mb-6">
+                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Agregar Insumo al Lote</label>
+                            <input 
+                                type="text"
+                                placeholder="Buscar insumo por nombre..."
+                                className="w-full max-w-md bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-emerald-400 text-white placeholder-slate-400"
+                                value={bulkInsumoSearch}
+                                onChange={(e) => setBulkInsumoSearch(e.target.value)}
+                            />
+                            {bulkInsumoSearch && (
+                                <div className="mt-2 max-w-md bg-slate-800 border border-slate-600/40 rounded-xl overflow-hidden max-h-48 overflow-y-auto shadow-xl">
+                                    {insumos.filter(i => (i.nombre || '').toLowerCase().includes(bulkInsumoSearch.toLowerCase())).map(ins => (
+                                        <button
+                                            key={ins.id}
+                                            onClick={() => addBulkItem(ins)}
+                                            className="w-full text-left px-4 py-3 hover:bg-emerald-600/20 transition-colors flex justify-between items-center border-b border-slate-700/50"
+                                        >
+                                            <span className="text-sm font-bold text-white">{ins.nombre}</span>
+                                            <span className="text-[9px] text-slate-400 uppercase">{ins.unidad_base}</span>
+                                        </button>
+                                    ))}
+                                    {insumos.filter(i => (i.nombre || '').toLowerCase().includes(bulkInsumoSearch.toLowerCase())).length === 0 && (
+                                        <p className="px-4 py-3 text-slate-500 text-sm">No se encontraron insumos</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Tabla de items en el lote */}
+                        {bulkEntryItems.length > 0 && (
+                            <div className="mb-6">
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-3 block tracking-widest">Items en el Lote ({bulkEntryItems.length})</label>
+                                <div className="space-y-3">
+                                    {bulkEntryItems.map((item, idx) => (
+                                        <div key={idx} className="flex items-center gap-4 bg-slate-800/60 border border-slate-600/30 rounded-xl p-4">
+                                            <span className="text-sm font-bold text-white flex-1">{item.nombre}</span>
+                                            <input
+                                                type="number"
+                                                placeholder="Cantidad"
+                                                value={item.cantidad}
+                                                onChange={(e) => updateBulkItem(idx, 'cantidad', e.target.value)}
+                                                className="w-28 bg-slate-900/80 border border-slate-500/30 p-2 rounded-lg text-sm font-mono text-center outline-none focus:border-emerald-400 text-white"
+                                            />
+                                            <span className="text-[9px] font-black text-slate-400 uppercase w-12">{item.unidad}</span>
+                                            <input
+                                                type="text"
+                                                placeholder="Notas (opcional)"
+                                                value={item.notas}
+                                                onChange={(e) => updateBulkItem(idx, 'notas', e.target.value)}
+                                                className="flex-1 bg-slate-900/80 border border-slate-500/30 p-2 rounded-lg text-sm outline-none focus:border-emerald-400 text-white placeholder-slate-500"
+                                            />
+                                            <button onClick={() => removeBulkItem(idx)} className="text-red-400 hover:text-red-300 text-lg">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <button
+                            onClick={handleSubmitBulkEntry}
+                            disabled={loadingOp || bulkEntryItems.length === 0}
+                            className="bg-emerald-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {loadingOp ? '⏳ Procesando...' : `📥 Registrar Entrada (${bulkEntryItems.length} items)`}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== PESTAÑA: MERMAS ===== */}
+            {suiteTab === 'mermas' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="bg-slate-900/50 border border-slate-500/25 rounded-[32px] p-8 max-w-2xl">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-orange-300 to-orange-500 bg-clip-text text-transparent">⚠️ Registro de Mermas</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Documenta pérdidas, desperdicios o productos dañados con motivo auditable</p>
+
+                        <div className="space-y-6">
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén</label>
+                                <select 
+                                    value={mermaForm.almacen_id}
+                                    onChange={(e) => setMermaForm({...mermaForm, almacen_id: e.target.value})}
+                                    className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-orange-400 appearance-none text-white"
+                                >
+                                    <option value="">Selecciona un almacén...</option>
+                                    {warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
+                                        <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Insumo / Producto</label>
+                                <select 
+                                    value={mermaForm.item_id}
+                                    onChange={(e) => setMermaForm({...mermaForm, item_id: e.target.value})}
+                                    className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-orange-400 appearance-none text-white"
+                                >
+                                    <option value="">Selecciona un insumo...</option>
+                                    {insumos.map(ins => (
+                                        <option key={ins.id} value={ins.id}>{ins.nombre} ({ins.unidad_base})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Cantidad</label>
+                                    <input 
+                                        type="number"
+                                        value={mermaForm.cantidad}
+                                        onChange={(e) => setMermaForm({...mermaForm, cantidad: e.target.value})}
+                                        placeholder="0"
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-mono text-sm outline-none focus:border-orange-400 text-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Tipo de Item</label>
+                                    <select 
+                                        value={mermaForm.item_type}
+                                        onChange={(e) => setMermaForm({...mermaForm, item_type: e.target.value})}
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-orange-400 appearance-none text-white"
+                                    >
+                                        <option value="INSUMO">Insumo</option>
+                                        <option value="PRODUCTO">Producto</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Motivo / Notas (Obligatorio) ⚠️</label>
+                                <textarea 
+                                    value={mermaForm.notas}
+                                    onChange={(e) => setMermaForm({...mermaForm, notas: e.target.value})}
+                                    placeholder="Describe el motivo de la merma: caducidad, rotura, producción excedente, etc."
+                                    rows={3}
+                                    className="w-full bg-slate-800/80 border border-orange-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-orange-400 text-white placeholder-slate-500 resize-none"
+                                />
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleSubmitMerma}
+                            disabled={loadingOp}
+                            className="mt-6 bg-orange-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-orange-600/20 disabled:opacity-50"
+                        >
+                            {loadingOp ? '⏳ Procesando...' : '⚠️ Registrar Merma'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== PESTAÑA: TRASPASOS ===== */}
+            {suiteTab === 'traspasos' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="bg-slate-900/50 border border-slate-500/25 rounded-[32px] p-8 max-w-2xl">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-blue-300 to-blue-500 bg-clip-text text-transparent">🔄 Traspasos entre Almacenes</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Mueve insumos o productos de un almacén a otro con trazabilidad completa</p>
+
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén Origen</label>
+                                    <select 
+                                        value={traspasoForm.almacen_origen_id}
+                                        onChange={(e) => setTraspasoForm({...traspasoForm, almacen_origen_id: e.target.value})}
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-blue-400 appearance-none text-white"
+                                    >
+                                        <option value="">Origen...</option>
+                                        {warehouses.map(wh => (
+                                            <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén Destino</label>
+                                    <select 
+                                        value={traspasoForm.almacen_destino_id}
+                                        onChange={(e) => setTraspasoForm({...traspasoForm, almacen_destino_id: e.target.value})}
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-blue-400 appearance-none text-white"
+                                    >
+                                        <option value="">Destino...</option>
+                                        {warehouses.map(wh => (
+                                            <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Insumo / Producto</label>
+                                <select 
+                                    value={traspasoForm.item_id}
+                                    onChange={(e) => setTraspasoForm({...traspasoForm, item_id: e.target.value})}
+                                    className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-blue-400 appearance-none text-white"
+                                >
+                                    <option value="">Selecciona un insumo...</option>
+                                    {insumos.map(ins => (
+                                        <option key={ins.id} value={ins.id}>{ins.nombre} ({ins.unidad_base})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Cantidad</label>
+                                    <input 
+                                        type="number"
+                                        value={traspasoForm.cantidad}
+                                        onChange={(e) => setTraspasoForm({...traspasoForm, cantidad: e.target.value})}
+                                        placeholder="0"
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-mono text-sm outline-none focus:border-blue-400 text-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Tipo</label>
+                                    <select 
+                                        value={traspasoForm.item_type}
+                                        onChange={(e) => setTraspasoForm({...traspasoForm, item_type: e.target.value})}
+                                        className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-blue-400 appearance-none text-white"
+                                    >
+                                        <option value="INSUMO">Insumo</option>
+                                        <option value="PRODUCTO">Producto</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        {traspasoForm.almacen_origen_id && traspasoForm.almacen_destino_id && traspasoForm.almacen_origen_id === traspasoForm.almacen_destino_id && (
+                            <div className="mt-4 px-4 py-2 bg-red-900/30 border border-red-500/30 rounded-xl text-red-300 text-sm font-bold">
+                                ⚠️ Origen y destino son el mismo almacén
+                            </div>
+                        )}
+
+                        <button
+                            onClick={handleSubmitTraspaso}
+                            disabled={loadingOp}
+                            className="mt-6 bg-blue-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
+                        >
+                            {loadingOp ? '⏳ Procesando...' : '🔄 Ejecutar Traspaso'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== PESTAÑA: HISTORIAL ===== */}
+            {suiteTab === 'historial' && (
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="bg-slate-900/50 border border-slate-500/25 rounded-[32px] p-8">
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-slate-200 to-slate-400 bg-clip-text text-transparent">📜 Historial de Movimientos</h2>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bitácora completa y auditable de todas las operaciones</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => fetchMovements()}
+                                    className="bg-slate-700 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-600 transition-all text-white"
+                                >
+                                    🔄 Actualizar
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Filtros de tipo */}
+                        <div className="flex gap-2 mb-6 flex-wrap">
+                            <button 
+                                onClick={() => setHistorialFilter('ALL')}
+                                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${historialFilter === 'ALL' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white bg-slate-800/50'}`}
+                            >
+                                Todos
+                            </button>
+                            {Object.entries(MOV_TYPE_META).map(([key, meta]) => (
+                                <button 
+                                    key={key}
+                                    onClick={() => setHistorialFilter(key)}
+                                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1 ${historialFilter === key ? `${meta.bg} ${meta.color} border border-current` : 'text-slate-400 hover:text-white bg-slate-800/50'}`}
+                                >
+                                    {meta.icon} {meta.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Tabla de movimientos */}
+                        <div className="overflow-x-auto max-h-[60vh] overflow-y-auto custom-scrollbar">
+                            <table className="w-full text-left border-separate border-spacing-y-2">
+                                <thead className="sticky top-0 z-10">
+                                    <tr className="text-[9px] font-black uppercase text-slate-400 tracking-[0.15em]">
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md rounded-l-lg">Fecha</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md">Tipo</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md">Item</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md">Cantidad</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md">Método</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md">Usuario</th>
+                                        <th className="px-4 pb-2 bg-slate-900/90 backdrop-blur-md rounded-r-lg">Notas</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {movements
+                                        .filter(m => historialFilter === 'ALL' || m.tipo_movimiento === historialFilter)
+                                        .map((mov, idx) => {
+                                            const meta = MOV_TYPE_META[mov.tipo_movimiento] || MOV_TYPE_META.AJUSTE_INVENTARIO;
+                                            return (
+                                                <tr key={mov.id || idx} className="bg-slate-800/40 hover:bg-slate-700/50 transition-all">
+                                                    <td className="px-4 py-3 rounded-l-xl text-[10px] text-slate-300 font-mono">
+                                                        {mov.timestamp ? new Date(mov.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${meta.bg} ${meta.color} border border-current/20`}>
+                                                            {meta.icon} {meta.label}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-xs font-bold text-white">
+                                                        {mov.item_id}
+                                                        <span className="text-[8px] text-slate-500 ml-1 uppercase">({mov.item_type})</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 font-mono text-sm font-bold text-white">{mov.cantidad}</td>
+                                                    <td className="px-4 py-3 text-[9px] font-bold text-slate-400 uppercase">{mov.metodo_captura}</td>
+                                                    <td className="px-4 py-3 text-[10px] font-bold text-slate-300">{mov.usuario_id}</td>
+                                                    <td className="px-4 py-3 rounded-r-xl text-[10px] text-slate-400 max-w-[200px] truncate">{mov.notas || '—'}</td>
+                                                </tr>
+                                            );
+                                        })
+                                    }
+                                </tbody>
+                            </table>
+                            {movements.length === 0 && (
+                                <div className="text-center py-16">
+                                    <p className="text-slate-500 text-4xl mb-4">📜</p>
+                                    <p className="text-slate-400 font-bold">No hay movimientos registrados aún</p>
+                                    <p className="text-slate-500 text-sm mt-1">Los movimientos aparecerán aquí cuando se registren entradas, mermas o traspasos</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-4 text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                            {movements.filter(m => historialFilter === 'ALL' || m.tipo_movimiento === historialFilter).length} movimientos • Filtro: {historialFilter === 'ALL' ? 'TODOS' : MOV_TYPE_META[historialFilter]?.label || historialFilter}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <footer className="fixed bottom-6 left-10 text-[8px] text-slate-500 font-black uppercase tracking-[0.4em] flex items-center gap-4 pointer-events-none">
+                <span>R DE RICO ERP | WAREHOUSE LOGISTICS V3.0</span>
+                <div className="w-1 h-1 bg-slate-600 rounded-full" />
+                <span className="text-slate-600">Acero Inoxidable Satinado - Planta Central</span>
             </footer>
 
             {/* Modal: Editor de Almacén (Crear/Editar) */}
