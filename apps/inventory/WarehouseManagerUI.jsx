@@ -326,12 +326,12 @@ export const WarehouseManagerUI = () => {
             { key: 'CONGELADO', label: 'ALMACENES CONGELADOS', icon: '❄️', desc: 'Helados, paletas, cámara fría', color: 'from-cyan-900/40 to-cyan-700/10', border: 'border-cyan-400/30', accent: 'text-cyan-300', count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length },
         ];
         return (
-            <div className="bg-[#050505]/60 backdrop-blur-xl min-h-screen text-white p-8 font-sans">
+            <div className="bg-gradient-to-br from-[#2b2f36] via-[#1f2228] to-[#35393f] min-h-screen text-white p-8 font-sans" style={{backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.02) 100%)'}}>
                 <div className="max-w-5xl mx-auto">
                     <div className="text-center mb-16 pt-8">
-                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">GESTIÓN DE ALMACENES</h1>
-                        <p className="text-[11px] font-black text-gray-500 uppercase tracking-[0.4em] mt-4">CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO</p>
-                        <p className="text-gray-600 text-sm mt-2">{warehouses.length} almacenes registrados</p>
+                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-gray-200 via-white to-gray-300 bg-clip-text text-transparent" style={{textShadow: '0 0 40px rgba(255,255,255,0.1)'}}>GESTIÓN DE ALMACENES</h1>
+                        <p className="text-[11px] font-black text-gray-400 uppercase tracking-[0.4em] mt-4">CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO</p>
+                        <p className="text-gray-500 text-sm mt-2">{warehouses.length} almacenes registrados</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {ZONES.map(zone => (
@@ -362,8 +362,7 @@ export const WarehouseManagerUI = () => {
     const zoneMeta = ZONE_META[selectedZone] || ZONE_META.SECO;
 
     return (
-        <div className="bg-[#050505]/60 backdrop-blur-xl min-h-screen text-white p-8 font-sans">
-            {/* Botón Volver */}
+        <div className="bg-gradient-to-br from-[#2b2f36] via-[#1f2228] to-[#35393f] min-h-screen text-white p-8 font-sans" style={{backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.02) 100%)'}}>            {/* Botón Volver */}
             <button
                 onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
                 className="mb-6 flex items-center gap-3 text-gray-500 hover:text-white transition-colors text-sm font-bold"
