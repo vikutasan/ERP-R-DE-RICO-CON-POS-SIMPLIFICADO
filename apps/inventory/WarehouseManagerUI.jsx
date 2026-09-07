@@ -318,36 +318,92 @@ export const WarehouseManagerUI = () => {
 
     const whContent = selectedWH ? getWHContent(selectedWH.id) : [];
 
+    // Estilo base Acero Inoxidable Industrial (Completamente opaco para cubrir el fondo de madera)
+    const INOX_CONTAINER_STYLE = {
+        backgroundColor: '#1b1e24',
+        backgroundImage: `
+            repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0px, rgba(255, 255, 255, 0.015) 1px, transparent 1px, transparent 4px),
+            repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.15) 0px, rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 4px),
+            radial-gradient(ellipse at 50% 10%, rgba(200, 215, 235, 0.15) 0%, transparent 60%),
+            linear-gradient(135deg, #2b303a 0%, #1c1f26 35%, #14161a 70%, #282d36 100%)
+        `,
+        boxShadow: 'inset 0 0 100px rgba(0, 0, 0, 0.9)'
+    };
+
     // --- LANDING: Selección de Zona Térmica ---
     if (!selectedZone) {
         const ZONES = [
-            { key: 'SECO', label: 'ALMACENES SECOS', icon: '📦', desc: 'Harinas, azúcar, empaques, pan', color: 'from-amber-900/40 to-amber-700/10', border: 'border-amber-600/30', accent: 'text-amber-400', count: warehouses.filter(w => (w.zona_termica || w.type) === 'SECO').length },
-            { key: 'REFRIGERADO', label: 'ALMACENES REFRIGERADOS', icon: '🧊', desc: 'Lácteos, mantequilla, cremas', color: 'from-blue-900/40 to-blue-700/10', border: 'border-blue-500/30', accent: 'text-blue-400', count: warehouses.filter(w => (w.zona_termica || w.type) === 'REFRIGERADO').length },
-            { key: 'CONGELADO', label: 'ALMACENES CONGELADOS', icon: '❄️', desc: 'Helados, paletas, cámara fría', color: 'from-cyan-900/40 to-cyan-700/10', border: 'border-cyan-400/30', accent: 'text-cyan-300', count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length },
+            { 
+                key: 'SECO', 
+                label: 'ALMACENES SECOS', 
+                icon: '📦', 
+                desc: 'Harinas, azúcar, empaques, pan', 
+                cardBg: 'linear-gradient(145deg, rgba(45, 38, 28, 0.85) 0%, rgba(22, 20, 18, 0.95) 100%)', 
+                border: 'border-amber-500/40', 
+                accent: 'text-amber-400', 
+                badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+                count: warehouses.filter(w => (w.zona_termica || w.type) === 'SECO').length 
+            },
+            { 
+                key: 'REFRIGERADO', 
+                label: 'ALMACENES REFRIGERADOS', 
+                icon: '🧊', 
+                desc: 'Lácteos, mantequilla, cremas', 
+                cardBg: 'linear-gradient(145deg, rgba(28, 40, 58, 0.85) 0%, rgba(16, 22, 32, 0.95) 100%)', 
+                border: 'border-blue-500/40', 
+                accent: 'text-blue-400', 
+                badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+                count: warehouses.filter(w => (w.zona_termica || w.type) === 'REFRIGERADO').length 
+            },
+            { 
+                key: 'CONGELADO', 
+                label: 'ALMACENES CONGELADOS', 
+                icon: '❄️', 
+                desc: 'Helados, paletas, cámara fría', 
+                cardBg: 'linear-gradient(145deg, rgba(22, 45, 54, 0.85) 0%, rgba(14, 26, 32, 0.95) 100%)', 
+                border: 'border-cyan-400/40', 
+                accent: 'text-cyan-300', 
+                badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
+                count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length 
+            },
         ];
         return (
-            <div className="bg-gradient-to-br from-[#2b2f36] via-[#1f2228] to-[#35393f] min-h-screen text-white p-8 font-sans" style={{backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.02) 100%)'}}>
+            <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
                 <div className="max-w-5xl mx-auto">
                     <div className="text-center mb-16 pt-8">
-                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-gray-200 via-white to-gray-300 bg-clip-text text-transparent" style={{textShadow: '0 0 40px rgba(255,255,255,0.1)'}}>GESTIÓN DE ALMACENES</h1>
-                        <p className="text-[11px] font-black text-gray-400 uppercase tracking-[0.4em] mt-4">CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO</p>
-                        <p className="text-gray-500 text-sm mt-2">{warehouses.length} almacenes registrados</p>
+                        <div className="inline-block px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-600/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-300 mb-4 shadow-inner">
+                            ACERO INOXIDABLE • CONTROL DE TEMPERATURA
+                        </div>
+                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-gray-100 via-slate-200 to-gray-400 bg-clip-text text-transparent drop-shadow-lg">
+                            GESTIÓN DE ALMACENES
+                        </h1>
+                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em] mt-3">
+                            CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
+                        </p>
+                        <p className="text-slate-400 text-sm mt-2 font-semibold">{warehouses.length} almacenes registrados</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {ZONES.map(zone => (
                             <button
                                 key={zone.key}
                                 onClick={() => setSelectedZone(zone.key)}
-                                className={`group relative bg-gradient-to-br ${zone.color} border ${zone.border} rounded-[32px] p-10 text-left transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl active:scale-[0.98]`}
+                                style={{
+                                    background: zone.cardBg,
+                                    boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.75), inset 0 1px 1px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 6px 0 rgba(0, 0, 0, 0.6)',
+                                    backdropFilter: 'blur(12px)'
+                                }}
+                                className={`group relative border ${zone.border} rounded-[32px] p-10 text-left transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl active:scale-[0.98]`}
                             >
                                 <div className="text-6xl mb-6 group-hover:scale-110 transition-transform duration-300">{zone.icon}</div>
                                 <h2 className={`text-xl font-black uppercase tracking-tight ${zone.accent}`}>{zone.label}</h2>
-                                <p className="text-gray-500 text-xs mt-2 font-medium">{zone.desc}</p>
-                                <div className={`mt-6 flex items-center justify-between`}>
+                                <p className="text-slate-300 text-xs mt-2 font-medium leading-relaxed">{zone.desc}</p>
+                                <div className="mt-8 flex items-center justify-between pt-4 border-t border-white/10">
                                     <span className={`text-4xl font-black ${zone.accent}`}>{zone.count}</span>
-                                    <span className="text-gray-600 text-[10px] font-black uppercase tracking-widest">ALMACENES →</span>
+                                    <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest group-hover:text-white transition-colors">
+                                        ALMACENES →
+                                    </span>
                                 </div>
-                                <div className={`absolute inset-0 rounded-[32px] border-2 ${zone.border} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+                                <div className={`absolute inset-0 rounded-[32px] border-2 ${zone.border} opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none`} />
                             </button>
                         ))}
                     </div>
@@ -358,14 +414,19 @@ export const WarehouseManagerUI = () => {
 
     // --- SUITE: Almacenes filtrados por zona ---
     const zoneWarehouses = warehouses.filter(w => (w.zona_termica || w.type) === selectedZone);
-    const ZONE_META = { SECO: { icon: '📦', accent: 'text-amber-400', label: 'SECOS' }, REFRIGERADO: { icon: '🧊', accent: 'text-blue-400', label: 'REFRIGERADOS' }, CONGELADO: { icon: '❄️', accent: 'text-cyan-300', label: 'CONGELADOS' } };
+    const ZONE_META = { 
+        SECO: { icon: '📦', accent: 'text-amber-400', label: 'SECOS', badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30' }, 
+        REFRIGERADO: { icon: '🧊', accent: 'text-blue-400', label: 'REFRIGERADOS', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30' }, 
+        CONGELADO: { icon: '❄️', accent: 'text-cyan-300', label: 'CONGELADOS', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' } 
+    };
     const zoneMeta = ZONE_META[selectedZone] || ZONE_META.SECO;
 
     return (
-        <div className="bg-gradient-to-br from-[#2b2f36] via-[#1f2228] to-[#35393f] min-h-screen text-white p-8 font-sans" style={{backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.02) 100%)'}}>            {/* Botón Volver */}
+        <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
+            {/* Botón Volver */}
             <button
                 onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
-                className="mb-6 flex items-center gap-3 text-gray-500 hover:text-white transition-colors text-sm font-bold"
+                className="mb-6 flex items-center gap-3 text-slate-400 hover:text-white transition-colors text-sm font-bold bg-slate-900/60 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700/50 w-max"
             >
                 <span className="text-xl">←</span> Volver a Zonas Térmicas
             </button>
