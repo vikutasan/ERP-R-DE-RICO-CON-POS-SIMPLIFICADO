@@ -31,7 +31,9 @@ import { RecursosHumanosUI } from './hr/RecursosHumanosUI';
 import { CheckInWelcomeModal } from './hr/CheckInWelcomeModal';
 import { CheckOutModal } from './hr/CheckOutModal';
 import { hrService } from './hr/hrService';
-import { HeladeriaHubUI } from './heladeria/HeladeriaHubUI';
+// ═══ AISLAMIENTO DE MÓDULOS — React.lazy() ═══
+// Si heladería se cae, el POS y todos los demás módulos siguen funcionando.
+const HeladeriaHubUI = React.lazy(() => import('./heladeria/HeladeriaHubUI').then(m => ({default: m.HeladeriaHubUI})));
 import { CONFIG } from './pos/config';
 import REAL_PRODUCTS from '../importar_productos_AQUI.json';
 
@@ -530,7 +532,16 @@ export const ExperimentCenterUI = () => {
                         {activeModule === 'network_monitor' && <NetworkMonitorUI />}
                         {activeModule === 'reparto_grandeza' && <RepartoPanGrandezaUI onBack={() => setActiveModule('overview')} userPermissions={userPermissions} userRole={userRole} />}
                         {activeModule === 'recursos_humanos' && <RecursosHumanosUI userId={userId} userName={userName} />}
-                        {activeModule === 'heladeria' && <HeladeriaHubUI onBack={() => setActiveModule('overview')} />}
+                        {activeModule === 'heladeria' && (
+                            <React.Suspense fallback={
+                                <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'#f9a8d4',fontSize:'16px',gap:'10px'}}>
+                                    <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>🍦</span> Cargando Heladería...
+                                    <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+                                </div>
+                            }>
+                                <HeladeriaHubUI onBack={() => setActiveModule('overview')} />
+                            </React.Suspense>
+                        )}
                     </div>
 
                 </div>

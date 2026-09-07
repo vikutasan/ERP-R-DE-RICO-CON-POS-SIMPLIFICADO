@@ -1,9 +1,44 @@
-﻿import React, { useState } from 'react';
-import { TiendaInteractivaUI } from './sections/TiendaInteractivaUI';
-import { KdsHeladosUI } from './sections/KdsHeladosUI';
-import { KdsMalteadasUI } from './sections/KdsMalteadasUI';
-import { DisplayTotemUI } from './sections/DisplayTotemUI';
-import { DisplayPreciosUI } from './sections/DisplayPreciosUI';
+import React, { useState, Suspense } from 'react';
+
+// ═══ LAZY IMPORTS — Aislamiento de secciones ═══
+// Si una sección falla, las demás siguen funcionando.
+const PosHeladeriaUI = React.lazy(() => import('./sections/PosHeladeriaUI').then(m => ({default: m.PosHeladeriaUI})));
+const TiendaInteractivaUI = React.lazy(() => import('./sections/TiendaInteractivaUI').then(m => ({default: m.TiendaInteractivaUI})));
+const KdsHeladosUI = React.lazy(() => import('./sections/KdsHeladosUI').then(m => ({default: m.KdsHeladosUI})));
+const KdsMalteadasUI = React.lazy(() => import('./sections/KdsMalteadasUI').then(m => ({default: m.KdsMalteadasUI})));
+const DisplayTotemUI = React.lazy(() => import('./sections/DisplayTotemUI').then(m => ({default: m.DisplayTotemUI})));
+const DisplayPreciosUI = React.lazy(() => import('./sections/DisplayPreciosUI').then(m => ({default: m.DisplayPreciosUI})));
+
+// ErrorBoundary local para secciones internas
+class SectionErrorBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+    static getDerivedStateFromError(error) { return { hasError: true, error }; }
+    render() {
+        if (this.state.hasError) return (
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',
+                justifyContent:'center',height:'100%',gap:'16px',color:'#fff',padding:'40px'}}>
+                <span style={{fontSize:'48px'}}>⚠️</span>
+                <h3 style={{margin:0}}>Error en sección {this.props.name}</h3>
+                <pre style={{color:'#ef4444',fontSize:'11px',maxWidth:'500px',overflow:'auto'}}>
+                    {this.state.error?.toString()}
+                </pre>
+                <button onClick={this.props.onBack}
+                    style={{background:'#f97316',color:'#000',border:'none',padding:'12px 24px',
+                        borderRadius:'8px',cursor:'pointer',fontWeight:'bold'}}>
+                    ← Volver al Hub
+                </button>
+            </div>
+        );
+        return this.props.children;
+    }
+}
+
+const SectionLoader = () => (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'#f9a8d4',fontSize:'16px',gap:'10px'}}>
+        <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>🍦</span> Cargando...
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    </div>
+);
 
 /**
  * HeladeriaHubUI — Landing Page del Módulo Heladería
@@ -12,6 +47,15 @@ import { DisplayPreciosUI } from './sections/DisplayPreciosUI';
  */
 
 const SECCIONES = [
+    {
+        id: 'pos_heladeria',
+        nombre: 'POS Heladería',
+        descripcion: 'Punto de venta rápido para el personal de mostrador',
+        icono: '⚡',
+        gradiente: 'linear-gradient(135deg, #f43f5e, #fb7185)',
+        glowColor: 'rgba(244, 63, 94, 0.3)',
+        borderColor: 'rgba(251, 113, 133, 0.3)',
+    },
     {
         id: 'tienda',
         nombre: 'Tienda Interactiva',
@@ -59,14 +103,30 @@ const SECCIONES = [
     },
 ];
 
+const renderSection = (id, onBack) => {
+    const wrapped = (Component, name) => (
+        <Suspense fallback={<SectionLoader />}>
+            <SectionErrorBoundary name={name} onBack={onBack}>
+                <Component onBack={onBack} />
+            </SectionErrorBoundary>
+        </Suspense>
+    );
+
+    switch(id) {
+        case 'pos_heladeria': return wrapped(PosHeladeriaUI, 'POS Heladería');
+        case 'tienda': return wrapped(TiendaInteractivaUI, 'Tienda Interactiva');
+        case 'kds_helados': return wrapped(KdsHeladosUI, 'KDS Helados');
+        case 'kds_malteadas': return wrapped(KdsMalteadasUI, 'KDS Malteadas');
+        case 'totem': return wrapped(DisplayTotemUI, 'Display Tótem');
+        case 'precios': return wrapped(DisplayPreciosUI, 'Display Precios');
+        default: return null;
+    }
+};
+
 export const HeladeriaHubUI = ({ onBack }) => {
     const [activeSection, setActiveSection] = useState(null);
 
-    if (activeSection === 'tienda') return <TiendaInteractivaUI onBack={() => setActiveSection(null)} />;
-    if (activeSection === 'kds_helados') return <KdsHeladosUI onBack={() => setActiveSection(null)} />;
-    if (activeSection === 'kds_malteadas') return <KdsMalteadasUI onBack={() => setActiveSection(null)} />;
-    if (activeSection === 'totem') return <DisplayTotemUI onBack={() => setActiveSection(null)} />;
-    if (activeSection === 'precios') return <DisplayPreciosUI onBack={() => setActiveSection(null)} />;
+    if (activeSection) return renderSection(activeSection, () => setActiveSection(null));
 
     return (
         <div style={{
