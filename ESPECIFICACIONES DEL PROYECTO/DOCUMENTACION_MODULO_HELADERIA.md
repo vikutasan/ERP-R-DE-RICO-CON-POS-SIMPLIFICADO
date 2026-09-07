@@ -326,7 +326,32 @@ Script: `apps/api/migrations/seed_heladeria_data.py`
 
 ---
 
-## 10. DECISIONES TÉCNICAS
+## 10. DECISIONES DE NEGOCIO (Registro Histórico)
+
+Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la fase de diseño:
+
+| # | Pregunta | Resolución | Decidido por |
+|---|---|---|---|
+| 1 | ¿Quién toca la pantalla? | **Dos interfaces:** POS Heladería (empleado) + Tienda Interactiva (cliente) | Dueño |
+| 2 | ¿Tablas nuevas o reutilizar Ticket? | **Reutilizar `Ticket` + `TicketItem`** con campo `channel`. Solo 2 tablas nuevas | Auditoría |
+| 3 | ¿Nombre del integrante? | **Opcional.** Campo libre, se puede saltar | Dueño |
+| 4 | ¿Cómo agotar un sabor? | **Botón "AGOTAR" en POS Heladería**, toggle instantáneo | Dueño |
+| 5 | ¿Soporte offline? | **Obligatorio.** Cache de menú + cola de sync | Auditoría |
+| 6 | ¿URLs del API? | **Solo via `CONFIG.API_BASE_URL`** — prohibido construir manual | Auditoría |
+| 7 | ¿Retries de red? | **`withRetries` obligatorio** en todas las operaciones | Auditoría |
+| 8 | ¿Terminales separados? | **Namespace `H-`** (H1, H2, H-CAJA) en misma tabla `terminal_locks` | Auditoría |
+| 9 | ¿Prioridad? | **MVP primero** (POS + KDS + Reporte), luego Tienda + Displays | Dueño |
+| 10 | ¿Estética? | **Häagen-Dazs premium.** Dark mode, rosa/violeta/crema, Playfair Display | Dueño |
+| 11 | ¿Cortes de caja? | **Independientes por terminal/cajero.** Cada uno cierra su turno | Confirmado |
+| 12 | ¿Reporte consolidado? | **Nueva pestaña en Auditoría y Control** — vista de solo lectura por fecha | Dueño |
+| 13 | ¿Cierre ciego? | **Diferido** — se implementa después del MVP | Dueño |
+| 14 | ¿Día operativo? | **Diferido** — se implementa si hay operación nocturna | Dueño |
+| 15 | ¿Tienda Interactiva puede cobrar? | **NO.** Solo genera pre-comandas (PENDING). Un cajero las cobra | Confirmado |
+| 16 | ¿Aislamiento de módulos? | **`React.lazy()` + `ErrorBoundary`** — si heladería se cae, el POS sigue | Auditoría |
+
+---
+
+## 11. DECISIONES TÉCNICAS
 
 | Decisión | Razón |
 |---|---|
@@ -340,7 +365,7 @@ Script: `apps/api/migrations/seed_heladeria_data.py`
 
 ---
 
-## 11. EL CEMENTERIO DE BUGS
+## 12. EL CEMENTERIO DE BUGS
 
 > Sección reservada para documentar bugs críticos descubiertos en producción.
 > Formato: mismo que la Documentación de Auditoría (Síntoma → Causa Raíz → Solución → Regla de Oro).
@@ -351,7 +376,7 @@ El módulo fue implementado el 2026-09-07 y aún no ha entrado en operación con
 
 ---
 
-## 12. PRÓXIMOS PASOS (OLEADA 2)
+## 13. PRÓXIMOS PASOS (OLEADA 2)
 
 | Feature | Prioridad | Dependencia |
 |---|---|---|
