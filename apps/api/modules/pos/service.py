@@ -37,7 +37,20 @@ class POSService:
 
         # 3. Persistir movimientos de artículos
         await self._sync_ticket_items(db, db_ticket.id, db_items)
-        
+
+        # PUENTE POS → ALMACENES (Outbox Pattern)
+        # Inserta evento ANTES del commit para garantizar atomicidad.
+        # try/except pass: NUNCA interrumpir el POS por un error de warehouse.
+        if db_ticket.status == "PAID":
+            try:
+                from modules.warehouse.models import WarehouseEvent
+                import json
+                items_data = [{"sku": item.product.sku, "qty": item.quantity} for item in db_items]
+                event = WarehouseEvent(ticket_id=db_ticket.id, items_json=json.dumps(items_data))
+                db.add(event)
+            except Exception:
+                pass  # NUNCA interrumpir el POS
+
         await db.commit()
 
         # 4. PUENTE POS → PRODUCCIÓN: Sincronizar PEDIDOs con PostgreSQL

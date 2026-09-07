@@ -64,7 +64,22 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# AUTO-SEED: Crear tablas + usuario admin en primera ejecuciÃƒÂ³n
+# OUTBOX PROCESSOR: Procesar eventos POS → Almacenes en background
+# ---------------------------------------------------------------------------
+import asyncio
+
+@app.on_event("startup")
+async def start_warehouse_processor():
+    """Inicia el procesador de eventos del Outbox Pattern (polling cada 30s)."""
+    try:
+        from modules.warehouse.service import process_warehouse_events
+        asyncio.create_task(process_warehouse_events())
+        print("✅ Warehouse Outbox Processor iniciado (polling 30s)")
+    except Exception as e:
+        print(f"⚠️ Warehouse Processor no iniciado: {e}")
+
+# ---------------------------------------------------------------------------
+# AUTO-SEED: Crear tablas + usuario admin en primera ejecución
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def auto_seed_on_first_boot():

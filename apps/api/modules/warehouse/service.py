@@ -316,3 +316,85 @@ class WarehouseService:
 
 warehouse_service = WarehouseService()
 
+
+# --- Outbox Processor (Background Task) ---
+async def process_warehouse_events():
+    """
+    Procesador asíncrono del Outbox Pattern.
+    Polling cada 30s: lee eventos PENDIENTE, descuenta stock en almacenes EXHIBICION_VENTA.
+    3 intentos máx → FALLIDO con error_log.
+    """
+    import asyncio
+    import json
+    from core.database import AsyncSessionLocal
+
+    # Esperar 10s al startup para que la BD esté lista
+    await asyncio.sleep(10)
+
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(models.WarehouseEvent)
+                    .where(models.WarehouseEvent.estado == "PENDIENTE")
+                    .order_by(models.WarehouseEvent.created_at)
+                    .limit(50)
+                )
+                eventos = result.scalars().all()
+
+                for evento in eventos:
+                    try:
+                        items = json.loads(evento.items_json) if isinstance(evento.items_json, str) else evento.items_json
+
+                        for item_data in items:
+                            sku = item_data.get("sku")
+                            qty = item_data.get("qty", 1)
+                            if not sku:
+                                continue
+
+                            # Buscar stock en almacenes EXHIBICION_VENTA que tengan este SKU
+                            stock_result = await db.execute(
+                                select(models.StockAlmacen)
+                                .join(models.Almacen, models.StockAlmacen.almacen_id == models.Almacen.id)
+                                .where(
+                                    models.Almacen.proposito == "EXHIBICION_VENTA",
+                                    models.StockAlmacen.item_id == sku,
+                                    models.StockAlmacen.cantidad_actual >= qty
+                                )
+                                .limit(1)
+                            )
+                            stock = stock_result.scalar_one_or_none()
+
+                            if stock:
+                                stock.cantidad_actual -= qty
+                                stock.version += 1
+
+                                # Registrar movimiento de salida por venta
+                                mov = models.MovimientoInventario(
+                                    almacen_origen_id=stock.almacen_id,
+                                    almacen_destino_id=None,
+                                    item_id=sku,
+                                    item_type="PRODUCTO",
+                                    cantidad=qty,
+                                    tipo_movimiento="SALIDA_VENTA",
+                                    metodo_captura="EVENTO_POS",
+                                    usuario_id="SISTEMA",
+                                    notas=f"Ticket #{evento.ticket_id}"
+                                )
+                                db.add(mov)
+
+                        evento.estado = "PROCESADO"
+
+                    except Exception as e:
+                        evento.intentos += 1
+                        if evento.intentos >= 3:
+                            evento.estado = "FALLIDO"
+                            evento.error_log = str(e)[:500]
+
+                if eventos:
+                    await db.commit()
+
+        except Exception:
+            pass  # Silenciar errores del procesador — NUNCA crashear el servidor
+
+        await asyncio.sleep(30)
