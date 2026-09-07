@@ -254,10 +254,12 @@ async def generar_reporte_diario(db: AsyncSession, fecha: str) -> dict:
     Returns:
         dict con gran_total, por_canal, alertas
     """
-    from datetime import date as date_type
+    from datetime import timedelta
     fecha_obj = datetime.strptime(fecha, "%Y-%m-%d").date()
-    fecha_inicio = datetime.combine(fecha_obj, datetime.min.time())
-    fecha_fin = datetime.combine(fecha_obj, datetime.max.time())
+    # Ajuste UTC-6 (México): el "día" local va de 06:00 UTC a 06:00 UTC del día siguiente
+    # Misma solución que Bug 2 en pos/service.py
+    fecha_inicio = datetime.combine(fecha_obj, datetime.min.time()) + timedelta(hours=6)
+    fecha_fin = fecha_inicio + timedelta(days=1)
 
     # Obtener todas las sesiones de caja del día
     resultado_sesiones = await db.execute(

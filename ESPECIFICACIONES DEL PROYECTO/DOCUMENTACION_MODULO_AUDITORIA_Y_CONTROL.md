@@ -242,10 +242,10 @@ La pestaña "📊 Reporte Diario" en `AuditoriaControlUI.jsx` renderiza 4 bloque
 | **Detalle por Turno** | Tabla con filas hover | Cajero, terminal, ventas, tickets, diferencia (rojo/verde), estado (cerrado/abierto) |
 | **Alertas** | Tarjeta amarilla condicional | Solo aparece si hay sesiones abiertas. Lista con bullets |
 
-### 3.7 Limitaciones Conocidas
+### 3.7 Notas Técnicas
 
-> [!WARNING]
-> **Zona horaria:** Actualmente `generar_reporte_diario()` usa `datetime.min.time()` y `datetime.max.time()` sin ajuste UTC-6. Esto puede causar el mismo problema del Bug 2 (tickets nocturnos desaparecidos) si PostgreSQL guarda timestamps en UTC. Si se detecta este problema, aplicar la misma solución: sumar 6 horas al rango de búsqueda.
+> [!NOTE]
+> **Zona horaria:** `generar_reporte_diario()` aplica el mismo ajuste UTC-6 que el Bug 2: el "día" local de México va de las 06:00 UTC a las 06:00 UTC del día siguiente. Esto garantiza que ventas nocturnas (7PM-12AM) se incluyan correctamente en el reporte del día correcto.
 
 > [!NOTE]
 > **Tickets sin sesión de caja:** Si un ticket fue pagado pero NO tiene `cash_session_id` (por ejemplo, cobros directos sin abrir sesión de caja), aparecerá en el gran total y en el desglose por canal, pero NO se asignará a ningún turno. No se pierde dinero del reporte, pero puede haber diferencia entre la suma de turnos y el gran total.
