@@ -318,16 +318,16 @@ export const WarehouseManagerUI = () => {
 
     const whContent = selectedWH ? getWHContent(selectedWH.id) : [];
 
-    // Estilo base Acero Inoxidable Industrial (Completamente opaco para cubrir el fondo de madera)
+    // Estilo base Acero Inoxidable Satinado / Cepillado Claro (Luminoso, elegante y 100% opaco)
     const INOX_CONTAINER_STYLE = {
-        backgroundColor: '#1b1e24',
+        backgroundColor: '#4a5260',
         backgroundImage: `
-            repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0px, rgba(255, 255, 255, 0.015) 1px, transparent 1px, transparent 4px),
-            repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.15) 0px, rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 4px),
-            radial-gradient(ellipse at 50% 10%, rgba(200, 215, 235, 0.15) 0%, transparent 60%),
-            linear-gradient(135deg, #2b303a 0%, #1c1f26 35%, #14161a 70%, #282d36 100%)
+            repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0px, rgba(255, 255, 255, 0.04) 1px, transparent 1px, transparent 4px),
+            repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.06) 0px, rgba(0, 0, 0, 0.06) 1px, transparent 1px, transparent 4px),
+            radial-gradient(ellipse at 50% 12%, rgba(255, 255, 255, 0.30) 0%, transparent 65%),
+            linear-gradient(135deg, #687284 0%, #505868 25%, #3e4552 50%, #5b6474 75%, #464e5c 100%)
         `,
-        boxShadow: 'inset 0 0 100px rgba(0, 0, 0, 0.9)'
+        boxShadow: 'inset 0 0 70px rgba(0, 0, 0, 0.4)'
     };
 
     // --- LANDING: Selección de Zona Térmica ---
@@ -338,10 +338,10 @@ export const WarehouseManagerUI = () => {
                 label: 'ALMACENES SECOS', 
                 icon: '📦', 
                 desc: 'Harinas, azúcar, empaques, pan', 
-                cardBg: 'linear-gradient(145deg, rgba(45, 38, 28, 0.85) 0%, rgba(22, 20, 18, 0.95) 100%)', 
-                border: 'border-amber-500/40', 
-                accent: 'text-amber-400', 
-                badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+                cardBg: 'linear-gradient(145deg, rgba(58, 50, 40, 0.88) 0%, rgba(36, 32, 26, 0.95) 100%)', 
+                border: 'border-amber-400/50', 
+                accent: 'text-amber-300', 
+                badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40',
                 count: warehouses.filter(w => (w.zona_termica || w.type) === 'SECO').length 
             },
             { 
@@ -349,10 +349,10 @@ export const WarehouseManagerUI = () => {
                 label: 'ALMACENES REFRIGERADOS', 
                 icon: '🧊', 
                 desc: 'Lácteos, mantequilla, cremas', 
-                cardBg: 'linear-gradient(145deg, rgba(28, 40, 58, 0.85) 0%, rgba(16, 22, 32, 0.95) 100%)', 
-                border: 'border-blue-500/40', 
-                accent: 'text-blue-400', 
-                badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+                cardBg: 'linear-gradient(145deg, rgba(42, 56, 78, 0.88) 0%, rgba(26, 36, 52, 0.95) 100%)', 
+                border: 'border-blue-400/50', 
+                accent: 'text-blue-300', 
+                badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40',
                 count: warehouses.filter(w => (w.zona_termica || w.type) === 'REFRIGERADO').length 
             },
             { 
@@ -360,10 +360,10 @@ export const WarehouseManagerUI = () => {
                 label: 'ALMACENES CONGELADOS', 
                 icon: '❄️', 
                 desc: 'Helados, paletas, cámara fría', 
-                cardBg: 'linear-gradient(145deg, rgba(22, 45, 54, 0.85) 0%, rgba(14, 26, 32, 0.95) 100%)', 
-                border: 'border-cyan-400/40', 
-                accent: 'text-cyan-300', 
-                badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
+                cardBg: 'linear-gradient(145deg, rgba(35, 62, 74, 0.88) 0%, rgba(22, 42, 50, 0.95) 100%)', 
+                border: 'border-cyan-300/50', 
+                accent: 'text-cyan-200', 
+                badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40',
                 count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length 
             },
         ];
@@ -371,16 +371,16 @@ export const WarehouseManagerUI = () => {
             <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
                 <div className="max-w-5xl mx-auto">
                     <div className="text-center mb-16 pt-8">
-                        <div className="inline-block px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-600/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-300 mb-4 shadow-inner">
-                            ACERO INOXIDABLE • CONTROL DE TEMPERATURA
+                        <div className="inline-block px-4 py-1.5 rounded-full bg-slate-900/40 border border-slate-300/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-100 mb-4 shadow-sm backdrop-blur-md">
+                            ACERO INOXIDABLE SATINADO • CONTROL DE TEMPERATURA
                         </div>
-                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-gray-100 via-slate-200 to-gray-400 bg-clip-text text-transparent drop-shadow-lg">
+                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-200 bg-clip-text text-transparent drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
                             GESTIÓN DE ALMACENES
                         </h1>
-                        <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.4em] mt-3">
+                        <p className="text-[11px] font-black text-slate-200 uppercase tracking-[0.4em] mt-3 drop-shadow">
                             CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
                         </p>
-                        <p className="text-slate-400 text-sm mt-2 font-semibold">{warehouses.length} almacenes registrados</p>
+                        <p className="text-slate-200 text-sm mt-2 font-bold drop-shadow-sm">{warehouses.length} almacenes registrados</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {ZONES.map(zone => (
@@ -389,17 +389,17 @@ export const WarehouseManagerUI = () => {
                                 onClick={() => setSelectedZone(zone.key)}
                                 style={{
                                     background: zone.cardBg,
-                                    boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.75), inset 0 1px 1px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 6px 0 rgba(0, 0, 0, 0.6)',
+                                    boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.5), inset 0 1px 2px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 6px 0 rgba(0, 0, 0, 0.4)',
                                     backdropFilter: 'blur(12px)'
                                 }}
                                 className={`group relative border ${zone.border} rounded-[32px] p-10 text-left transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl active:scale-[0.98]`}
                             >
-                                <div className="text-6xl mb-6 group-hover:scale-110 transition-transform duration-300">{zone.icon}</div>
-                                <h2 className={`text-xl font-black uppercase tracking-tight ${zone.accent}`}>{zone.label}</h2>
-                                <p className="text-slate-300 text-xs mt-2 font-medium leading-relaxed">{zone.desc}</p>
-                                <div className="mt-8 flex items-center justify-between pt-4 border-t border-white/10">
-                                    <span className={`text-4xl font-black ${zone.accent}`}>{zone.count}</span>
-                                    <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest group-hover:text-white transition-colors">
+                                <div className="text-6xl mb-6 group-hover:scale-110 transition-transform duration-300 filter drop-shadow-md">{zone.icon}</div>
+                                <h2 className={`text-xl font-black uppercase tracking-tight ${zone.accent} drop-shadow-sm`}>{zone.label}</h2>
+                                <p className="text-slate-200 text-xs mt-2 font-medium leading-relaxed">{zone.desc}</p>
+                                <div className="mt-8 flex items-center justify-between pt-4 border-t border-white/20">
+                                    <span className={`text-4xl font-black ${zone.accent} drop-shadow-sm`}>{zone.count}</span>
+                                    <span className="text-slate-300 text-[10px] font-black uppercase tracking-widest group-hover:text-white transition-colors">
                                         ALMACENES →
                                     </span>
                                 </div>
@@ -415,9 +415,9 @@ export const WarehouseManagerUI = () => {
     // --- SUITE: Almacenes filtrados por zona ---
     const zoneWarehouses = warehouses.filter(w => (w.zona_termica || w.type) === selectedZone);
     const ZONE_META = { 
-        SECO: { icon: '📦', accent: 'text-amber-400', label: 'SECOS', badge: 'bg-amber-500/20 text-amber-300 border-amber-500/30' }, 
-        REFRIGERADO: { icon: '🧊', accent: 'text-blue-400', label: 'REFRIGERADOS', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30' }, 
-        CONGELADO: { icon: '❄️', accent: 'text-cyan-300', label: 'CONGELADOS', badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30' } 
+        SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' }, 
+        REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' }, 
+        CONGELADO: { icon: '❄️', accent: 'text-cyan-200', label: 'CONGELADOS', badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40' } 
     };
     const zoneMeta = ZONE_META[selectedZone] || ZONE_META.SECO;
 
@@ -426,7 +426,7 @@ export const WarehouseManagerUI = () => {
             {/* Botón Volver */}
             <button
                 onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
-                className="mb-6 flex items-center gap-3 text-slate-400 hover:text-white transition-colors text-sm font-bold bg-slate-900/60 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-700/50 w-max"
+                className="mb-6 flex items-center gap-3 text-slate-200 hover:text-white transition-colors text-sm font-bold bg-slate-900/50 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-400/40 shadow-sm w-max backdrop-blur-md"
             >
                 <span className="text-xl">←</span> Volver a Zonas Térmicas
             </button>
