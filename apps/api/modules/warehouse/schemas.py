@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from enum import Enum
@@ -11,6 +11,7 @@ class ZonaTermica(str, Enum):
 class PropositoAlmacen(str, Enum):
     ALMACENAMIENTO = "ALMACENAMIENTO"
     EXHIBICION_VENTA = "EXHIBICION_VENTA"
+    EQUIPAMIENTO = "EQUIPAMIENTO"
 
 class MetodoCaptura(str, Enum):
     MANUAL = "MANUAL"

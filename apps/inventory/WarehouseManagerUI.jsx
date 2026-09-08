@@ -75,6 +75,7 @@ export const WarehouseManagerUI = () => {
     const [activeTab, setActiveTab] = useState('existencias');
     const [selectedZone, setSelectedZone] = useState(null); // null = landing, 'SECO'|'REFRIGERADO'|'CONGELADO' = suite
     const [suiteTab, setSuiteTab] = useState('existencias'); // Pestaña activa en la suite de zona
+    const [subCategoryTab, setSubCategoryTab] = useState('EXHIBICION_VENTA'); // Subcategoría activa: EXHIBICION_VENTA | ALMACENAMIENTO | EQUIPAMIENTO
 
     const [showItemPicker, setShowItemPicker] = useState(false);
     const [pickerSearch, setPickerSearch] = useState('');
@@ -334,11 +335,10 @@ export const WarehouseManagerUI = () => {
                 await axios.put(`${API_BASE}/api/v1/warehouse/${formData.id}`, formData);
             } else {
                 const payload = {
-                    name: formData.name,
-                    type: formData.type,
-                    icon: formData.icon,
-                    capacity: formData.capacity,
-                    active: true
+                    nombre: formData.name,
+                    zona_termica: formData.type || selectedZone || 'SECO',
+                    proposito: formData.proposito || subCategoryTab || 'EXHIBICION_VENTA',
+                    activo: true
                 };
                 await axios.post(`${API_BASE}/api/v1/warehouse`, payload);
             }
@@ -555,16 +555,15 @@ export const WarehouseManagerUI = () => {
             <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
                 <div className="max-w-5xl mx-auto">
                     <div className="text-center mb-16 pt-8">
-                        <div className="inline-block px-4 py-1.5 rounded-full bg-slate-900/40 border border-slate-300/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-100 mb-4 shadow-sm backdrop-blur-md">
-                            ACERO INOXIDABLE SATINADO • CONTROL DE TEMPERATURA
-                        </div>
                         <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-200 bg-clip-text text-transparent drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
                             GESTIÓN DE ALMACENES
                         </h1>
-                        <p className="text-[11px] font-black text-slate-200 uppercase tracking-[0.4em] mt-3 drop-shadow">
-                            CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
-                        </p>
-                        <p className="text-slate-200 text-sm mt-2 font-bold drop-shadow-sm">{warehouses.length} almacenes registrados</p>
+                        <div className="mt-4">
+                            <span className="inline-block px-4 py-1.5 rounded-full bg-slate-900/40 border border-slate-300/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-100 shadow-sm backdrop-blur-md">
+                                CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
+                            </span>
+                        </div>
+                        <p className="text-slate-200 text-sm mt-4 font-bold drop-shadow-sm">{warehouses.length} almacenes registrados</p>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {ZONES.map(zone => (
@@ -596,8 +595,15 @@ export const WarehouseManagerUI = () => {
         );
     }
 
-    // --- SUITE: Almacenes filtrados por zona ---
+    // --- SUITE: Almacenes filtrados por zona + subcategoría ---
     const zoneWarehouses = warehouses.filter(w => (w.zona_termica || w.type) === selectedZone);
+    const subCatWarehouses = zoneWarehouses.filter(w => (w.proposito || 'EXHIBICION_VENTA') === subCategoryTab);
+
+    const SUB_CATEGORIES = [
+        { key: 'EXHIBICION_VENTA', label: 'Almacenes / Exhibidores', icon: '🏪' },
+        { key: 'ALMACENAMIENTO', label: 'Almacenes de Insumos', icon: '📦' },
+        { key: 'EQUIPAMIENTO', label: 'Almacenes de Equipamiento', icon: '🔧' },
+    ];
     const ZONE_META = { 
         SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' }, 
         REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' }, 
@@ -607,13 +613,20 @@ export const WarehouseManagerUI = () => {
 
     return (
         <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
-            {/* Botón Volver */}
-            <button
-                onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
-                className="mb-6 flex items-center gap-3 text-slate-200 hover:text-white transition-colors text-sm font-bold bg-slate-900/50 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-400/40 shadow-sm w-max backdrop-blur-md"
-            >
-                <span className="text-xl">←</span> Volver a Zonas Térmicas
-            </button>
+            {/* Título de Zona + Botón Volver (misma línea) */}
+            <div className="mb-8 flex items-center gap-5">
+                <button
+                    onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
+                    className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors text-sm font-bold bg-slate-900/50 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-400/40 shadow-sm backdrop-blur-md"
+                >
+                    <span className="text-xl">←</span> Volver
+                </button>
+                <div>
+                    <h1 className="text-6xl md:text-7xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-lg">
+                        Almacenes {zoneMeta.label}
+                    </h1>
+                </div>
+            </div>
             
             {/* Modal: Seleccionador de Productos del Catálogo */}
             {showItemPicker && (
@@ -692,6 +705,24 @@ export const WarehouseManagerUI = () => {
                 </div>
             )}
 
+            {/* === BARRA DE SUBCATEGORÍAS === */}
+            <div className="mb-4 bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1.5 flex gap-1 w-max backdrop-blur-md">
+                {SUB_CATEGORIES.map(sc => (
+                    <button
+                        key={sc.key}
+                        onClick={() => setSubCategoryTab(sc.key)}
+                        className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                            subCategoryTab === sc.key
+                                ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30'
+                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                        }`}
+                    >
+                        <span className="text-sm">{sc.icon}</span>
+                        {sc.label}
+                    </button>
+                ))}
+            </div>
+
             {/* === BARRA DE PESTAÑAS OPERATIVAS === */}
             <div className="mb-6 flex items-center gap-1 bg-slate-900/60 border border-slate-500/30 rounded-2xl p-1.5 backdrop-blur-md shadow-inner overflow-x-auto">
                 {[
@@ -735,8 +766,7 @@ export const WarehouseManagerUI = () => {
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <header className="mb-12 flex justify-between items-end">
                         <div>
-                            <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-lg">Almacenes {zoneMeta.label}</h1>
-                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mt-2">Zona {selectedZone} | {zoneWarehouses.length} almacenes</p>
+                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mt-2">{subCatWarehouses.length} almacenes en {SUB_CATEGORIES.find(s => s.key === subCategoryTab)?.label || ''}</p>
                         </div>
                         <div className="flex gap-4 flex-1 justify-end max-w-[70%]">
                             <div className="bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1 flex overflow-x-auto custom-scrollbar no-scrollbar flex-1">
@@ -765,7 +795,7 @@ export const WarehouseManagerUI = () => {
                             </button>
                             <button 
                                 onClick={() => {
-                                    setEditingWHData({ name: '', type: 'EX_PT', icon: '📦', capacity: 100 });
+                                    setEditingWHData({ name: '', type: selectedZone || 'SECO', icon: '📦', capacity: 100, proposito: subCategoryTab });
                                     setShowWHEditor(true);
                                 }}
                                 className="bg-slate-600 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-slate-600/20 whitespace-nowrap text-white"
@@ -786,7 +816,11 @@ export const WarehouseManagerUI = () => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {filteredWH.map(wh => {
+                        {subCatWarehouses.filter(wh => {
+                            const matchesSearch = (wh.name || '').toLowerCase().includes(searchTerm.toLowerCase());
+                            const matchesType = filterType === 'ALL' || wh.type === filterType;
+                            return matchesSearch && matchesType;
+                        }).map(wh => {
                             const typeInfo = warehouseTypes[wh.type] || { label: wh.type, color: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/20' };
                             const fillPercent = (wh.current / wh.capacity) * 100;
                             
