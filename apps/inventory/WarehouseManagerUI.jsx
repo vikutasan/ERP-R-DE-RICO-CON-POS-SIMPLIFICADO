@@ -514,89 +514,22 @@ export const WarehouseManagerUI = () => {
         boxShadow: 'inset 0 0 70px rgba(0, 0, 0, 0.4)'
     };
 
-    // --- LANDING: Selección de Zona Térmica ---
-    if (!selectedZone) {
-        const ZONES = [
-            { 
-                key: 'SECO', 
-                label: 'ALMACENES SECOS', 
-                icon: '📦', 
-                desc: 'Harinas, azúcar, empaques, pan', 
-                cardBg: 'linear-gradient(145deg, rgba(58, 50, 40, 0.88) 0%, rgba(36, 32, 26, 0.95) 100%)', 
-                border: 'border-amber-400/50', 
-                accent: 'text-amber-300', 
-                badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40',
-                count: warehouses.filter(w => (w.zona_termica || w.type) === 'SECO').length 
-            },
-            { 
-                key: 'REFRIGERADO', 
-                label: 'ALMACENES REFRIGERADOS', 
-                icon: '🧊', 
-                desc: 'Lácteos, mantequilla, cremas', 
-                cardBg: 'linear-gradient(145deg, rgba(42, 56, 78, 0.88) 0%, rgba(26, 36, 52, 0.95) 100%)', 
-                border: 'border-blue-400/50', 
-                accent: 'text-blue-300', 
-                badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40',
-                count: warehouses.filter(w => (w.zona_termica || w.type) === 'REFRIGERADO').length 
-            },
-            { 
-                key: 'CONGELADO', 
-                label: 'ALMACENES CONGELADOS', 
-                icon: '❄️', 
-                desc: 'Helados, paletas, cámara fría', 
-                cardBg: 'linear-gradient(145deg, rgba(35, 62, 74, 0.88) 0%, rgba(22, 42, 50, 0.95) 100%)', 
-                border: 'border-cyan-300/50', 
-                accent: 'text-cyan-200', 
-                badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40',
-                count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length 
-            },
-        ];
-        return (
-            <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
-                <div className="max-w-5xl mx-auto">
-                    <div className="text-center mb-16 pt-8">
-                        <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-200 bg-clip-text text-transparent drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
-                            GESTIÓN DE ALMACENES
-                        </h1>
-                        <div className="mt-4">
-                            <span className="inline-block px-4 py-1.5 rounded-full bg-slate-900/40 border border-slate-300/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-100 shadow-sm backdrop-blur-md">
-                                CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
-                            </span>
-                        </div>
-                        <p className="text-slate-200 text-sm mt-4 font-bold drop-shadow-sm">{warehouses.length} almacenes registrados</p>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                        {ZONES.map(zone => (
-                            <button
-                                key={zone.key}
-                                onClick={() => setSelectedZone(zone.key)}
-                                style={{
-                                    background: zone.cardBg,
-                                    boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.5), inset 0 1px 2px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 6px 0 rgba(0, 0, 0, 0.4)',
-                                    backdropFilter: 'blur(12px)'
-                                }}
-                                className={`group relative border ${zone.border} rounded-[32px] p-10 text-left transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl active:scale-[0.98]`}
-                            >
-                                <div className="text-6xl mb-6 group-hover:scale-110 transition-transform duration-300 filter drop-shadow-md">{zone.icon}</div>
-                                <h2 className={`text-xl font-black uppercase tracking-tight ${zone.accent} drop-shadow-sm`}>{zone.label}</h2>
-                                <p className="text-slate-200 text-xs mt-2 font-medium leading-relaxed">{zone.desc}</p>
-                                <div className="mt-8 flex items-center justify-between pt-4 border-t border-white/20">
-                                    <span className={`text-4xl font-black ${zone.accent} drop-shadow-sm`}>{zone.count}</span>
-                                    <span className="text-slate-300 text-[10px] font-black uppercase tracking-widest group-hover:text-white transition-colors">
-                                        ALMACENES →
-                                    </span>
-                                </div>
-                                <div className={`absolute inset-0 rounded-[32px] border-2 ${zone.border} opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none`} />
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    }
+    // --- Datos compartidos entre Landing y Suite ---
+    const ZONES = [
+        { key: 'SECO', label: 'ALMACENES SECOS', icon: '📦', desc: 'Harinas, azúcar, empaques, pan', cardBg: 'linear-gradient(145deg, rgba(58, 50, 40, 0.88) 0%, rgba(36, 32, 26, 0.95) 100%)', border: 'border-amber-400/50', accent: 'text-amber-300', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40', count: warehouses.filter(w => (w.zona_termica || w.type) === 'SECO').length },
+        { key: 'REFRIGERADO', label: 'ALMACENES REFRIGERADOS', icon: '🧊', desc: 'Lácteos, mantequilla, cremas', cardBg: 'linear-gradient(145deg, rgba(42, 56, 78, 0.88) 0%, rgba(26, 36, 52, 0.95) 100%)', border: 'border-blue-400/50', accent: 'text-blue-300', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40', count: warehouses.filter(w => (w.zona_termica || w.type) === 'REFRIGERADO').length },
+        { key: 'CONGELADO', label: 'ALMACENES CONGELADOS', icon: '❄️', desc: 'Helados, paletas, cámara fría', cardBg: 'linear-gradient(145deg, rgba(35, 62, 74, 0.88) 0%, rgba(22, 42, 50, 0.95) 100%)', border: 'border-cyan-300/50', accent: 'text-cyan-200', badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40', count: warehouses.filter(w => (w.zona_termica || w.type) === 'CONGELADO').length },
+    ];
+    const SUITE_TABS = [
+        { key: 'existencias', label: 'Existencias', icon: '📊' },
+        { key: 'entrada', label: 'Entrada Masiva', icon: '📥' },
+        { key: 'mermas', label: 'Mermas', icon: '⚠️' },
+        { key: 'traspasos', label: 'Traspasos', icon: '🔄' },
+        { key: 'historial', label: 'Historial', icon: '📜' },
+    ];
 
     // --- SUITE: Almacenes filtrados por zona + subcategoría ---
-    const zoneWarehouses = warehouses.filter(w => (w.zona_termica || w.type) === selectedZone);
+    const zoneWarehouses = selectedZone ? warehouses.filter(w => (w.zona_termica || w.type) === selectedZone) : [];
     const subCatWarehouses = zoneWarehouses.filter(w => (w.proposito || 'EXHIBICION_VENTA') === subCategoryTab);
 
     const SUB_CATEGORIES = [
@@ -613,23 +546,81 @@ export const WarehouseManagerUI = () => {
 
     return (
         <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
-            {/* Título de Zona + Botón Volver (misma línea) */}
-            <div className="mb-8 flex items-center gap-5">
-                <button
-                    onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
-                    className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors text-sm font-bold bg-slate-900/50 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-400/40 shadow-sm backdrop-blur-md"
-                >
-                    <span className="text-xl">←</span> Volver
-                </button>
-                <div>
-                    <h1 className="text-6xl md:text-7xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-lg">
-                        Almacenes {zoneMeta.label}
+
+            {/* === HEADER CONDICIONAL === */}
+            {!selectedZone ? (
+                <div className="text-center mb-10 pt-8">
+                    <h1 className="text-5xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-200 bg-clip-text text-transparent drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
+                        GESTIÓN DE ALMACENES
                     </h1>
+                    <div className="mt-4">
+                        <span className="inline-block px-4 py-1.5 rounded-full bg-slate-900/40 border border-slate-300/40 text-[10px] font-black uppercase tracking-[0.3em] text-slate-100 shadow-sm backdrop-blur-md">
+                            CENTRO LOGÍSTICO DE INVENTARIOS | R DE RICO
+                        </span>
+                    </div>
+                    <p className="text-slate-200 text-sm mt-4 font-bold drop-shadow-sm">{warehouses.length} almacenes registrados</p>
                 </div>
-            </div>
+            ) : (
+                <div className="mb-8 flex items-center gap-5">
+                    <button
+                        onClick={() => { setSelectedZone(null); setSelectedWH(null); }}
+                        className="flex items-center gap-2 text-slate-200 hover:text-white transition-colors text-sm font-bold bg-slate-900/50 hover:bg-slate-800/80 px-4 py-2 rounded-xl border border-slate-400/40 shadow-sm backdrop-blur-md"
+                    >
+                        <span className="text-xl">←</span> Volver
+                    </button>
+                    <div>
+                        <h1 className="text-6xl md:text-7xl font-black uppercase italic tracking-tighter bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent drop-shadow-lg">
+                            Almacenes {zoneMeta.label}
+                        </h1>
+                    </div>
+                </div>
+            )}
+
+            {/* === LANDING: Barra Operativa + Tarjetas de Zona === */}
+            {!selectedZone && (
+                <div className="max-w-5xl mx-auto">
+                    <div className="mb-6 flex items-center gap-1 bg-slate-900/60 border border-slate-500/30 rounded-2xl p-1.5 backdrop-blur-md shadow-inner overflow-x-auto">
+                        {SUITE_TABS.map(tab => (
+                            <button
+                                key={tab.key}
+                                onClick={() => { setSuiteTab(tab.key); setSelectedWH(null); }}
+                                className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                                    suiteTab === tab.key
+                                        ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30'
+                                        : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
+                                }`}
+                            >
+                                <span className="text-sm">{tab.icon}</span>
+                                {tab.label}
+                            </button>
+                        ))}
+                    </div>
+                    {suiteTab === 'existencias' && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                            {ZONES.map(zone => (
+                                <button
+                                    key={zone.key}
+                                    onClick={() => setSelectedZone(zone.key)}
+                                    style={{ background: zone.cardBg, boxShadow: '0 16px 36px -8px rgba(0, 0, 0, 0.5), inset 0 1px 2px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 6px 0 rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(12px)' }}
+                                    className={`group relative border ${zone.border} rounded-[32px] p-10 text-left transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl active:scale-[0.98]`}
+                                >
+                                    <div className="text-6xl mb-6 group-hover:scale-110 transition-transform duration-300 filter drop-shadow-md">{zone.icon}</div>
+                                    <h2 className={`text-xl font-black uppercase tracking-tight ${zone.accent} drop-shadow-sm`}>{zone.label}</h2>
+                                    <p className="text-slate-200 text-xs mt-2 font-medium leading-relaxed">{zone.desc}</p>
+                                    <div className="mt-8 flex items-center justify-between pt-4 border-t border-white/20">
+                                        <span className={`text-4xl font-black ${zone.accent} drop-shadow-sm`}>{zone.count}</span>
+                                        <span className="text-slate-300 text-[10px] font-black uppercase tracking-widest group-hover:text-white transition-colors">ALMACENES →</span>
+                                    </div>
+                                    <div className={`absolute inset-0 rounded-[32px] border-2 ${zone.border} opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none`} />
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
             
             {/* Modal: Seleccionador de Productos del Catálogo */}
-            {showItemPicker && (
+            {selectedZone && showItemPicker && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
                     <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowItemPicker(false)} />
                     <div className="relative w-full max-w-4xl bg-[#0a0a0a] border border-gray-800 rounded-[40px] shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
@@ -705,7 +696,8 @@ export const WarehouseManagerUI = () => {
                 </div>
             )}
 
-            {/* === BARRA DE SUBCATEGORÍAS === */}
+            {/* === BARRA DE SUBCATEGORÍAS (solo en Existencias con zona) === */}
+            {selectedZone && suiteTab === 'existencias' && (
             <div className="mb-4 bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1.5 flex gap-1 w-max backdrop-blur-md">
                 {SUB_CATEGORIES.map(sc => (
                     <button
@@ -722,30 +714,7 @@ export const WarehouseManagerUI = () => {
                     </button>
                 ))}
             </div>
-
-            {/* === BARRA DE PESTAÑAS OPERATIVAS === */}
-            <div className="mb-6 flex items-center gap-1 bg-slate-900/60 border border-slate-500/30 rounded-2xl p-1.5 backdrop-blur-md shadow-inner overflow-x-auto">
-                {[
-                    { key: 'existencias', label: 'Existencias', icon: '📊' },
-                    { key: 'entrada', label: 'Entrada Masiva', icon: '📥' },
-                    { key: 'mermas', label: 'Mermas', icon: '⚠️' },
-                    { key: 'traspasos', label: 'Traspasos', icon: '🔄' },
-                    { key: 'historial', label: 'Historial', icon: '📜' },
-                ].map(tab => (
-                    <button
-                        key={tab.key}
-                        onClick={() => { setSuiteTab(tab.key); setSelectedWH(null); }}
-                        className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                            suiteTab === tab.key 
-                                ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30' 
-                                : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                    >
-                        <span className="text-sm">{tab.icon}</span>
-                        {tab.label}
-                    </button>
-                ))}
-            </div>
+            )}
 
             {/* Toast de operación */}
             {opMessage.text && (
@@ -759,15 +728,12 @@ export const WarehouseManagerUI = () => {
             )}
 
             {/* ===== PESTAÑA: EXISTENCIAS (contenido original) ===== */}
-            {suiteTab === 'existencias' && (
+            {suiteTab === 'existencias' && selectedZone && (
                 <>
             {/* Header y Filtros */}
             {!selectedWH ? (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <header className="mb-12 flex justify-between items-end">
-                        <div>
-                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.4em] mt-2">{subCatWarehouses.length} almacenes en {SUB_CATEGORIES.find(s => s.key === subCategoryTab)?.label || ''}</p>
-                        </div>
                         <div className="flex gap-4 flex-1 justify-end max-w-[70%]">
                             <div className="bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1 flex overflow-x-auto custom-scrollbar no-scrollbar flex-1">
                                 <button 
@@ -1018,9 +984,19 @@ export const WarehouseManagerUI = () => {
                                 className="w-full max-w-md bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-emerald-400 appearance-none text-white"
                             >
                                 <option value="">Selecciona un almacén...</option>
-                                {warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
-                                    <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
-                                ))}
+                                {selectedZone ? (
+                                    warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
+                                        <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                    ))
+                                ) : (
+                                    ZONES.map(zone => (
+                                        <optgroup key={zone.key} label={`${zone.icon} ${zone.label}`}>
+                                            {warehouses.filter(w => (w.zona_termica || w.type) === zone.key).map(wh => (
+                                                <option key={wh.id} value={wh.id}>{wh.name}</option>
+                                            ))}
+                                        </optgroup>
+                                    ))
+                                )}
                             </select>
                         </div>
 
@@ -1110,9 +1086,19 @@ export const WarehouseManagerUI = () => {
                                     className="w-full bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-orange-400 appearance-none text-white"
                                 >
                                     <option value="">Selecciona un almacén...</option>
-                                    {warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
-                                        <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
-                                    ))}
+                                    {selectedZone ? (
+                                        warehouses.filter(w => (w.zona_termica || w.type) === selectedZone).map(wh => (
+                                            <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                        ))
+                                    ) : (
+                                        ZONES.map(zone => (
+                                            <optgroup key={zone.key} label={`${zone.icon} ${zone.label}`}>
+                                                {warehouses.filter(w => (w.zona_termica || w.type) === zone.key).map(wh => (
+                                                    <option key={wh.id} value={wh.id}>{wh.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        ))
+                                    )}
                                 </select>
                             </div>
                             <div>
