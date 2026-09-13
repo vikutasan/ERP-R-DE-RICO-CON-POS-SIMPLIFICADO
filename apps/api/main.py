@@ -249,6 +249,53 @@ async def ensure_system_categories():
             logger.error("Error asegurando categorías de sistema: %s", e)
             await db.rollback()
 
+# ---------------------------------------------------------------------------
+# v8: Asegurar subcategorías de sistema de almacén
+# ---------------------------------------------------------------------------
+@app.on_event("startup")
+async def ensure_warehouse_propositos():
+    """v8: garantiza que las 4 subcategorías base de almacén existan.
+
+    Es idempotente y aditivo: si la migración f5a6b7c8d9e0 ya sembró las filas,
+    no hace nada. Si alguien las borró por error, las recrea. Nunca modifica
+    `label`/`icon` de una subcategoría existente (el usuario puede haberlas
+    personalizado).
+    """
+    from modules.warehouse.models import WarehouseProposito
+
+    base = [
+        {"codigo": "EXHIBICION_VENTA", "label": "Almacenes / Exhibidores", "icon": "🏪", "orden": 1, "es_cuarentena": False},
+        {"codigo": "ALMACENAMIENTO", "label": "Almacenes de Insumos", "icon": "📦", "orden": 2, "es_cuarentena": False},
+        {"codigo": "EQUIPAMIENTO", "label": "Almacenes de Equipamiento", "icon": "🔧", "orden": 3, "es_cuarentena": False},
+        {"codigo": "SIN_CLASIFICAR", "label": "Sin Clasificar", "icon": "🗂️", "orden": 999, "es_cuarentena": True},
+    ]
+
+    async with AsyncSessionLocal() as db:
+        try:
+            creadas = 0
+            for item in base:
+                stmt = select(WarehouseProposito).where(WarehouseProposito.codigo == item["codigo"])
+                result = await db.execute(stmt)
+                existente = result.scalar_one_or_none()
+                if not existente:
+                    db.add(WarehouseProposito(
+                        codigo=item["codigo"],
+                        label=item["label"],
+                        icon=item["icon"],
+                        orden=item["orden"],
+                        es_sistema=True,
+                        es_cuarentena=item["es_cuarentena"],
+                        activo=True,
+                    ))
+                    creadas += 1
+
+            if creadas:
+                await db.commit()
+                logger.info("Subcategorías de almacén creadas: %s", creadas)
+        except Exception as e:
+            logger.error("Error asegurando subcategorías de almacén: %s", e)
+            await db.rollback()
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "version": "1.0.0"}

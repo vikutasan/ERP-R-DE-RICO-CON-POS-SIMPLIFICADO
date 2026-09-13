@@ -28,6 +28,17 @@ import {
     mapVoiceIntentToProposal,
     validateVoiceEntry,
     buildVoiceEntryPayload,
+    ICONOS_SUBCATEGORIA,
+    CODIGO_CUARENTENA,
+    mapPropositoFromApi,
+    mapPropositosFromApi,
+    sortPropositos,
+    propositosParaBarra,
+    codigoDesdeLabel,
+    validatePropositoForm,
+    buildPropositoCreatePayload,
+    validatePropositoDelete,
+    buildTrasladoSubcategoriaPayload,
 } from './warehouseMappers.js';
 
 // ---------------------------------------------------------------------------
@@ -621,5 +632,162 @@ describe('Voz: payload de entrada por voz', () => {
         const payload = buildVoiceEntryPayload(null, 'USR-3');
         expect(payload.metodo_captura).toBe('VOZ');
         expect(payload.usuario_id).toBe('USR-3');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// v8 (Fase 8.5): Subcategorias de almacen (warehouse_propositos)
+// ---------------------------------------------------------------------------
+
+describe('v8: mapeo de subcategorias API -> UI', () => {
+    it('mapea snake_case -> camelCase y conserva el icono', () => {
+        const api = {
+            id: 'wpr_1',
+            codigo: 'EXHIBICION_VENTA',
+            label: 'Almacenes/Exhibidores',
+            icon: '🏪',
+            orden: 1,
+            es_sistema: true,
+            es_cuarentena: false,
+            activo: true,
+            almacenes_count: 3,
+        };
+        const ui = mapPropositoFromApi(api);
+        expect(ui.codigo).toBe('EXHIBICION_VENTA');
+        expect(ui.label).toBe('Almacenes/Exhibidores');
+        expect(ui.icon).toBe('🏪');
+        expect(ui.esSistema).toBe(true);
+        expect(ui.esCuarentena).toBe(false);
+        expect(ui.almacenesCount).toBe(3);
+    });
+
+    it('no crashea con entrada nula y aplica valores seguros', () => {
+        const ui = mapPropositoFromApi(null);
+        expect(ui.codigo).toBeUndefined();
+        expect(ui.label).toBe('Sin nombre');
+        expect(ui.icon).toBe('📦');
+        expect(ui.orden).toBe(0);
+        expect(ui.almacenesCount).toBe(0);
+        expect(ui.esSistema).toBe(false);
+        expect(ui.activo).toBe(true);
+    });
+
+    it('mapPropositosFromApi devuelve arreglo vacio si la API no responde lista', () => {
+        expect(mapPropositosFromApi(null)).toEqual([]);
+        expect(mapPropositosFromApi(undefined)).toEqual([]);
+    });
+});
+
+describe('v8: orden y filtrado de la barra de subcategorias', () => {
+    it('sortPropositos ordena por orden y no muta el arreglo original', () => {
+        const original = [
+            { codigo: 'C', orden: 30 },
+            { codigo: 'A', orden: 10 },
+            { codigo: 'B', orden: 20 },
+        ];
+        const copia = [...original];
+        const ordenado = sortPropositos(original);
+        expect(ordenado.map((p) => p.codigo)).toEqual(['A', 'B', 'C']);
+        expect(original).toEqual(copia);
+    });
+
+    it('propositosParaBarra excluye la cuarentena y las inactivas', () => {
+        const lista = [
+            { codigo: 'EXHIBICION_VENTA', orden: 1, activo: true, esCuarentena: false },
+            { codigo: CODIGO_CUARENTENA, orden: 999, activo: true, esCuarentena: true },
+            { codigo: 'OBSOLETA', orden: 5, activo: false, esCuarentena: false },
+            { codigo: 'ALMACENAMIENTO', orden: 2, activo: true, esCuarentena: false },
+        ];
+        const barra = propositosParaBarra(lista);
+        expect(barra.map((p) => p.codigo)).toEqual(['EXHIBICION_VENTA', 'ALMACENAMIENTO']);
+    });
+});
+
+describe('v8: normalizacion de codigo desde label', () => {
+    it('quita acentos, mayusculas y reemplaza no alfanumericos por guion bajo', () => {
+        expect(codigoDesdeLabel('Almacén de Insumos')).toBe('ALMACEN_DE_INSUMOS');
+        expect(codigoDesdeLabel('Almacenes/Exhibidores')).toBe('ALMACENES_EXHIBIDORES');
+    });
+
+    it('antepone SUB_ cuando no inicia con letra y respeta el limite de 40', () => {
+        expect(codigoDesdeLabel('123 Refrigerados')).toBe('SUB_123_REFRIGERADOS');
+        const largo = codigoDesdeLabel('A'.repeat(80));
+        expect(largo.length).toBeLessThanOrEqual(40);
+    });
+});
+
+describe('v8: validacion del formulario de subcategoria', () => {
+    it('rechaza label demasiado corto y acepta uno valido', () => {
+        expect(validatePropositoForm({ label: 'A', icon: '📦' }).ok).toBe(false);
+        expect(validatePropositoForm({ label: 'Refrigerados', icon: '🧊' }).ok).toBe(true);
+    });
+
+    it('rechaza un icono fuera de la paleta curada', () => {
+        const r = validatePropositoForm({ label: 'Refrigerados', icon: '🚀' });
+        expect(r.ok).toBe(false);
+        expect(ICONOS_SUBCATEGORIA).toContain('🧊');
+    });
+
+    it('detecta codigo duplicado salvo cuando se esta editando el mismo', () => {
+        const existentes = [{ codigo: 'ALMACENAMIENTO' }];
+        const dup = validatePropositoForm(
+            { label: 'Almacenamiento', icon: '📦' },
+            existentes,
+            null
+        );
+        expect(dup.ok).toBe(false);
+        const mismo = validatePropositoForm(
+            { label: 'Almacenamiento', icon: '📦' },
+            existentes,
+            'ALMACENAMIENTO'
+        );
+        expect(mismo.ok).toBe(true);
+    });
+
+    it('buildPropositoCreatePayload arma el contrato snake_case', () => {
+        const payload = buildPropositoCreatePayload({ label: 'Refrigerados', icon: '🧊' });
+        expect(payload.codigo).toBe('REFRIGERADOS');
+        expect(payload.label).toBe('Refrigerados');
+        expect(payload.icon).toBe('🧊');
+    });
+});
+
+describe('v8: guardas de borrado de subcategoria', () => {
+    it('bloquea el borrado de una subcategoria de sistema', () => {
+        const r = validatePropositoDelete({
+            codigo: 'ALMACENAMIENTO',
+            esSistema: true,
+            esCuarentena: false,
+            almacenesCount: 0,
+        });
+        expect(r.puedeBorrar).toBe(false);
+        expect(r.requiereTraslado).toBe(false);
+    });
+
+    it('exige traslado cuando la subcategoria tiene almacenes', () => {
+        const r = validatePropositoDelete({
+            codigo: 'REFRI',
+            esSistema: false,
+            esCuarentena: false,
+            almacenesCount: 4,
+        });
+        expect(r.puedeBorrar).toBe(false);
+        expect(r.requiereTraslado).toBe(true);
+    });
+
+    it('permite borrar una subcategoria vacia y no de sistema', () => {
+        const r = validatePropositoDelete({
+            codigo: 'REFRI',
+            esSistema: false,
+            esCuarentena: false,
+            almacenesCount: 0,
+        });
+        expect(r.puedeBorrar).toBe(true);
+    });
+
+    it('buildTrasladoSubcategoriaPayload arma origen y destino', () => {
+        const payload = buildTrasladoSubcategoriaPayload('REFRI', CODIGO_CUARENTENA);
+        expect(payload.origen_codigo).toBe('REFRI');
+        expect(payload.destino_codigo).toBe('SIN_CLASIFICAR');
     });
 });

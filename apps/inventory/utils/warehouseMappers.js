@@ -365,3 +365,188 @@ export const buildVoiceEntryPayload = (proposal, usuarioId) => {
         texto_original: p.texto_original || null,
     };
 };
+
+// ---------------------------------------------------------------------------
+// v8: Subcategorias de almacen (catalogo warehouse_propositos)
+// ---------------------------------------------------------------------------
+
+/**
+ * v8 (decision 4): paleta curada de 12 emojis para las subcategorias.
+ * Se limita a proposito para que la barra no se vuelva un caos visual y para
+ * que todos los iconos tengan el mismo peso optico.
+ */
+export const ICONOS_SUBCATEGORIA = [
+    '📦', '🏪', '🔧', '🗂️', '🧊', '❄️',
+    '🥖', '🍰', '🧁', '🥤', '🧴', '🧹',
+];
+
+/**
+ * v8: codigo de la subcategoria de cuarentena. NUNCA se muestra en la barra
+ * de filtros; solo aparece dentro del modal de gestion.
+ */
+export const CODIGO_CUARENTENA = 'SIN_CLASIFICAR';
+
+/**
+ * Mapea una subcategoria del API al shape que espera la UI.
+ * @param {object} p
+ * @returns {object}
+ */
+export const mapPropositoFromApi = (p) => {
+    const item = p || {};
+    return {
+        id: item.id,
+        codigo: item.codigo,
+        label: item.label || item.codigo || 'Sin nombre',
+        icon: item.icon || '📦',
+        orden: typeof item.orden === 'number' ? item.orden : 0,
+        esSistema: Boolean(item.es_sistema),
+        esCuarentena: Boolean(item.es_cuarentena),
+        activo: item.activo !== false,
+        almacenesCount: typeof item.almacenes_count === 'number' ? item.almacenes_count : 0,
+    };
+};
+
+/**
+ * Mapea la lista completa de subcategorias del API.
+ * @param {Array<object>} lista
+ * @returns {Array<object>}
+ */
+export const mapPropositosFromApi = (lista) =>
+    (Array.isArray(lista) ? lista : []).map(mapPropositoFromApi);
+
+/**
+ * Ordena subcategorias por `orden` y, a igualdad, por label.
+ * No muta el arreglo original.
+ * @param {Array<object>} lista
+ * @returns {Array<object>}
+ */
+export const sortPropositos = (lista) =>
+    [...(Array.isArray(lista) ? lista : [])].sort((a, b) => {
+        const oa = typeof a?.orden === 'number' ? a.orden : 0;
+        const ob = typeof b?.orden === 'number' ? b.orden : 0;
+        if (oa !== ob) return oa - ob;
+        return String(a?.label || '').localeCompare(String(b?.label || ''));
+    });
+
+/**
+ * v8 (decision 2): subcategorias visibles en la barra de filtros.
+ * Excluye la cuarentena y las inactivas. La cuarentena solo se ve en el modal.
+ * @param {Array<object>} lista
+ * @returns {Array<object>}
+ */
+export const propositosParaBarra = (lista) =>
+    sortPropositos(lista).filter((p) => p.activo && !p.esCuarentena);
+
+/**
+ * Normaliza un label a un codigo valido para el backend.
+ * El backend exige ^[A-Z][A-Z0-9_]{1,39}$.
+ * @param {string} label
+ * @returns {string}
+ */
+export const codigoDesdeLabel = (label) => {
+    const base = String(label || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '') // quita acentos
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .replace(/_{2,}/g, '_');
+    if (!base) return '';
+    // Debe iniciar con letra; si no, se prefija con SUB_.
+    const conLetra = /^[A-Z]/.test(base) ? base : `SUB_${base}`;
+    return conLetra.slice(0, 40);
+};
+
+/**
+ * Valida el formulario de creacion/edicion de subcategoria.
+ * @param {{label?: string, codigo?: string, icon?: string}} form
+ * @param {Array<object>} existentes
+ * @param {string|null} editandoCodigo
+ * @returns {{ok: boolean, error: string|null, codigo: string}}
+ */
+export const validatePropositoForm = (form, existentes = [], editandoCodigo = null) => {
+    const f = form || {};
+    const label = String(f.label || '').trim();
+
+    if (label.length < 2) {
+        return { ok: false, error: 'El nombre debe tener al menos 2 caracteres', codigo: '' };
+    }
+    if (label.length > 60) {
+        return { ok: false, error: 'El nombre no puede exceder 60 caracteres', codigo: '' };
+    }
+
+    const icon = String(f.icon || '').trim();
+    if (icon && !ICONOS_SUBCATEGORIA.includes(icon)) {
+        return { ok: false, error: 'Selecciona un icono de la paleta', codigo: '' };
+    }
+
+    const codigo = codigoDesdeLabel(f.codigo || label);
+    if (!codigo || codigo.length < 2) {
+        return { ok: false, error: 'No se pudo derivar un código válido del nombre', codigo: '' };
+    }
+
+    // En edicion el codigo no cambia, asi que no se compara contra si mismo.
+    if (editandoCodigo === null || editandoCodigo === undefined) {
+        const duplicado = (Array.isArray(existentes) ? existentes : [])
+            .some((p) => p.codigo === codigo);
+        if (duplicado) {
+            return { ok: false, error: `Ya existe una subcategoría con el código ${codigo}`, codigo };
+        }
+    }
+
+    return { ok: true, error: null, codigo };
+};
+
+/**
+ * Construye el payload de creacion de subcategoria (UI ingles -> API espanol).
+ * @param {{label: string, icon?: string, orden?: number}} form
+ * @returns {object}
+ */
+export const buildPropositoCreatePayload = (form) => {
+    const f = form || {};
+    return {
+        codigo: codigoDesdeLabel(f.codigo || f.label),
+        label: String(f.label || '').trim(),
+        icon: f.icon || '📦',
+        orden: typeof f.orden === 'number' ? f.orden : 100,
+    };
+};
+
+/**
+ * v8 (decision 1): decide si una subcategoria puede borrarse y por que no.
+ * @param {object} proposito
+ * @returns {{puedeBorrar: boolean, motivo: string|null, requiereTraslado: boolean}}
+ */
+export const validatePropositoDelete = (proposito) => {
+    const p = proposito || {};
+
+    if (p.esSistema) {
+        return {
+            puedeBorrar: false,
+            motivo: 'Las subcategorías del sistema no pueden eliminarse',
+            requiereTraslado: false,
+        };
+    }
+
+    const count = typeof p.almacenesCount === 'number' ? p.almacenesCount : 0;
+    if (count > 0) {
+        return {
+            puedeBorrar: false,
+            motivo: `Tiene ${count} almacén(es). Trasládalos primero a otra subcategoría.`,
+            requiereTraslado: true,
+        };
+    }
+
+    return { puedeBorrar: true, motivo: null, requiereTraslado: false };
+};
+
+/**
+ * v8: construye el payload del traslado masivo de almacenes.
+ * @param {string} origenCodigo
+ * @param {string} destinoCodigo
+ * @returns {object}
+ */
+export const buildTrasladoSubcategoriaPayload = (origenCodigo, destinoCodigo) => ({
+    origen_codigo: origenCodigo,
+    destino_codigo: destinoCodigo || CODIGO_CUARENTENA,
+});

@@ -21,6 +21,17 @@ import {
     mapVoiceIntentToProposal,
     validateVoiceEntry,
     buildVoiceEntryPayload,
+    // v8 (Fase 8.6): subcategorías de almacén gestionables (warehouse_propositos).
+    ICONOS_SUBCATEGORIA,
+    CODIGO_CUARENTENA,
+    mapPropositosFromApi,
+    sortPropositos,
+    propositosParaBarra,
+    codigoDesdeLabel,
+    validatePropositoForm,
+    buildPropositoCreatePayload,
+    validatePropositoDelete,
+    buildTrasladoSubcategoriaPayload,
 } from './utils/warehouseMappers';
 // v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
 import {
@@ -60,13 +71,6 @@ const logger = {
  * Hub visual para gestión de ubicaciones físicas, stock por almacén
  * y control de accesos operativos.
  */
-
-const INITIAL_TYPES = {
-    ALMACEN: { label: 'Almacén General', color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
-    ALMACEN_EXHIBIDOR: { label: 'Almacén/Exhibidor', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-    EXHIBIDOR_PAN_DULCE: { label: 'Exhibidor Pan Dulce', color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
-    EXHIBIDOR_PAN_BLANCO: { label: 'Exhibidor Pan Blanco', color: 'text-yellow-400', bg: 'bg-yellow-500/10', border: 'border-yellow-500/20' },
-};
 
 const INITIAL_WAREHOUSES = [
     { id: 'wh_ex_pan', name: 'VITRINA PRINCIPAL', type: 'EX_PT', icon: '🥖', capacity: 100, current: 45 },
@@ -111,8 +115,21 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         }
     };
 
+    // v8 (Fase 8.6): subcategorías gestionables (warehouse_propositos).
+    // La barra de filtros y el modal de gestión leen de aquí, no de una
+    // constante hardcodeada, para que crear/borrar se refleje al instante.
+    const fetchPropositos = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse/subcategorias`);
+            setPropositos(sortPropositos(mapPropositosFromApi(res.data)));
+        } catch(e) {
+            logger.error('Error fetching subcategorias:', e);
+        }
+    };
+
     useEffect(() => {
         fetchWarehouses();
+        fetchPropositos();
     }, []);
 
     // --- v7 (Fase 4): estado de red y cola offline ---
@@ -163,22 +180,29 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         return () => monitor.destroy();
     }, []);
 
-    const [warehouseTypes, setWarehouseTypes] = useState(INITIAL_TYPES);
     const [selectedWH, setSelectedWH] = useState(null);
-    const [filterType, setFilterType] = useState('ALL');
     const [activeTab, setActiveTab] = useState('existencias');
     const [selectedZone, setSelectedZone] = useState(null); // null = landing, 'SECO'|'REFRIGERADO'|'CONGELADO' = suite
     const [suiteTab, setSuiteTab] = useState('existencias'); // Pestaña activa en la suite de zona
-    const [subCategoryTab, setSubCategoryTab] = useState('EXHIBICION_VENTA'); // Subcategoría activa: EXHIBICION_VENTA | ALMACENAMIENTO | EQUIPAMIENTO
+    const [subCategoryTab, setSubCategoryTab] = useState('EXHIBICION_VENTA'); // Subcategoría activa (codigo de warehouse_propositos)
 
     const [showItemPicker, setShowItemPicker] = useState(false);
     const [pickerSearch, setPickerSearch] = useState('');
     const [showWHEditor, setShowWHEditor] = useState(false);
-    const [showTypeManager, setShowTypeManager] = useState(false);
     const [editingWHData, setEditingWHData] = useState(null);
     const [whToDelete, setWhToDelete] = useState(null);
-    const [newTypeLabel, setNewTypeLabel] = useState('');
     const [editingItem, setEditingItem] = useState(null); // { whId, productSku, data }
+
+    // --- v8 (Fase 8.6): Gestión de subcategorías de almacén ---
+    const [propositos, setPropositos] = useState([]);
+    const [showSubcatManager, setShowSubcatManager] = useState(false);
+    const [subcatForm, setSubcatForm] = useState({ label: '', icon: '📦' });
+    const [subcatEditing, setSubcatEditing] = useState(null); // proposito en edición o null
+    const [subcatError, setSubcatError] = useState('');
+    const [subcatSaving, setSubcatSaving] = useState(false);
+    // Diálogo de borrado con traslado obligatorio (decisión 1 del plan v8)
+    const [subcatDeleteDialog, setSubcatDeleteDialog] = useState(null); // { proposito, motivo, requiereTraslado }
+    const [subcatTrasladoDestino, setSubcatTrasladoDestino] = useState(CODIGO_CUARENTENA);
 
     // --- Fase 1F: Estados operativos ---
     const [insumos, setInsumos] = useState([]);
@@ -685,31 +709,63 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         AJUSTE_INVENTARIO: { label: 'Ajuste', color: 'text-gray-400', bg: 'bg-gray-500/15', icon: '🔧' },
     };
 
-    const handleAddType = () => {
-        if (!newTypeLabel.trim()) return;
-        const key = `TYPE_${Date.now()}`;
-        const colors = [
-            { color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
-            { color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
-            { color: 'text-pink-400', bg: 'bg-pink-500/10', border: 'border-pink-500/20' },
-            { color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/20' },
-            { color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
-            { color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' }
-        ];
-        const randomColor = colors[Math.floor(Math.random() * colors.length)];
-        
-        setWarehouseTypes({
-            ...warehouseTypes,
-            [key]: { label: newTypeLabel, ...randomColor }
-        });
-        setNewTypeLabel('');
+    // === v8 (Fase 8.6): HANDLERS DE SUBCATEGORÍAS ===
+    // La gestión vive en el backend (tabla warehouse_propositos). Los handlers
+    // de tipos en memoria (handleAddType/handleRenameType) se eliminaron por
+    // ser código muerto: nunca se persistían.
+    const handleSaveSubcat = async () => {
+        const err = validatePropositoForm(subcatForm, propositos, subcatEditing);
+        if (err) { setSubcatError(err); return; }
+        setSubcatError('');
+        setSubcatSaving(true);
+        try {
+            if (subcatEditing) {
+                const payload = buildPropositoCreatePayload(subcatForm);
+                await axios.put(`${API_BASE}/api/v1/warehouse/subcategorias/${subcatEditing}`, payload);
+                showOpMessage(`Subcategoría "${subcatForm.label}" actualizada`);
+            } else {
+                const payload = buildPropositoCreatePayload(subcatForm);
+                await axios.post(`${API_BASE}/api/v1/warehouse/subcategorias`, payload);
+                showOpMessage(`Subcategoría "${subcatForm.label}" creada`);
+            }
+            setSubcatEditing(null);
+            setSubcatForm({ label: '', icon: '📦' });
+            await fetchPropositos();
+        } catch (e) {
+            logger.error('Error guardando subcategoría:', e);
+            const detalle = e?.response?.data?.detail;
+            setSubcatError(typeof detalle === 'string' ? detalle : 'No se pudo guardar la subcategoría.');
+        } finally { setSubcatSaving(false); }
     };
 
-    const handleRenameType = (key, newLabel) => {
-        setWarehouseTypes({
-            ...warehouseTypes,
-            [key]: { ...warehouseTypes[key], label: newLabel }
-        });
+    const handleDeleteSubcat = (proposito) => {
+        const guard = validatePropositoDelete(proposito);
+        if (!guard.ok) { setSubcatError(guard.mensaje); return; }
+        setSubcatError('');
+        setSubcatTrasladoDestino(CODIGO_CUARENTENA);
+        setSubcatDeleteDialog(proposito);
+    };
+
+    const handleConfirmDeleteSubcat = async () => {
+        if (!subcatDeleteDialog) return;
+        setSubcatSaving(true);
+        try {
+            const { codigo, almacenesCount } = subcatDeleteDialog;
+            if (almacenesCount > 0) {
+                const payload = buildTrasladoSubcategoriaPayload(codigo, subcatTrasladoDestino);
+                await axios.post(`${API_BASE}/api/v1/warehouse/subcategorias/trasladar`, payload);
+            }
+            await axios.delete(`${API_BASE}/api/v1/warehouse/subcategorias/${codigo}`);
+            showOpMessage(`Subcategoría "${subcatDeleteDialog.label}" eliminada`);
+            setSubcatDeleteDialog(null);
+            if (subCategoryTab === codigo) setSubCategoryTab(CODIGO_CUARENTENA);
+            await fetchPropositos();
+        } catch (e) {
+            logger.error('Error eliminando subcategoría:', e);
+            const detalle = e?.response?.data?.detail;
+            setSubcatError(typeof detalle === 'string' ? detalle : 'No se pudo eliminar la subcategoría.');
+            setSubcatDeleteDialog(null);
+        } finally { setSubcatSaving(false); }
     };
 
     // Productos filtrados para el seleccionador (Incluye Insumos)
@@ -753,6 +809,7 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                 await axios.post(`${API_BASE}/api/v1/warehouse`, payload);
             }
             fetchWarehouses();
+            fetchPropositos();
             setShowWHEditor(false);
             setEditingWHData(null);
         } catch(e) {
@@ -955,11 +1012,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     const zoneWarehouses = selectedZone ? warehouses.filter(w => (w.zona_termica || w.type) === selectedZone) : [];
     const subCatWarehouses = zoneWarehouses.filter(w => (w.proposito || 'EXHIBICION_VENTA') === subCategoryTab);
 
-    const SUB_CATEGORIES = [
-        { key: 'EXHIBICION_VENTA', label: 'Almacenes / Exhibidores', icon: '🏪' },
-        { key: 'ALMACENAMIENTO', label: 'Almacenes de Insumos', icon: '📦' },
-        { key: 'EQUIPAMIENTO', label: 'Almacenes de Equipamiento', icon: '🔧' },
-    ];
+    // v8 (Fase 8.6): la barra se alimenta de la BD. `propositosParaBarra`
+    // excluye la cuarentena SIN_CLASIFICAR (decisión vinculante §10.2).
+    const subCategoriasBarra = propositosParaBarra(propositos);
     const ZONE_META = { 
         SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' }, 
         REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' }, 
@@ -1155,23 +1210,40 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                 </div>
             )}
 
-            {/* === BARRA DE SUBCATEGORÍAS (solo en Existencias con zona) === */}
+            {/* === v8 (Fase 8.6): BARRA DE SUBCATEGORÍAS + ENGRANE ===
+                La barra se alimenta de la BD (warehouse_propositos). El engrane
+                vive aquí, junto a la barra que realmente controla (decisión §10).
+                `propositosParaBarra` excluye la cuarentena SIN_CLASIFICAR. */}
             {selectedZone && suiteTab === 'existencias' && (
-            <div className="mb-4 bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1.5 flex gap-1 w-max backdrop-blur-md">
-                {SUB_CATEGORIES.map(sc => (
-                    <button
-                        key={sc.key}
-                        onClick={() => setSubCategoryTab(sc.key)}
-                        className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                            subCategoryTab === sc.key
-                                ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30'
-                                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                        }`}
-                    >
-                        <span className="text-sm">{sc.icon}</span>
-                        {sc.label}
-                    </button>
-                ))}
+            <div className="mb-4 flex items-center gap-2">
+                <div className="bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1.5 flex gap-1 w-max backdrop-blur-md overflow-x-auto custom-scrollbar no-scrollbar">
+                    {subCategoriasBarra.map(sc => (
+                        <button
+                            key={sc.codigo}
+                            onClick={() => setSubCategoryTab(sc.codigo)}
+                            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+                                subCategoryTab === sc.codigo
+                                    ? 'bg-slate-700/80 text-white shadow-md border border-slate-400/30'
+                                    : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                            }`}
+                        >
+                            <span className="text-sm">{sc.icon}</span>
+                            {sc.label}
+                        </button>
+                    ))}
+                    {subCategoriasBarra.length === 0 && (
+                        <span className="px-5 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            Sin subcategorías
+                        </span>
+                    )}
+                </div>
+                <button
+                    onClick={() => { setSubcatError(''); setSubcatEditing(null); setSubcatForm({ label: '', icon: '📦' }); setShowSubcatManager(true); }}
+                    className="w-12 h-12 shrink-0 bg-slate-800/80 border border-slate-500/30 rounded-2xl flex items-center justify-center hover:border-slate-300 transition-all text-xs"
+                    title="Gestionar Subcategorías"
+                >
+                    ⚙️
+                </button>
             </div>
             )}
 
@@ -1194,31 +1266,7 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <header className="mb-12 flex justify-between items-end">
                         <div className="flex gap-4 flex-1 justify-end max-w-[70%]">
-                            <div className="bg-slate-900/50 border border-slate-500/30 rounded-2xl p-1 flex overflow-x-auto custom-scrollbar no-scrollbar flex-1">
-                                <button 
-                                    onClick={() => setFilterType('ALL')}
-                                    className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === 'ALL' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    Todos
-                                </button>
-                                {Object.entries(warehouseTypes).map(([key, info]) => (
-                                    <button 
-                                        key={key}
-                                        onClick={() => setFilterType(key)}
-                                        className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === key ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                    >
-                                        {info.label}
-                                    </button>
-                                ))}
-                            </div>
-                            <button 
-                                onClick={() => setShowTypeManager(true)}
-                                className="w-12 h-12 bg-slate-800/80 border border-slate-500/30 rounded-2xl flex items-center justify-center hover:border-slate-300 transition-all text-xs"
-                                title="Gestionar Categorías"
-                            >
-                                ⚙️
-                            </button>
-                            <button 
+                            <button
                                 onClick={() => {
                                     setEditingWHData({ name: '', type: selectedZone || 'SECO', icon: '📦', capacity: 100, proposito: subCategoryTab });
                                     setShowWHEditor(true);
@@ -1231,10 +1279,10 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                     </header>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {subCatWarehouses.filter(wh => filterType === 'ALL' || wh.type === filterType).map(wh => {
-                            const typeInfo = warehouseTypes[wh.type] || { label: wh.type, color: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/20' };
+                        {subCatWarehouses.map(wh => {
                             const fillPercent = (wh.current / wh.capacity) * 100;
-                            
+                            const subcatInfo = propositos.find(p => p.codigo === wh.proposito);
+
                             return (
                                 <div 
                                     key={wh.id}
@@ -1243,8 +1291,8 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                 >
                                     <div className="flex justify-between items-start mb-6">
                                         <span className="text-5xl group-hover:scale-110 transition-transform duration-500">{wh.icon}</span>
-                                        <span className={`text-[8px] font-black uppercase px-3 py-1 rounded-full ${typeInfo.bg} ${typeInfo.color} tracking-widest`}>
-                                            {typeInfo.label}
+                                        <span className="text-[8px] font-black uppercase px-3 py-1 rounded-full bg-slate-500/10 text-slate-300 tracking-widest">
+                                            {subcatInfo ? `${subcatInfo.icon} ${subcatInfo.label}` : (wh.proposito || 'Sin clasificar')}
                                         </span>
                                     </div>
 
@@ -1288,8 +1336,8 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                 <div className="flex items-center gap-3 mb-1">
                                     <span className="text-3xl">{selectedWH.icon}</span>
                                     <h2 className="text-2xl font-black uppercase italic tracking-tighter">{selectedWH.name}</h2>
-                                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${warehouseTypes[selectedWH.type]?.bg || 'bg-gray-500/10'} ${warehouseTypes[selectedWH.type]?.color || 'text-gray-400'}`}>
-                                        {warehouseTypes[selectedWH.type]?.label || selectedWH.type}
+                                    <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-slate-500/10 text-slate-300">
+                                        {propositos.find(p => p.codigo === selectedWH.proposito)?.label || selectedWH.proposito || 'Sin clasificar'}
                                     </span>
                                 </div>
                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Explorando contenido y existencias</p>
@@ -2077,14 +2125,14 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Tipo de Almacén</label>
-                                    <select 
-                                        value={editingWHData.type}
-                                        onChange={(e) => setEditingWHData({...editingWHData, type: e.target.value})}
+                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Subcategoría</label>
+                                    <select
+                                        value={editingWHData.proposito || CODIGO_CUARENTENA}
+                                        onChange={(e) => setEditingWHData({...editingWHData, proposito: e.target.value})}
                                         className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-black text-[10px] uppercase outline-none focus:border-indigo-500 appearance-none"
                                     >
-                                        {Object.entries(warehouseTypes).map(([val, info]) => (
-                                            <option key={val} value={val}>{info.label}</option>
+                                        {sortPropositos(propositos).map(p => (
+                                            <option key={p.codigo} value={p.codigo}>{p.icon} {p.label}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -2162,49 +2210,104 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                 </div>
             )}
 
-            {/* Modal: Gestor de Categorías (WAREHOUSE_TYPES) */}
-            {showTypeManager && (
+            {/* === v8 (Fase 8.6): MODAL GESTOR DE SUBCATEGORÍAS ===
+                Persiste en la BD vía /api/v1/warehouse/subcategorias.
+                - Paleta curada de 12 iconos (decisión §10.4).
+                - Las de sistema (esSistema) no se pueden borrar ni desactivar.
+                - Borrado con bloqueo preventivo + traslado a cuarentena (§10.1). */}
+            {showSubcatManager && (
                 <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowTypeManager(false)} />
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowSubcatManager(false)} />
                     <div className="relative w-full max-w-2xl bg-[#0a0a0a] border border-gray-800 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
                         <header className="p-10 border-b border-gray-800 flex justify-between items-center">
                             <div>
-                                <h3 className="text-2xl font-black uppercase italic tracking-tighter text-indigo-400">Gestionar Categorías</h3>
-                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-2">Personaliza los tipos de almacén en el sistema</p>
+                                <h3 className="text-2xl font-black uppercase italic tracking-tighter text-indigo-400">Gestionar Subcategorías</h3>
+                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-2">Crea, renombra o elimina subcategorías de almacén</p>
                             </div>
-                            <button onClick={() => setShowTypeManager(false)} className="text-gray-500 hover:text-white">✕</button>
+                            <button onClick={() => setShowSubcatManager(false)} className="text-gray-500 hover:text-white">✕</button>
                         </header>
-                        
+
                         <div className="flex-1 overflow-y-auto p-10 space-y-4 custom-scrollbar">
-                            <div className="flex gap-4 mb-8">
-                                <input 
-                                    type="text" 
-                                    placeholder="Nueva categoría (ej: Cava de Vinos)"
-                                    className="flex-1 bg-black border border-gray-800 p-4 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500"
-                                    value={newTypeLabel}
-                                    onChange={(e) => setNewTypeLabel(e.target.value.toUpperCase())}
+                            {/* Formulario crear / editar */}
+                            <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
+                                <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest">
+                                    {subcatEditing ? `Editando: ${subcatEditing}` : 'Nueva subcategoría'}
+                                </p>
+                                <input
+                                    type="text"
+                                    placeholder="Nombre (ej: Cava de Vinos)"
+                                    className="w-full bg-black border border-gray-800 p-4 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500"
+                                    value={subcatForm.label}
+                                    onChange={(e) => setSubcatForm({ ...subcatForm, label: e.target.value })}
                                 />
-                                <button 
-                                    onClick={handleAddType}
-                                    className="bg-indigo-600 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all"
-                                >
-                                    + Añadir
-                                </button>
+                                <div>
+                                    <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-3">Icono</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {ICONOS_SUBCATEGORIA.map(ic => (
+                                            <button
+                                                key={ic}
+                                                onClick={() => setSubcatForm({ ...subcatForm, icon: ic })}
+                                                className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg transition-all ${subcatForm.icon === ic ? 'bg-indigo-600 scale-110 shadow-lg' : 'bg-black/40 border border-gray-800 hover:border-indigo-500'}`}
+                                            >
+                                                {ic}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                {subcatError && (
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-red-400">{subcatError}</p>
+                                )}
+                                <div className="flex gap-3">
+                                    {subcatEditing && (
+                                        <button
+                                            onClick={() => { setSubcatEditing(null); setSubcatForm({ label: '', icon: '📦' }); setSubcatError(''); }}
+                                            className="flex-1 py-4 bg-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-700 transition-all"
+                                        >
+                                            Cancelar
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={handleSaveSubcat}
+                                        disabled={subcatSaving}
+                                        className="flex-1 py-4 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                                    >
+                                        {subcatSaving ? 'Guardando…' : (subcatEditing ? 'Guardar Cambios' : '+ Añadir')}
+                                    </button>
+                                </div>
                             </div>
 
+                            {/* Listado */}
                             <div className="space-y-3">
-                                <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-4">Categorías Existentes</p>
-                                {Object.entries(warehouseTypes).map(([key, info]) => (
-                                    <div key={key} className="bg-white/5 border border-white/10 p-4 rounded-2xl flex items-center justify-between group">
-                                        <input 
-                                            type="text" 
-                                            value={info.label}
-                                            onChange={(e) => handleRenameType(key, e.target.value.toUpperCase())}
-                                            className="bg-transparent border-none outline-none text-xs font-black uppercase italic text-gray-300 focus:text-white w-full mr-4"
-                                        />
-                                        <div className="flex items-center gap-3">
-                                            <div className={`w-3 h-3 rounded-full ${info.bg.replace('10', '40')}`} />
-                                            <span className="text-[8px] font-black text-gray-600 font-mono opacity-0 group-hover:opacity-100 transition-opacity uppercase">{key}</span>
+                                <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-4">Subcategorías Existentes</p>
+                                {sortPropositos(propositos).map(p => (
+                                    <div key={p.codigo} className="bg-white/5 border border-white/10 p-4 rounded-2xl flex items-center justify-between gap-3">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <span className="text-xl">{p.icon}</span>
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-black uppercase italic text-gray-200 truncate">{p.label}</p>
+                                                <p className="text-[8px] font-mono text-gray-600 uppercase">
+                                                    {p.codigo} · {p.almacenesCount} almacén(es)
+                                                    {p.esSistema && ' · SISTEMA'}
+                                                    {p.esCuarentena && ' · CUARENTENA'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            <button
+                                                onClick={() => { setSubcatEditing(p.codigo); setSubcatForm({ label: p.label, icon: p.icon }); setSubcatError(''); }}
+                                                className="px-3 py-2 rounded-xl bg-slate-700/60 text-[9px] font-black uppercase tracking-widest hover:bg-slate-600 transition-all"
+                                                title="Renombrar"
+                                            >
+                                                ✏️
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteSubcat(p)}
+                                                disabled={p.esSistema}
+                                                className="px-3 py-2 rounded-xl bg-red-900/40 text-[9px] font-black uppercase tracking-widest hover:bg-red-800/60 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                                title={p.esSistema ? 'Las subcategorías de sistema no se pueden eliminar' : 'Eliminar'}
+                                            >
+                                                🗑️
+                                            </button>
                                         </div>
                                     </div>
                                 ))}
@@ -2212,13 +2315,68 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                         </div>
 
                         <footer className="p-8 bg-black/40 border-t border-gray-800 flex justify-end">
-                            <button 
-                                onClick={() => setShowTypeManager(false)}
+                            <button
+                                onClick={() => setShowSubcatManager(false)}
                                 className="bg-[#c1d72e] px-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-black hover:scale-105 active:scale-95 transition-all"
                             >
                                 Listo
                             </button>
                         </footer>
+                    </div>
+                </div>
+            )}
+
+            {/* === v8 (Fase 8.6): DIÁLOGO DE TRASLADO / BORRADO ===
+                Si la subcategoría tiene almacenes, se ofrece trasladarlos a otra
+                subcategoría (por defecto la cuarentena SIN_CLASIFICAR) antes de
+                borrar. Human-in-the-loop: el operador decide el destino. */}
+            {subcatDeleteDialog && (
+                <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setSubcatDeleteDialog(null)} />
+                    <div className="relative w-full max-w-lg bg-gray-900 border border-red-900/30 rounded-[40px] p-10 shadow-2xl">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-red-600/50 rounded-t-[40px]" />
+                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-red-500 mb-4">Eliminar Subcategoría</h3>
+                        <p className="text-sm font-bold text-gray-300 mb-2">
+                            ¿Eliminar "{subcatDeleteDialog.label}"?
+                        </p>
+                        <p className="text-[10px] font-black text-red-900 uppercase tracking-widest mb-6 leading-relaxed">
+                            {subcatDeleteDialog.almacenesCount > 0
+                                ? `Tiene ${subcatDeleteDialog.almacenesCount} almacén(es) asignado(s). Elige a dónde trasladarlos antes de borrar.`
+                                : 'No tiene almacenes asignados. Se eliminará de forma permanente.'}
+                        </p>
+
+                        {subcatDeleteDialog.almacenesCount > 0 && (
+                            <div className="mb-8">
+                                <label className="text-[9px] font-black uppercase text-gray-500 mb-2 block tracking-widest">Trasladar almacenes a</label>
+                                <select
+                                    value={subcatTrasladoDestino}
+                                    onChange={(e) => setSubcatTrasladoDestino(e.target.value)}
+                                    className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-black text-[10px] uppercase outline-none focus:border-indigo-500 appearance-none"
+                                >
+                                    {sortPropositos(propositos)
+                                        .filter(p => p.codigo !== subcatDeleteDialog.codigo)
+                                        .map(p => (
+                                            <option key={p.codigo} value={p.codigo}>{p.icon} {p.label}</option>
+                                        ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => setSubcatDeleteDialog(null)}
+                                className="flex-1 py-5 bg-gray-800 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-700 transition-all"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleConfirmDeleteSubcat}
+                                disabled={subcatSaving}
+                                className="flex-1 py-5 bg-red-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-red-600/20 disabled:opacity-50"
+                            >
+                                {subcatSaving ? 'Procesando…' : 'Aceptar y Eliminar'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

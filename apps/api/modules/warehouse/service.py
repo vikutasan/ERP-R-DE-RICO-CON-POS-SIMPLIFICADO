@@ -2,7 +2,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from fastapi import HTTPException
 from . import models, schemas
 from modules.catalog.models import Product
@@ -13,12 +13,319 @@ from core.audit import registrar_auditoria, verificar_permiso
 logger = logging.getLogger("rderico.warehouse")
 
 class WarehouseService:
+    # --- v8: Catalogo de subcategorias (warehouse_propositos) ---
+
+    # Codigo de la subcategoria de cuarentena. Es el destino por defecto de
+    # cualquier traslado masivo y NUNCA se muestra en la barra de filtros.
+    CODIGO_CUARENTENA = "SIN_CLASIFICAR"
+
+    async def _validar_proposito(self, db: AsyncSession, codigo: str) -> models.WarehouseProposito:
+        """v8: valida que `codigo` exista en el catalogo y este activo.
+
+        Reemplaza al enum cerrado `PropositoAlmacen`. Se llama en create y
+        update de almacenes para impedir que se guarden codigos huerfanos
+        (que romperian la barra de subcategorias de la UI).
+        """
+        result = await db.execute(
+            select(models.WarehouseProposito).where(models.WarehouseProposito.codigo == codigo)
+        )
+        proposito = result.scalar_one_or_none()
+        if not proposito:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Subcategoría '{codigo}' no existe en el catálogo",
+            )
+        if not proposito.activo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Subcategoría '{codigo}' está desactivada",
+            )
+        return proposito
+
+    async def get_propositos(self, db: AsyncSession, incluir_inactivos: bool = False):
+        """Lista el catalogo ordenado por `orden`. Incluye el conteo de
+        almacenes por subcategoria para que la UI pueda deshabilitar el
+        boton de borrar sin una llamada adicional."""
+        query = select(models.WarehouseProposito)
+        if not incluir_inactivos:
+            query = query.where(models.WarehouseProposito.activo == True)  # noqa: E712
+        query = query.order_by(models.WarehouseProposito.orden, models.WarehouseProposito.label)
+        result = await db.execute(query)
+        propositos = result.scalars().all()
+
+        # Conteo de almacenes por codigo (una sola consulta, sin N+1).
+        conteo_result = await db.execute(
+            select(models.Almacen.proposito, func.count(models.Almacen.id)).group_by(models.Almacen.proposito)
+        )
+        conteo = {codigo: total for codigo, total in conteo_result.all()}
+
+        return [
+            schemas.WarehousePropositoResponse(
+                id=p.id,
+                codigo=p.codigo,
+                label=p.label,
+                icon=p.icon,
+                orden=p.orden,
+                es_sistema=p.es_sistema,
+                es_cuarentena=p.es_cuarentena,
+                activo=p.activo,
+                created_at=p.created_at,
+                almacenes_count=conteo.get(p.codigo, 0),
+            )
+            for p in propositos
+        ]
+
+    async def create_proposito(self, db: AsyncSession, payload: schemas.WarehousePropositoCreate, usuario_id=None):
+        """Crea una subcategoria de usuario. `es_sistema` y `es_cuarentena`
+        siempre son False: solo el seed/migracion los define."""
+        await verificar_permiso(db, usuario_id, "almacenes.crear")
+
+        existente = await db.execute(
+            select(models.WarehouseProposito).where(models.WarehouseProposito.codigo == payload.codigo)
+        )
+        if existente.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"Ya existe la subcategoría '{payload.codigo}'")
+
+        db_prop = models.WarehouseProposito(
+            codigo=payload.codigo,
+            label=payload.label,
+            icon=payload.icon,
+            orden=payload.orden,
+            es_sistema=False,
+            es_cuarentena=False,
+            activo=True,
+        )
+        db.add(db_prop)
+        await db.flush()
+
+        await registrar_auditoria(
+            db,
+            usuario_id=usuario_id,
+            accion="CREAR",
+            entidad="subcategoria_almacen",
+            entidad_id=db_prop.id,
+            valores_antes=None,
+            valores_despues={"codigo": db_prop.codigo, "label": db_prop.label, "icon": db_prop.icon},
+            detalle=f"Creacion de la subcategoria {db_prop.codigo}",
+        )
+
+        await db.commit()
+        await db.refresh(db_prop)
+        return db_prop
+
+    async def update_proposito(self, db: AsyncSession, proposito_id: str, payload: schemas.WarehousePropositoUpdate, usuario_id=None):
+        """Edita label/icon/orden/activo. `codigo` NO es editable.
+
+        v8 (decision 7): una subcategoria de sistema NO puede desactivarse.
+        Desactivarla la sacaria de la barra y huerfanaria sus almacenes.
+        """
+        await verificar_permiso(db, usuario_id, "almacenes.editar")
+
+        result = await db.execute(
+            select(models.WarehouseProposito).where(models.WarehouseProposito.id == proposito_id)
+        )
+        db_prop = result.scalar_one_or_none()
+        if not db_prop:
+            raise HTTPException(status_code=404, detail="Subcategoría no encontrada")
+
+        update_data = payload.model_dump(exclude_unset=True)
+
+        if update_data.get("activo") is False and db_prop.es_sistema:
+            raise HTTPException(
+                status_code=409,
+                detail=f"La subcategoría de sistema '{db_prop.codigo}' no puede desactivarse",
+            )
+
+        antes = {"label": db_prop.label, "icon": db_prop.icon, "orden": db_prop.orden, "activo": db_prop.activo}
+        for key, value in update_data.items():
+            setattr(db_prop, key, value)
+
+        await registrar_auditoria(
+            db,
+            usuario_id=usuario_id,
+            accion="EDITAR",
+            entidad="subcategoria_almacen",
+            entidad_id=db_prop.id,
+            valores_antes=antes,
+            valores_despues=update_data,
+            detalle=f"Edicion de la subcategoria {db_prop.codigo}",
+        )
+
+        await db.commit()
+        await db.refresh(db_prop)
+        return db_prop
+
+    async def trasladar_almacenes(
+        self,
+        db: AsyncSession,
+        origen_codigo: str,
+        destino_codigo: str,
+        usuario_id=None,
+        commit: bool = True,
+    ) -> int:
+        """v8: mueve TODOS los almacenes de `origen_codigo` a `destino_codigo`.
+
+        Se usa antes de borrar una subcategoria con almacenes. Devuelve el
+        numero de almacenes trasladados. Con `commit=False` el llamador puede
+        encadenar el traslado y el borrado en una sola transaccion.
+        """
+        await verificar_permiso(db, usuario_id, "almacenes.editar")
+
+        if origen_codigo == destino_codigo:
+            raise HTTPException(status_code=400, detail="El origen y el destino no pueden ser iguales")
+
+        await self._validar_proposito(db, destino_codigo)
+
+        result = await db.execute(
+            select(models.Almacen).where(models.Almacen.proposito == origen_codigo)
+        )
+        almacenes = result.scalars().all()
+
+        for almacen in almacenes:
+            almacen.proposito = destino_codigo
+
+        if almacenes:
+            await registrar_auditoria(
+                db,
+                usuario_id=usuario_id,
+                accion="TRASLADO",
+                entidad="subcategoria_almacen",
+                entidad_id=origen_codigo,
+                valores_antes={"proposito": origen_codigo, "almacenes": len(almacenes)},
+                valores_despues={"proposito": destino_codigo},
+                detalle=f"Traslado de {len(almacenes)} almacen(es) de {origen_codigo} a {destino_codigo}",
+            )
+
+        if commit:
+            await db.commit()
+
+        return len(almacenes)
+
+    async def delete_proposito(self, db: AsyncSession, proposito_id: str, usuario_id=None):
+        """v8 (decision 1): borrado FISICO con bloqueo preventivo.
+
+        Reglas:
+        - Una subcategoria de sistema NUNCA se borra (409).
+        - Una subcategoria con almacenes NO se borra (409): el operador debe
+          trasladarlos primero (endpoint /trasladar) o usar
+          `forzar_traslado=True` para moverlos a la cuarentena y borrar.
+        """
+        await verificar_permiso(db, usuario_id, "almacenes.eliminar")
+
+        result = await db.execute(
+            select(models.WarehouseProposito).where(models.WarehouseProposito.id == proposito_id)
+        )
+        db_prop = result.scalar_one_or_none()
+        if not db_prop:
+            raise HTTPException(status_code=404, detail="Subcategoría no encontrada")
+
+        if db_prop.es_sistema:
+            raise HTTPException(
+                status_code=409,
+                detail=f"La subcategoría de sistema '{db_prop.codigo}' no puede eliminarse",
+            )
+
+        conteo_result = await db.execute(
+            select(func.count(models.Almacen.id)).where(models.Almacen.proposito == db_prop.codigo)
+        )
+        almacenes_count = conteo_result.scalar() or 0
+
+        if almacenes_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"La subcategoría '{db_prop.codigo}' tiene {almacenes_count} almacén(es). "
+                    f"Trasládelos primero a otra subcategoría."
+                ),
+            )
+
+        snapshot = {"codigo": db_prop.codigo, "label": db_prop.label, "icon": db_prop.icon}
+        await db.delete(db_prop)
+
+        await registrar_auditoria(
+            db,
+            usuario_id=usuario_id,
+            accion="ELIMINAR",
+            entidad="subcategoria_almacen",
+            entidad_id=proposito_id,
+            valores_antes=snapshot,
+            valores_despues=None,
+            detalle=f"Eliminacion de la subcategoria {snapshot['codigo']}",
+        )
+
+        await db.commit()
+        return schemas.WarehousePropositoDeleteResponse(
+            ok=True,
+            codigo=snapshot["codigo"],
+            almacenes_trasladados=0,
+            destino=None,
+        )
+
+    async def delete_proposito_con_traslado(self, db: AsyncSession, proposito_id: str, usuario_id=None):
+        """v8: borra una subcategoria trasladando sus almacenes a la cuarentena.
+
+        Operacion atomica: el traslado y el borrado ocurren en la MISMA
+        transaccion. Si algo falla, no queda ni traslado parcial ni borrado.
+        """
+        await verificar_permiso(db, usuario_id, "almacenes.eliminar")
+
+        result = await db.execute(
+            select(models.WarehouseProposito).where(models.WarehouseProposito.id == proposito_id)
+        )
+        db_prop = result.scalar_one_or_none()
+        if not db_prop:
+            raise HTTPException(status_code=404, detail="Subcategoría no encontrada")
+
+        if db_prop.es_sistema:
+            raise HTTPException(
+                status_code=409,
+                detail=f"La subcategoría de sistema '{db_prop.codigo}' no puede eliminarse",
+            )
+
+        # La cuarentena debe existir y estar activa para recibir el traslado.
+        cuarentena = await self._validar_proposito(db, self.CODIGO_CUARENTENA)
+
+        trasladados = await self.trasladar_almacenes(
+            db,
+            origen_codigo=db_prop.codigo,
+            destino_codigo=cuarentena.codigo,
+            usuario_id=usuario_id,
+            commit=False,
+        )
+
+        snapshot = {"codigo": db_prop.codigo, "label": db_prop.label, "icon": db_prop.icon}
+        await db.delete(db_prop)
+
+        await registrar_auditoria(
+            db,
+            usuario_id=usuario_id,
+            accion="ELIMINAR",
+            entidad="subcategoria_almacen",
+            entidad_id=proposito_id,
+            valores_antes=snapshot,
+            valores_despues={"almacenes_trasladados": trasladados, "destino": cuarentena.codigo},
+            detalle=(
+                f"Eliminacion de la subcategoria {snapshot['codigo']} con traslado de "
+                f"{trasladados} almacen(es) a {cuarentena.codigo}"
+            ),
+        )
+
+        await db.commit()
+        return schemas.WarehousePropositoDeleteResponse(
+            ok=True,
+            codigo=snapshot["codigo"],
+            almacenes_trasladados=trasladados,
+            destino=cuarentena.codigo,
+        )
+
     # --- CRUD Almacenes ---
     async def get_all_warehouses(self, db: AsyncSession):
         result = await db.execute(select(models.Almacen))
         return result.scalars().all()
 
     async def create_warehouse(self, db: AsyncSession, payload: schemas.AlmacenCreate):
+        # v8: el proposito debe existir en el catalogo (antes era un enum).
+        await self._validar_proposito(db, payload.proposito)
         db_wh = models.Almacen(**payload.model_dump())
         db.add(db_wh)
         await db.commit()
@@ -32,6 +339,11 @@ class WarehouseService:
             raise HTTPException(status_code=404, detail="Almacén no encontrado")
         
         update_data = payload.model_dump(exclude_unset=True)
+
+        # v8: si se cambia el proposito, debe existir en el catalogo.
+        if "proposito" in update_data and update_data["proposito"] is not None:
+            await self._validar_proposito(db, update_data["proposito"])
+
         for key, value in update_data.items():
             setattr(db_wh, key, value)
             

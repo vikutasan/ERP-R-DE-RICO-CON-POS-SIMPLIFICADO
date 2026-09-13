@@ -1,4 +1,4 @@
-﻿from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, JSON
+﻿from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, JSON, func
 from sqlalchemy.orm import relationship
 from core.database import Base
 import datetime
@@ -28,6 +28,36 @@ class Insumo(Base):
     factor_conversion = Column(Float, nullable=False)
     categoria_insumo = Column(String, nullable=False) # MATERIA_PRIMA, EMPAQUE, QUIMICO
     activo = Column(Boolean, default=True)
+
+class WarehouseProposito(Base):
+    """v8: catalogo configurable de subcategorias de almacen.
+
+    Reemplaza al enum cerrado PropositoAlmacen. El `codigo` es el valor que se
+    persiste en almacenes.proposito (compatibilidad hacia atras con los 3
+    valores historicos: ALMACENAMIENTO, EXHIBICION_VENTA, EQUIPAMIENTO).
+
+    Patron heredado de catalog.Category: es_sistema protege los valores base,
+    orden controla la posicion en la barra, y SIN_CLASIFICAR actua como
+    cuarentena (destino de traslado antes de eliminar una subcategoria).
+
+    Nota: no se declara ForeignKey desde almacenes.proposito para evitar un
+    ALTER TABLE con riesgo sobre datos existentes. La integridad se valida en
+    el servicio (_validar_proposito).
+    """
+    __tablename__ = "warehouse_propositos"
+    id = Column(String, primary_key=True, default=lambda: f"wpr_{uuid.uuid4().hex[:8]}")
+    codigo = Column(String, nullable=False, unique=True, index=True)  # ALMACENAMIENTO, ...
+    label = Column(String, nullable=False)                            # Almacenes de Insumos
+    icon = Column(String, nullable=False, default="📦")               # emoji para la barra
+    orden = Column(Integer, nullable=False, default=0)                # orden en la barra
+    es_sistema = Column(Boolean, nullable=False, default=False)       # no borrable
+    es_cuarentena = Column(Boolean, nullable=False, default=False)    # destino de traslado
+    activo = Column(Boolean, nullable=False, default=True)
+    # v8 (bugfix): server_default ademas del default de Python. La migracion
+    # usa op.bulk_insert, que NO ejecuta los defaults de SQLAlchemy, por lo que
+    # las 4 filas sembradas quedaban con created_at = NULL y la respuesta
+    # Pydantic fallaba con "Input should be a valid datetime".
+    created_at = Column(DateTime, default=_utcnow, server_default=func.now())
 
 class Almacen(Base):
     __tablename__ = "almacenes"

@@ -9,17 +9,23 @@ class ZonaTermica(str, Enum):
     CONGELADO = "CONGELADO"
 
 class PropositoAlmacen(str, Enum):
-    """v7 (D-ENUM): proposito de un almacen.
+    """v7 (D-ENUM) — DEPRECADO en v8.
 
-    EQUIPAMIENTO NO es un valor huerfano: el frontend lo usa como subcategoria
-    de UI y lo envia como `proposito` al crear almacenes de equipamiento
-    (WarehouseManagerUI.jsx -> SUB_CATEGORIES). Se conserva para no romper la
-    creacion de esos almacenes. Si en el futuro se decide retirarlo, primero
-    hay que migrar los registros existentes en la tabla `almacenes`.
+    v8: el proposito de un almacen ya NO es un enum cerrado. Ahora es un
+    `codigo` libre validado contra la tabla `warehouse_propositos` (catalogo
+    configurable por el usuario). Se conserva esta clase unicamente por
+    compatibilidad hacia atras (imports existentes y tests de la Fase 3);
+    NO debe usarse en validaciones nuevas. La validacion real vive en
+    `WarehouseService._validar_proposito`.
     """
     ALMACENAMIENTO = "ALMACENAMIENTO"
     EXHIBICION_VENTA = "EXHIBICION_VENTA"
     EQUIPAMIENTO = "EQUIPAMIENTO"
+
+# v8: patron de validacion del codigo de subcategoria. Mayusculas, digitos y
+# guion bajo. Se aplica tanto a `almacenes.proposito` como a
+# `warehouse_propositos.codigo` para que ambos lados del contrato coincidan.
+PROPOSITO_PATTERN = r"^[A-Z][A-Z0-9_]{1,39}$"
 
 class MetodoCaptura(str, Enum):
     MANUAL = "MANUAL"
@@ -73,7 +79,9 @@ class InsumoResponse(InsumoBase):
 class AlmacenBase(BaseModel):
     nombre: str
     zona_termica: ZonaTermica
-    proposito: PropositoAlmacen
+    # v8: antes era PropositoAlmacen (enum cerrado). Ahora es un codigo libre
+    # validado contra el catalogo `warehouse_propositos` en la capa de servicio.
+    proposito: str = Field(..., min_length=2, max_length=40, pattern=PROPOSITO_PATTERN)
     sucursal_id: Optional[str] = None
     foto_url: Optional[str] = None
     planograma_url: Optional[str] = None
@@ -86,7 +94,8 @@ class AlmacenCreate(AlmacenBase):
 class AlmacenUpdate(BaseModel):
     nombre: Optional[str] = None
     zona_termica: Optional[ZonaTermica] = None
-    proposito: Optional[PropositoAlmacen] = None
+    # v8: codigo libre validado contra el catalogo (ver AlmacenBase).
+    proposito: Optional[str] = Field(None, min_length=2, max_length=40, pattern=PROPOSITO_PATTERN)
     sucursal_id: Optional[str] = None
     foto_url: Optional[str] = None
     planograma_url: Optional[str] = None
@@ -99,6 +108,62 @@ class AlmacenResponse(AlmacenBase):
     
     class Config:
         from_attributes = True
+
+# --- v8: Catalogo de subcategorias de almacen (warehouse_propositos) ---
+class WarehousePropositoBase(BaseModel):
+    """Base del catalogo de subcategorias.
+
+    `codigo` es la llave logica que se guarda en `almacenes.proposito`.
+    `label` es lo que ve el operador en la barra. `icon` es un emoji de la
+    paleta curada (ver PLAN_SUBCATEGORIAS_ALMACEN_V8.md seccion 10.1).
+    """
+    codigo: str = Field(..., min_length=2, max_length=40, pattern=PROPOSITO_PATTERN)
+    label: str = Field(..., min_length=2, max_length=60)
+    icon: str = Field("📦", max_length=8)
+    orden: int = Field(0, ge=0, le=9999)
+
+class WarehousePropositoCreate(WarehousePropositoBase):
+    """Payload de creacion. `es_sistema` y `es_cuarentena` NO son asignables
+    por el cliente: los define el sistema (seed/migracion)."""
+    pass
+
+class WarehousePropositoUpdate(BaseModel):
+    """Payload de edicion. `codigo` NO es editable: cambiarlo huerfanaria los
+    almacenes que ya lo referencian. Para renombrar se edita `label`."""
+    label: Optional[str] = Field(None, min_length=2, max_length=60)
+    icon: Optional[str] = Field(None, max_length=8)
+    orden: Optional[int] = Field(None, ge=0, le=9999)
+    activo: Optional[bool] = None
+
+class WarehousePropositoResponse(WarehousePropositoBase):
+    id: str
+    es_sistema: bool
+    es_cuarentena: bool
+    activo: bool
+    created_at: datetime
+    # v8: conteo de almacenes que referencian esta subcategoria. Permite a la
+    # UI deshabilitar el boton de borrar sin una llamada extra.
+    almacenes_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+class WarehousePropositoDeleteResponse(BaseModel):
+    """Resultado del borrado fisico de una subcategoria."""
+    ok: bool
+    codigo: str
+    almacenes_trasladados: int = 0
+    destino: Optional[str] = None
+
+class TrasladoSubcategoriaRequest(BaseModel):
+    """v8: traslado masivo de almacenes de una subcategoria a otra.
+
+    Se usa cuando el operador quiere borrar una subcategoria que aun tiene
+    almacenes: primero se trasladan a `destino_codigo` (por defecto la
+    cuarentena SIN_CLASIFICAR) y luego se borra.
+    """
+    origen_codigo: str = Field(..., min_length=2, max_length=40, pattern=PROPOSITO_PATTERN)
+    destino_codigo: str = Field(..., min_length=2, max_length=40, pattern=PROPOSITO_PATTERN)
 
 # --- StockAlmacen ---
 class StockAlmacenBase(BaseModel):

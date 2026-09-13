@@ -9,6 +9,74 @@ import uuid
 router = APIRouter()
 warehouse_svc = service.warehouse_service
 
+# --- v8: Catalogo de subcategorias (warehouse_propositos) ---
+# IMPORTANTE: estas rutas literales deben declararse ANTES de "/{warehouse_id}"
+# para que "subcategorias" no se interprete como un warehouse_id.
+
+@router.get("/subcategorias", response_model=List[schemas.WarehousePropositoResponse])
+async def list_subcategorias(incluir_inactivos: bool = False, db: AsyncSession = Depends(get_db)):
+    """Lista el catalogo de subcategorias con el conteo de almacenes por cada una."""
+    return await warehouse_svc.get_propositos(db, incluir_inactivos=incluir_inactivos)
+
+@router.post("/subcategorias", response_model=schemas.WarehousePropositoResponse, status_code=201)
+async def create_subcategoria(
+    payload: schemas.WarehousePropositoCreate,
+    usuario_id: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """v8: crea una subcategoria de usuario. Requiere permiso 'almacenes.crear'."""
+    return await warehouse_svc.create_proposito(db, payload, usuario_id)
+
+@router.post("/subcategorias/trasladar")
+async def trasladar_subcategoria(
+    payload: schemas.TrasladoSubcategoriaRequest,
+    usuario_id: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """v8: traslada todos los almacenes de una subcategoria a otra.
+
+    Se declara ANTES de "/subcategorias/{proposito_id}" para que "trasladar"
+    no se interprete como un proposito_id.
+    """
+    trasladados = await warehouse_svc.trasladar_almacenes(
+        db,
+        origen_codigo=payload.origen_codigo,
+        destino_codigo=payload.destino_codigo,
+        usuario_id=usuario_id,
+    )
+    return {"ok": True, "almacenes_trasladados": trasladados, "destino": payload.destino_codigo}
+
+@router.put("/subcategorias/{proposito_id}", response_model=schemas.WarehousePropositoResponse)
+async def update_subcategoria(
+    proposito_id: str,
+    payload: schemas.WarehousePropositoUpdate,
+    usuario_id: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """v8: edita label/icon/orden/activo. `codigo` no es editable.
+
+    Una subcategoria de sistema no puede desactivarse (409).
+    """
+    return await warehouse_svc.update_proposito(db, proposito_id, payload, usuario_id)
+
+@router.delete("/subcategorias/{proposito_id}", response_model=schemas.WarehousePropositoDeleteResponse)
+async def delete_subcategoria(
+    proposito_id: str,
+    forzar_traslado: bool = False,
+    usuario_id: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """v8: borrado fisico con bloqueo preventivo.
+
+    - Subcategoria de sistema => 409.
+    - Subcategoria con almacenes => 409 (trasladar primero).
+    - `forzar_traslado=true` => mueve los almacenes a SIN_CLASIFICAR y borra,
+      todo en una sola transaccion.
+    """
+    if forzar_traslado:
+        return await warehouse_svc.delete_proposito_con_traslado(db, proposito_id, usuario_id)
+    return await warehouse_svc.delete_proposito(db, proposito_id, usuario_id)
+
 @router.get("/", response_model=List[schemas.AlmacenResponse])
 async def list_warehouses(db: AsyncSession = Depends(get_db)):
     return await warehouse_svc.get_all_warehouses(db)
