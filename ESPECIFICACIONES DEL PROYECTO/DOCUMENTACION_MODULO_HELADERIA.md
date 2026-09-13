@@ -141,11 +141,39 @@ Prefijo: `/api/v1/heladeria`
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/menu` | Menú completo agrupado por component_type (SABOR, RECIPIENTE, EXTRA, BEBIDA_BASE) |
-| `PUT` | `/toggle-availability/{product_id}` | Alterna disponibilidad (botón AGOTAR SABOR) |
-| `GET` | `/kds/{station}/orders` | Pedidos pendientes para estación KDS (HELADOS o MALTEADAS) |
-| `PUT` | `/kds/item/{item_id}/status` | Actualizar estado KDS (PENDING → IN_PROGRESS → READY) |
+| `PATCH` | `/availability/{config_id}` | Alterna disponibilidad (botón AGOTAR SABOR) |
+| `GET` | `/kds/{station}` | Pedidos pendientes para estación KDS (HELADOS o MALTEADAS) |
+| `PATCH` | `/kds/items/{item_id}/status` | Actualizar estado KDS (PENDING → IN_PROGRESS → READY) |
 | `GET` | `/display/flavors` | Sabores disponibles para display público |
-| `GET` | `/display/menu` | Menú formateado para pantalla de precios |
+| `GET` | `/display/menu` | Menú formateado para pantalla de precios. **Agrupa por `component_type`** (RECIPIENTE, TAMAÑO, SABOR, EXTRA, BEBIDA_BASE). `price` llega como **NÚMERO** (ej. `65.0`), no como string |
+
+### Configuración del Display (V17)
+
+La configuración de presentación del Display de Precios vive en `system_settings`
+bajo la clave `heladeria_display_precios_config` (prefijo `/api/v1/settings`):
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/settings/` | Devuelve TODAS las settings; el frontend extrae la clave del Display |
+| `PATCH` | `/settings/heladeria_display_precios_config` | Guarda la configuración. Body: `{ "value": "<json string>" }`. **El PUT NO existe** (devuelve 405) |
+| `POST` | `/settings/seed` | Siembra las claves faltantes (idempotente). Reparación si la clave no existe |
+
+Forma del `value` (JSON serializado):
+
+```json
+{
+    "groups": [],
+    "columns": 3,
+    "theme": "LIGHT",
+    "showImages": true,
+    "showUnavailable": true
+}
+```
+
+- `groups: []` ⇒ mostrar **todos** los grupos. Con valores ⇒ solo esos `component_type`.
+- `columns`: entero 1–6.
+- `theme`: `LIGHT` | `DARK`.
+- `showUnavailable: false` ⇒ oculta productos agotados.
 
 ### Respuesta de `/menu`
 
@@ -183,8 +211,9 @@ Prefijo: `/api/v1/heladeria`
 | Archivo | Responsabilidad |
 |---|---|
 | `services/heladeriaService.js` | Cliente HTTP con `withRetries` para todos los endpoints. Usa `CONFIG.API_BASE_URL` |
-| `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB (`heladeria_offline` v1). Stores: `menu_cache` (TTL 30 min) y `sync_queue` (operaciones PENDING). Expone `enqueueOperation()` / `getPendingOperations()` / `markOperationDone()` |
+| `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB (`heladeria_offline` v1). Stores: `menu_cache` (TTL 30 min) y `sync_queue` (operaciones PENDING). Expone `enqueueOperation()` / `getPendingOperations()` / `markOperationDone()`. **(V17 Fase 17.3)** añade `cacheDisplayMenu()` / `getCachedDisplayMenu()` (TTL **24 h**, clave `'display_menu'` en el MISMO store `menu_cache`, sin subir `DB_VERSION`), `getDisplayMenuCacheAge()` y `clearDisplayMenuCache()` |
 | `services/heladeriaTerminals.js` | Lock de terminales heladería (`H1`, `H2`, `H-CAJA`). Usa los endpoints reales `POST /pos/terminals/{id}/lock`, `POST /pos/terminals/{id}/unlock` y `GET /pos/terminals/status` (FASE 0) |
+| `services/displayConfigService.js` | **(V17 Fase 17.2)** Cliente HTTP de la configuración del Display. `fetchDisplayConfig()` (GET `/settings/` + extrae la clave), `saveDisplayConfig()` (**PATCH** `/settings/heladeria_display_precios_config` — el PUT NO existe), `seedDisplayConfig()` (POST `/settings/seed`) y `loadDisplayConfig()` (auto-reparación: si la clave no existe, siembra y reintenta; ante error devuelve defaults) |
 
 ### 5.2 Hooks (lógica de estado)
 
@@ -204,6 +233,7 @@ Prefijo: `/api/v1/heladeria`
 | `components/QuickIceCreamPanel.jsx` | Panel de armado rápido con pasos guiados |
 | `components/HeladeriaTicketPanel.jsx` | Panel de ticket (lista de items, total, botón cobrar) |
 | `components/FlavorAvailabilityToggle.jsx` | Botón AGOTAR SABOR (toggle con confirmación) |
+| `components/DisplayConfigPanel.jsx` | **(V17 Fase 17.2)** Panel de administración del Display: selección de grupos, columnas (1–6), tema (LIGHT/DARK), mostrar imágenes, mostrar agotados. Persiste vía PATCH. Sin animaciones infinitas |
 
 ### 5.4 Secciones (pantallas completas)
 
@@ -214,7 +244,8 @@ Prefijo: `/api/v1/heladeria`
 | `sections/KdsMalteadasUI.jsx` | KDS estación MALTEADAS: misma lógica, esquema de color púrpura |
 | `sections/TiendaInteractivaUI.jsx` | 🟢 **Funcional (V14)**. Monta `TiendaConfigurator` (doble columna) cableado a `usePreComanda`. Sin animaciones infinitas |
 | `sections/DisplayTotemUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
-| `sections/DisplayPreciosUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
+| `sections/DisplayPreciosUI.jsx` | 🟢 **Funcional (V17)**. Doble landing: sin parámetro → panel de administración (`DisplayConfigPanel` + utilidades de caché); `?mode=output` → `DisplayPreciosOutput` (kiosco fullscreen). Se eliminó la animación `float` infinita del placeholder (Incident 16.1) |
+| `sections/DisplayPreciosOutput.jsx` | **(V17 Fase 17.3)** Pantalla de precios para clientes. Offline-first (red → caché 24 h → estado vacío), refresco cada 5 min, temas LIGHT/DARK, grid de columnas configurable. Sin animaciones infinitas |
 
 ---
 
@@ -444,13 +475,13 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 | Feature | Plan | Estado |
 |---|---|---|
 | **Tienda Interactiva** | V14 (Fases 14.1–14.5) | 🟢 Funcional — configurador doble columna, switch Kiosco/Caja, pre-comanda con canal atómico + cola offline real |
+| **Display Precios** | V17 (Fases 17.0–17.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), config persistida en `system_settings`, offline-first con caché 24 h, `displayMappers.js` puro con 43 tests |
 
 ### Oleada 2 (pendiente de revisión)
 
 | Feature | Prioridad | Dependencia |
 |---|---|---|
 | **Checkout integrado** | 🔴 Alta | Módulo de caja existente |
-| **Display Precios** | 🟡 Media | Plan V17 (no revisado) |
 | **Display Tótem** | 🟢 Baja | Plan V16 (no revisado) |
 | **KDS Inteligente** | 🟡 Media | Plan V15 (no revisado) |
 | **WebSocket KDS** | 🟢 Baja | Reemplazar polling 5s |

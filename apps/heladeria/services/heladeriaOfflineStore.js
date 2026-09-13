@@ -73,6 +73,76 @@ export async function getCachedMenu() {
 }
 
 // ═══════════════════════════════════════════════════════
+// CACHE DEL DISPLAY DE PRECIOS (V17, Fase 17.3)
+// ═══════════════════════════════════════════════════════
+//
+// Reutiliza el MISMO store `menu_cache` con la clave 'display_menu'.
+// NO se crea un store nuevo ⇒ NO se incrementa DB_VERSION ⇒ no hay
+// migración de IndexedDB en los kioscos ya desplegados.
+//
+// TTL de 24h (a diferencia de los 30 min del menú operativo): el Display
+// de Precios es una pantalla de solo lectura que debe sobrevivir un corte
+// de red prolongado. El admin fuerza la actualización con el botón
+// "Limpiar caché" (ver DisplayPreciosUI.jsx).
+
+const DISPLAY_MENU_KEY = 'display_menu';
+const DISPLAY_MENU_MAX_AGE = 24 * 60 * 60 * 1000; // 24 horas
+
+export async function cacheDisplayMenu(menuData) {
+    const db = await getDB();
+    const tx = db.transaction(STORES.MENU, 'readwrite');
+    const store = tx.objectStore(STORES.MENU);
+    store.put({ key: DISPLAY_MENU_KEY, data: menuData, cachedAt: Date.now() });
+    return new Promise((resolve) => { tx.oncomplete = resolve; });
+}
+
+export async function getCachedDisplayMenu() {
+    const db = await getDB();
+    const tx = db.transaction(STORES.MENU, 'readonly');
+    const store = tx.objectStore(STORES.MENU);
+    const request = store.get(DISPLAY_MENU_KEY);
+    return new Promise((resolve) => {
+        request.onsuccess = () => {
+            const result = request.result;
+            if (result) {
+                const age = Date.now() - result.cachedAt;
+                resolve(age < DISPLAY_MENU_MAX_AGE ? result.data : null);
+            } else {
+                resolve(null);
+            }
+        };
+        request.onerror = () => resolve(null);
+    });
+}
+
+/**
+ * Devuelve la antigüedad (ms) del caché del Display, o null si no existe.
+ * La UI la usa para mostrar "Actualizado hace X".
+ */
+export async function getDisplayMenuCacheAge() {
+    const db = await getDB();
+    const tx = db.transaction(STORES.MENU, 'readonly');
+    const store = tx.objectStore(STORES.MENU);
+    const request = store.get(DISPLAY_MENU_KEY);
+    return new Promise((resolve) => {
+        request.onsuccess = () => {
+            const result = request.result;
+            resolve(result ? Date.now() - result.cachedAt : null);
+        };
+        request.onerror = () => resolve(null);
+    });
+}
+
+/** Borra el caché del Display (botón "Limpiar caché" del admin). */
+export async function clearDisplayMenuCache() {
+    const db = await getDB();
+    const tx = db.transaction(STORES.MENU, 'readwrite');
+    const store = tx.objectStore(STORES.MENU);
+    store.delete(DISPLAY_MENU_KEY);
+    return new Promise((resolve) => { tx.oncomplete = resolve; });
+}
+
+// ═══════════════════════════════════════════════════════
 // COLA DE SYNC (operaciones pendientes)
 // ═══════════════════════════════════════════════════════
 
