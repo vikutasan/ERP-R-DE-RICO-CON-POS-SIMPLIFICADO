@@ -183,8 +183,8 @@ Prefijo: `/api/v1/heladeria`
 | Archivo | Responsabilidad |
 |---|---|
 | `services/heladeriaService.js` | Cliente HTTP con `withRetries` para todos los endpoints. Usa `CONFIG.API_BASE_URL` |
-| `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB. Stores: `heladeria-menu`, `heladeria-pending-ops` |
-| `services/heladeriaTerminals.js` | Lock de terminales heladería (`H1`, `H2`, `H-CAJA`). Previene uso simultáneo |
+| `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB (`heladeria_offline` v1). Stores: `menu_cache` (TTL 30 min) y `sync_queue` (operaciones PENDING). Expone `enqueueOperation()` / `getPendingOperations()` / `markOperationDone()` |
+| `services/heladeriaTerminals.js` | Lock de terminales heladería (`H1`, `H2`, `H-CAJA`). Usa los endpoints reales `POST /pos/terminals/{id}/lock`, `POST /pos/terminals/{id}/unlock` y `GET /pos/terminals/status` (FASE 0) |
 
 ### 5.2 Hooks (lógica de estado)
 
@@ -193,6 +193,8 @@ Prefijo: `/api/v1/heladeria`
 | `hooks/useHeladeriaMenu.js` | Carga menú offline-first (IndexedDB → API → fallback cache). Auto-refresh cada 60s |
 | `hooks/useQuickBuilder.js` | Máquina de estado para armado rápido de helados (recipiente → sabores → extras → confirmar) |
 | `hooks/useHeladeriaCart.js` | Carrito: agrega items, calcula total, envía a API de tickets con `channel='HELADERIA'` |
+| `hooks/useTiendaCajaMode.js` | **(V14 Fase 14.3)** Switch Kiosco/Caja de la Tienda. Persiste en `sessionStorage` (clave `heladeria_tienda_caja_mode`). **NO toca `terminal_locks`** |
+| `hooks/usePreComanda.js` | **(V14 Fase 14.4)** Envía la pre-comanda (reserve atómico + `items/add`), cancela vía `items/remove` y **encola offline real** con `enqueueOperation()` |
 
 ### 5.3 Componentes (UI reutilizable)
 
@@ -210,7 +212,7 @@ Prefijo: `/api/v1/heladeria`
 | `sections/PosHeladeriaUI.jsx` | Orquestador POS: layout 3 columnas (recipientes, sabores+extras, ticket) |
 | `sections/KdsHeladosUI.jsx` | KDS estación HELADOS: polling 5s, estados con colores, botones Preparar/Listo |
 | `sections/KdsMalteadasUI.jsx` | KDS estación MALTEADAS: misma lógica, esquema de color púrpura |
-| `sections/TiendaInteractivaUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
+| `sections/TiendaInteractivaUI.jsx` | 🟢 **Funcional (V14)**. Monta `TiendaConfigurator` (doble columna) cableado a `usePreComanda`. Sin animaciones infinitas |
 | `sections/DisplayTotemUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
 | `sections/DisplayPreciosUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
 
@@ -250,6 +252,45 @@ Prefijo: `/api/v1/heladeria`
          │
 12. Ticket aparece en Reporte Diario bajo canal HELADERÍA
 ```
+
+### 6.1 Flujo de la PRE-COMANDA (Tienda Interactiva — V14)
+
+```
+CLIENTE (kiosco)
+      │
+      ▼
+TiendaConfigurator.jsx  ──►  tiendaConfigurator.js (PURA)
+   (doble columna)            buildPreComandaPayload(state, menu)
+      │                       └─ component_type vía STEP_TO_COMPONENT_TYPE
+      │                          (base→RECIPIENTE, tamano→TAMAÑO,
+      │                           sabores→SABOR, toppings/extras→EXTRA)
+      ▼
+usePreComanda.js
+      │
+      ├── ¿navigator.onLine? ── NO ──► heladeriaOfflineStore.enqueueOperation()
+      │                                  (sync_queue, status=PENDING)
+      │                                  └─ se reintenta al recuperar red
+      │
+      ▼ SÍ
+heladeriaService.createHeladeriaTicket()
+      │  POST /pos/tickets/reserve
+      │  body: { terminal_id, captured_by_id, channel: 'HELADERIA' }
+      │  └─► CANAL ATÓMICO: el ticket nace con channel='HELADERIA'
+      │      en el MISMO INSERT. NUNCA existe con channel=NULL.
+      ▼
+heladeriaService.addItemToTicket()
+      │  POST /pos/tickets/items/add
+      │  body: { account_num, product_id (RECIPIENTE), quantity, ... }
+      ▼
+Ticket en BD (channel='HELADERIA')
+      │
+      ▼
+KDS Helados (polling 5s)  ──►  Preparador: PENDING → IN_PROGRESS → READY
+```
+
+**Cancelación:** NO existe endpoint `cancel`. `usePreComanda.cancelarPreComanda()`
+vacía el ticket con `DELETE /pos/tickets/items/remove`; al quedar sin items, el
+GC de tickets lo reclama.
 
 ---
 
@@ -370,19 +411,47 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 > Sección reservada para documentar bugs críticos descubiertos en producción.
 > Formato: mismo que la Documentación de Auditoría (Síntoma → Causa Raíz → Solución → Regla de Oro).
 
-### Estado actual: 🟢 Sin bugs reportados
+### 🐛 BUG 1: `heladeriaTerminals.js` llamaba 3 endpoints inexistentes (FASE 0)
 
-El módulo fue implementado el 2026-09-07 y aún no ha entrado en operación con clientes reales. Los bugs se documentarán aquí conforme se presenten.
+**Síntoma:** El lock de terminales de heladería nunca funcionaba; las llamadas devolvían 404 silencioso.
+
+**Causa Raíz:** El módulo invocaba `POST /pos/terminal-lock`, `DELETE /pos/terminal-lock/{id}` y `GET /pos/terminal-locks`, rutas que **no existen** en [`pos/router.py`](apps/api/modules/pos/router.py:1). Las reales son `POST /pos/terminals/{id}/lock`, `POST /pos/terminals/{id}/unlock` y `GET /pos/terminals/status`. Además, `GET /terminals/status` devuelve un **MAPA** (`{terminal_id: {...}}`), no una lista.
+
+**Solución:** Se reescribieron las 3 funciones contra los endpoints reales y `getAllLocks()` normaliza el mapa a un arreglo filtrando terminales `H*`.
+
+**Regla de Oro:** *Nunca asumir la forma de un endpoint: leer el router del backend antes de consumirlo.*
+
+### 🐛 BUG 2: Ticket de Heladería nacía con `channel=NULL` y aparecía en el POS de Panadería (V14 Fase 14.4)
+
+**Síntoma:** Pre-comandas de la Tienda Interactiva aparecían en el POS de Panadería.
+
+**Causa Raíz:** `createHeladeriaTicket()` hacía **dos requests secuenciales**: `reserve` (sin `channel`) y luego un `PUT` para setear `channel='HELADERIA'`. **El `PUT` no verificaba `res.ok`.** Si fallaba (red, timeout, 500), el ticket quedaba con `channel=NULL` → visible en Panadería.
+
+**Solución (Opción 2 — canal atómico):** Se añadió `channel: Optional[str] = None` a `ReserveTicketRequest` (aditivo y `NULL`-able, **no viola la Restricción A**) y se propaga al `INSERT` de la reserva. El `PUT` **desapareció**: el ticket **nunca existe con `channel=NULL`**. Mitigado con el test de contrato [`tiendaContract.test.js`](apps/heladeria/utils/tiendaContract.test.js:1).
+
+**Regla de Oro:** *Un dato crítico de enrutamiento (el canal) debe nacer en el MISMO `INSERT`, nunca en un segundo request no verificado.*
+
+### Estado actual: 🟢 Sin bugs abiertos
+
+El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme se presentan.
 
 ---
 
-## 13. PRÓXIMOS PASOS (OLEADA 2)
+## 13. PRÓXIMOS PASOS
+
+### ✅ Completado
+
+| Feature | Plan | Estado |
+|---|---|---|
+| **Tienda Interactiva** | V14 (Fases 14.1–14.5) | 🟢 Funcional — configurador doble columna, switch Kiosco/Caja, pre-comanda con canal atómico + cola offline real |
+
+### Oleada 2 (pendiente de revisión)
 
 | Feature | Prioridad | Dependencia |
 |---|---|---|
 | **Checkout integrado** | 🔴 Alta | Módulo de caja existente |
-| **Tienda Interactiva** | 🟡 Media | Diseño UX para cliente/tótem |
-| **Display Precios** | 🟡 Media | Endpoint `/display/menu` ya existe |
-| **Display Tótem** | 🟢 Baja | Contenido visual por definir |
+| **Display Precios** | 🟡 Media | Plan V17 (no revisado) |
+| **Display Tótem** | 🟢 Baja | Plan V16 (no revisado) |
+| **KDS Inteligente** | 🟡 Media | Plan V15 (no revisado) |
 | **WebSocket KDS** | 🟢 Baja | Reemplazar polling 5s |
 | **Integración Almacenes** | 🟡 Media | Plan Almacenes V6 |
