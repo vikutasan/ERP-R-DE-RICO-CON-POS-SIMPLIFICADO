@@ -138,6 +138,21 @@ class StockAlmacenExtendedResponse(StockAlmacenResponse):
     class Config:
         from_attributes = True
 
+class StockPorSkuResponse(BaseModel):
+    """v7 (Fase 0.5, D-STOCK): fuente unica de verdad del stock total de un SKU.
+
+    Reemplaza la lectura de `products.stock` (columna obsoleta). El total se
+    calcula sumando `stock_almacen.cantidad_actual` de todos los almacenes.
+    """
+    sku: str
+    item_name: Optional[str] = None
+    item_image_url: Optional[str] = None
+    item_price: Optional[float] = None
+    item_unit: Optional[str] = None
+    stock_total: float = 0.0
+    # Desglose por almacen para trazabilidad (de donde sale cada pieza).
+    desglose: List[dict] = []
+
 # --- MovimientoInventario ---
 class MovimientoInventarioCreate(BaseModel):
     almacen_origen_id: Optional[str] = None

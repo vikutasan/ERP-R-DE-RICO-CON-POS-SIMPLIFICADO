@@ -29,6 +29,14 @@ async def delete_warehouse(warehouse_id: str, db: AsyncSession = Depends(get_db)
 async def get_warehouse_stock(warehouse_id: str, db: AsyncSession = Depends(get_db)):
     return await warehouse_svc.get_warehouse_stock(db, warehouse_id)
 
+# v7 (Fase 0.5, D-STOCK): fuente unica de verdad del stock total por SKU.
+# IMPORTANTE: debe declararse ANTES de las rutas con path param "/{warehouse_id}/..."
+# para que "stock-por-sku" no se interprete como un warehouse_id.
+@router.get("/stock-por-sku/{sku}", response_model=schemas.StockPorSkuResponse)
+async def get_stock_by_sku(sku: str, db: AsyncSession = Depends(get_db)):
+    """Stock total de un SKU sumando todos los almacenes (fuente unica de verdad)."""
+    return await warehouse_svc.get_stock_by_sku(db, sku)
+
 @router.post("/{warehouse_id}/stock", response_model=schemas.MovimientoInventarioResponse)
 async def add_stock(warehouse_id: str, payload: schemas.MovimientoInventarioCreate, db: AsyncSession = Depends(get_db)):
     payload.almacen_destino_id = warehouse_id

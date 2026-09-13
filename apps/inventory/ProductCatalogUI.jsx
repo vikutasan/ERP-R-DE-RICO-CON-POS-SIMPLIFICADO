@@ -193,7 +193,10 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 price: parseFloat(updatedProduct.price) || 0,
                 cost: parseFloat(updatedProduct.cost) || 0,
                 stock: parseFloat(updatedProduct.stock) || 0,
-                warehouse: updatedProduct.warehouse || 'Bóveda Central',
+                // v7 (Fase 0.5, D-WH): sin fallback hardcodeado. Si el producto
+                // no tiene ubicacion asignada, se envia null y el backend no
+                // inventa una sucursal. La ubicacion real vive en stock_almacen.
+                warehouse: updatedProduct.warehouse || null,
                 image_url: updatedProduct.image_url || null,
                 sku: updatedProduct.sku,
                 category_id: dbCat ? dbCat.id : null,
@@ -269,7 +272,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
             price: 0,
             cost: 0,
             stock: 0,
-            warehouse: 'Bóveda Central',
+            // v7 (Fase 0.5, D-WH): sin hardcode de sucursal (principio SaaS).
+            warehouse: null,
             image_url: '',
             nature: 'MANUFACTURADO',
             technical_data: {},

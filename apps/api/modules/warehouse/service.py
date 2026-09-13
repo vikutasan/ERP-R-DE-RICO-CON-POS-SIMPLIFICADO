@@ -108,7 +108,61 @@ class WarehouseService:
             enriched.append(stock_dict)
 
         return enriched
-        
+
+    async def get_stock_by_sku(self, db: AsyncSession, sku: str):
+        """v7 (Fase 0.5, D-STOCK): stock total de un SKU sumando todos los almacenes.
+
+        Esta es la UNICA fuente de verdad de disponibilidad. Sustituye la lectura
+        de la columna obsoleta `products.stock`. Devuelve el total y el desglose
+        por almacen para trazabilidad.
+        """
+        result = await db.execute(
+            select(models.StockAlmacen).where(
+                models.StockAlmacen.item_id == sku,
+                models.StockAlmacen.item_type == schemas.ItemType.PRODUCTO.value,
+            )
+        )
+        stock_items = result.scalars().all()
+
+        # El producto debe existir aunque no tenga stock registrado.
+        prod_res = await db.execute(select(Product).where(Product.sku == sku))
+        producto = prod_res.scalar_one_or_none()
+        if not producto:
+            raise HTTPException(status_code=404, detail=f"SKU '{sku}' no encontrado")
+
+        # Resolver nombres de almacen en un solo SELECT ... IN (evita N+1).
+        almacen_ids = [s.almacen_id for s in stock_items]
+        almacenes_map = {}
+        if almacen_ids:
+            alm_res = await db.execute(
+                select(models.Almacen).where(models.Almacen.id.in_(almacen_ids))
+            )
+            almacenes_map = {a.id: a for a in alm_res.scalars().all()}
+
+        desglose = []
+        stock_total = 0.0
+        for s in stock_items:
+            cantidad = float(s.cantidad_actual or 0.0)
+            stock_total += cantidad
+            almacen = almacenes_map.get(s.almacen_id)
+            desglose.append({
+                "almacen_id": s.almacen_id,
+                "almacen_nombre": almacen.nombre if almacen else None,
+                "cantidad_actual": cantidad,
+                "stock_minimo": float(s.stock_minimo or 0.0),
+                "version": s.version,
+            })
+
+        return {
+            "sku": sku,
+            "item_name": producto.name,
+            "item_image_url": producto.image_url,
+            "item_price": float(producto.price) if producto.price is not None else None,
+            "item_unit": "PZA",
+            "stock_total": stock_total,
+            "desglose": desglose,
+        }
+
     async def register_movement(self, db: AsyncSession, payload: schemas.MovimientoInventarioCreate):
         # 1. Registrar movimiento
         mov = models.MovimientoInventario(**payload.model_dump())
