@@ -564,3 +564,141 @@ export const buildTrasladoSubcategoriaPayload = (origenCodigo, destinoCodigo) =>
     origen_codigo: origenCodigo,
     destino_codigo: destinoCodigo || CODIGO_CUARENTENA,
 });
+
+// ---------------------------------------------------------------------------
+// v11 (Fase 11.3, Deuda 3): VIGILANCIA VISIBLE DE SIN_CLASIFICAR
+//
+// Deuda: el endpoint `GET /warehouse/diagnostico/sin-almacen` existia y era
+// correcto, pero NADIE lo consumia desde la UI. Un SKU que no se pudo descontar
+// del stock quedaba registrado en la base de datos y jamas se mostraba al
+// operador: la perdida era silenciosa.
+//
+// Reparacion: tres capas de vigilancia (badge -> panel -> resolucion humana).
+// Toda la logica de presentacion vive aqui, en funciones puras cubiertas por
+// Vitest, para que la UI solo pinte. Regla rectora del modulo: la IA propone,
+// el operador confirma. NUNCA se resuelve un huerfano automaticamente.
+// ---------------------------------------------------------------------------
+
+/**
+ * v11: mapea un registro de `warehouse_eventos_sin_almacen` (API espanol) al
+ * shape que consume la UI (ingles). Un desajuste aqui crashea la tabla de
+ * diagnostico (Cementerio de Bugs, BUG 1 y BUG 2).
+ *
+ * @param {object} e
+ * @returns {object}
+ */
+export const mapEventoSinAlmacenFromApi = (e) => {
+    const item = e || {};
+    const cantidad = Number(item.cantidad);
+    return {
+        id: item.id,
+        eventoId: item.evento_id ?? null,
+        ticketId: item.ticket_id ?? null,
+        sku: item.sku || null,
+        cantidad: Number.isFinite(cantidad) ? cantidad : null,
+        motivo: item.motivo || 'DESCONOCIDO',
+        detalle: item.detalle || null,
+        createdAt: item.created_at || null,
+    };
+};
+
+/**
+ * v11: mapea la lista completa de eventos sin almacen del API.
+ * @param {Array<object>} lista
+ * @returns {Array<object>}
+ */
+export const mapEventosSinAlmacenFromApi = (lista) =>
+    (Array.isArray(lista) ? lista : []).map(mapEventoSinAlmacenFromApi);
+
+/**
+ * v11: traduce el `motivo` tecnico del backend a una etiqueta legible para el
+ * operador. El backend usa codigos estables; la UI nunca debe mostrar el codigo
+ * crudo porque el operador no lo entiende.
+ *
+ * @param {string} motivo
+ * @returns {string}
+ */
+export const etiquetaMotivoSinAlmacen = (motivo) => {
+    const mapa = {
+        SIN_SKU: 'Producto sin SKU',
+        SIN_STOCK: 'Sin stock en el almacén',
+        SIN_ALMACEN_VENTA: 'Sin almacén de venta',
+        SKU_NO_ENCONTRADO: 'SKU no encontrado en el catálogo',
+        ALMACEN_NO_ENCONTRADO: 'Almacén no encontrado',
+    };
+    return mapa[motivo] || 'Motivo desconocido';
+};
+
+/**
+ * v11: sugiere la accion concreta que el operador debe tomar para resolver un
+ * huerfano. Es una SUGERENCIA, no una ejecucion: respeta la regla rectora
+ * "la IA propone, el operador confirma".
+ *
+ * @param {object} evento shape de `mapEventoSinAlmacenFromApi`
+ * @returns {{label: string, tipo: string}}
+ */
+export const accionSugeridaSinAlmacen = (evento) => {
+    const e = evento || {};
+    switch (e.motivo) {
+        case 'SIN_ALMACEN_VENTA':
+        case 'ALMACEN_NO_ENCONTRADO':
+            return { label: 'Asignar almacén', tipo: 'ASIGNAR_ALMACEN' };
+        case 'SIN_STOCK':
+            return { label: 'Ver stock', tipo: 'VER_STOCK' };
+        case 'SIN_SKU':
+        case 'SKU_NO_ENCONTRADO':
+            return { label: 'Revisar producto', tipo: 'REVISAR_PRODUCTO' };
+        default:
+            return { label: 'Revisar', tipo: 'REVISAR' };
+    }
+};
+
+/**
+ * v11: cuenta los huerfanos no resueltos. Alimenta el badge rojo de la barra.
+ * Un arreglo vacio o invalido devuelve 0 (nunca NaN, que romperia el render).
+ *
+ * @param {Array<object>} lista
+ * @returns {number}
+ */
+export const contarEventosSinAlmacen = (lista) =>
+    Array.isArray(lista) ? lista.length : 0;
+
+/**
+ * v11: agrupa los huerfanos por SKU para el panel de diagnostico. Un mismo SKU
+ * puede fallar varias veces; el operador quiere ver UNA fila por SKU con el
+ * total de ocurrencias, no una fila por intento.
+ *
+ * @param {Array<object>} lista shapes de `mapEventoSinAlmacenFromApi`
+ * @returns {Array<{sku: string, motivo: string, ocurrencias: number, cantidadTotal: number, ultimaFecha: string|null, evento: object}>}
+ */
+export const agruparEventosSinAlmacenPorSku = (lista) => {
+    const eventos = Array.isArray(lista) ? lista : [];
+    const mapa = new Map();
+
+    eventos.forEach((e) => {
+        const clave = e?.sku || '__SIN_SKU__';
+        const cantidad = Number.isFinite(e?.cantidad) ? e.cantidad : 0;
+        const existente = mapa.get(clave);
+
+        if (!existente) {
+            mapa.set(clave, {
+                sku: e?.sku || null,
+                motivo: e?.motivo || 'DESCONOCIDO',
+                ocurrencias: 1,
+                cantidadTotal: cantidad,
+                ultimaFecha: e?.createdAt || null,
+                evento: e,
+            });
+            return;
+        }
+
+        existente.ocurrencias += 1;
+        existente.cantidadTotal += cantidad;
+        // La lista llega ordenada desc por fecha; se conserva la mas reciente.
+        if (!existente.ultimaFecha && e?.createdAt) {
+            existente.ultimaFecha = e.createdAt;
+        }
+    });
+
+    return Array.from(mapa.values());
+};

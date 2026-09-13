@@ -576,7 +576,34 @@ Todo contenedor desplazable dentro de un modal oscuro **DEBE** llevar la clase `
 
 Sin ella, el navegador usa su barra por defecto (gris claro, ~15px), que contrasta de forma agresiva contra el fondo oscuro.
 
-### 11.8 Pendiente
+### 11.8 Vigilancia visible de `SIN_CLASIFICAR` (v11 — Fase 11.3)
+
+**Deuda reparada:** el endpoint `GET /api/v1/warehouse/diagnostico/sin-almacen` existía desde v7 y era correcto, pero **nadie lo consumía desde la UI**. Un SKU que no se pudo descontar del stock quedaba registrado en `warehouse_eventos_sin_almacen` y jamás se mostraba al operador: la pérdida era silenciosa.
+
+**Diseño aprobado:** tres capas de vigilancia, de menor a mayor intrusividad.
+
+| Capa | Qué hace | Dónde |
+|---|---|---|
+| **A — Badge** | Si hay incidencias, aparece un botón rojo "🚨 Cuarentena" con el conteo en la barra de subcategorías | [`WarehouseManagerUI.jsx`](apps/inventory/WarehouseManagerUI.jsx:1338) |
+| **B — Panel** | Tabla de diagnóstico: SKU, motivo legible, ocurrencias, cantidad, última vez y acción sugerida | [`WarehouseManagerUI.jsx`](apps/inventory/WarehouseManagerUI.jsx:2547) |
+| **C — Resolución** | Cada fila ofrece una **acción sugerida** (nunca automática) | [`warehouseMappers.js`](apps/inventory/utils/warehouseMappers.js:568) |
+
+**Regla de oro respetada:** la IA propone, el operador confirma. El panel **sugiere** ("Asignar almacén", "Ver stock", "Revisar producto") pero **nunca** resuelve el huérfano por sí solo.
+
+**Nota de UI (Incidente 16.1):** el badge **NO** usa `animate-pulse` ni ninguna animación de bucle infinito. Solo transiciones de montaje único.
+
+**Funciones puras (cubiertas por Vitest):**
+
+| Función | Responsabilidad |
+|---|---|
+| `mapEventoSinAlmacenFromApi` | Mapea un registro API (español) → UI (inglés) |
+| `mapEventosSinAlmacenFromApi` | Mapea la lista completa |
+| `etiquetaMotivoSinAlmacen` | Traduce el código técnico a lenguaje del operador |
+| `accionSugeridaSinAlmacen` | Sugiere la acción concreta (human-in-the-loop) |
+| `contarEventosSinAlmacen` | Alimenta el badge (nunca devuelve `NaN`) |
+| `agruparEventosSinAlmacenPorSku` | Una fila por SKU, no por intento |
+
+### 11.9 Pendiente
 
 - Escáner IA (visión de charolas) — Fase 2 del plan
 - AI Gateway real (Whisper + LLM local) — depende del módulo IA Local

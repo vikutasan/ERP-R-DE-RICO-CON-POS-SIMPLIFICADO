@@ -33,6 +33,12 @@ import {
     buildPropositoCreatePayload,
     validatePropositoDelete,
     buildTrasladoSubcategoriaPayload,
+    // v11 (Fase 11.3, Deuda 3): vigilancia visible de SIN_CLASIFICAR.
+    mapEventosSinAlmacenFromApi,
+    etiquetaMotivoSinAlmacen,
+    accionSugeridaSinAlmacen,
+    contarEventosSinAlmacen,
+    agruparEventosSinAlmacenPorSku,
 } from './utils/warehouseMappers';
 // v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
 import {
@@ -128,9 +134,24 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         }
     };
 
+    // v11 (Fase 11.3, Deuda 3): VIGILANCIA VISIBLE DE SIN_CLASIFICAR.
+    // El endpoint `/warehouse/diagnostico/sin-almacen` existia desde v7 pero
+    // NADIE lo consumia: un SKU que no se pudo descontar quedaba invisible.
+    // Aqui se consulta y se expone al operador (badge + panel). El mapeo y las
+    // etiquetas viven en funciones puras cubiertas por Vitest.
+    const fetchEventosSinAlmacen = async () => {
+        try {
+            const res = await axios.get(`${API_BASE}/api/v1/warehouse/diagnostico/sin-almacen`);
+            setEventosSinAlmacen(mapEventosSinAlmacenFromApi(res.data));
+        } catch(e) {
+            logger.error('Error fetching eventos sin almacen:', e);
+        }
+    };
+
     useEffect(() => {
         fetchWarehouses();
         fetchPropositos();
+        fetchEventosSinAlmacen();
     }, []);
 
     // --- v7 (Fase 4): estado de red y cola offline ---
@@ -199,6 +220,10 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     // --- v8 (Fase 8.6): Gestión de subcategorías de almacén ---
     const [propositos, setPropositos] = useState([]);
+    // v11 (Fase 11.3, Deuda 3): SKUs que no se pudieron descontar del stock.
+    // Alimentan el badge rojo de la cuarentena y el panel de diagnostico.
+    const [eventosSinAlmacen, setEventosSinAlmacen] = useState([]);
+    const [showSinAlmacenPanel, setShowSinAlmacenPanel] = useState(false);
     const [showSubcatManager, setShowSubcatManager] = useState(false);
     const [subcatForm, setSubcatForm] = useState({ label: '', icon: '📦' });
     const [subcatEditing, setSubcatEditing] = useState(null); // proposito en edición o null
@@ -1085,6 +1110,12 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     // v8 (Fase 8.6): la barra se alimenta de la BD. `propositosParaBarra`
     // excluye la cuarentena SIN_CLASIFICAR (decisión vinculante §10.2).
     const subCategoriasBarra = propositosParaBarra(propositos);
+
+    // v11 (Fase 11.3, Deuda 3): vigilancia visible de la cuarentena.
+    // `sinAlmacenCount` alimenta el badge rojo; `sinAlmacenAgrupado` alimenta
+    // el panel de diagnostico (una fila por SKU, no por intento).
+    const sinAlmacenCount = contarEventosSinAlmacen(eventosSinAlmacen);
+    const sinAlmacenAgrupado = agruparEventosSinAlmacenPorSku(eventosSinAlmacen);
     const ZONE_META = {
         SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' },
         REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' },
@@ -1326,6 +1357,25 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                         <span className="px-5 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
                             Sin subcategorías
                         </span>
+                    )}
+                    {/* v11 (Fase 11.3, Deuda 3): CUARENTENA VISIBLE.
+                        La barra excluye SIN_CLASIFICAR (decisión vinculante §10.2),
+                        pero la cuarentena NO puede quedar invisible: si hay SKUs
+                        huerfanos, se muestra un acceso directo con badge rojo.
+                        El badge NO usa animate-pulse (Incidente 16.1: prohibido
+                        el bucle infinito de animaciones). */}
+                    {sinAlmacenCount > 0 && (
+                        <button
+                            onClick={() => setShowSinAlmacenPanel(true)}
+                            className="flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap bg-red-900/40 text-red-200 border border-red-500/40 hover:bg-red-800/50"
+                            title="SKUs que no se pudieron descontar del stock"
+                        >
+                            <span className="text-sm">🚨</span>
+                            Cuarentena
+                            <span className="ml-1 px-2 py-0.5 bg-red-500 text-white text-[10px] font-black rounded-full">
+                                {sinAlmacenCount}
+                            </span>
+                        </button>
                     )}
                 </div>
                 <button
@@ -2490,6 +2540,100 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                 Aceptar y Eliminar
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* === v11 (Fase 11.3, Deuda 3): PANEL DE DIAGNÓSTICO SIN_CLASIFICAR ===
+                Muestra los SKUs que no se pudieron descontar del stock. Antes
+                quedaban invisibles (el endpoint existía pero nadie lo consumía).
+                Cada fila ofrece una ACCIÓN SUGERIDA, nunca automática: respeta la
+                regla rectora "la IA propone, el operador confirma". */}
+            {showSinAlmacenPanel && (
+                <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowSinAlmacenPanel(false)} />
+                    <div className="relative w-full max-w-4xl bg-[#0a0a0a] border border-red-900/40 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+                        <header className="p-10 border-b border-gray-800 flex justify-between items-start">
+                            <div>
+                                <h3 className="text-2xl font-black uppercase italic tracking-tighter text-red-400">Cuarentena de Inventario</h3>
+                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-2">
+                                    SKUs que no se pudieron descontar del stock. Requieren tu revisión.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowSinAlmacenPanel(false)}
+                                className="w-10 h-10 rounded-full bg-gray-800 hover:bg-gray-700 transition-all text-gray-400 hover:text-white"
+                                title="Cerrar"
+                            >
+                                ✕
+                            </button>
+                        </header>
+
+                        <div className="p-10 overflow-y-auto custom-scrollbar">
+                            {sinAlmacenAgrupado.length === 0 ? (
+                                <div className="text-center py-16">
+                                    <span className="text-5xl">✅</span>
+                                    <p className="mt-6 text-sm font-black uppercase tracking-widest text-emerald-400">
+                                        Sin incidencias
+                                    </p>
+                                    <p className="mt-2 text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                                        Todos los SKUs se descontaron correctamente.
+                                    </p>
+                                </div>
+                            ) : (
+                                <table className="w-full text-left">
+                                    <thead>
+                                        <tr className="text-[9px] font-black uppercase tracking-widest text-gray-500 border-b border-gray-800">
+                                            <th className="pb-4">SKU</th>
+                                            <th className="pb-4">Motivo</th>
+                                            <th className="pb-4 text-center">Ocurrencias</th>
+                                            <th className="pb-4 text-center">Cantidad</th>
+                                            <th className="pb-4">Última vez</th>
+                                            <th className="pb-4 text-right">Acción sugerida</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {sinAlmacenAgrupado.map((fila, idx) => {
+                                            const accion = accionSugeridaSinAlmacen(fila.evento);
+                                            return (
+                                                <tr key={`${fila.sku || 'sin-sku'}-${idx}`} className="border-b border-gray-900/60 hover:bg-red-950/10 transition-colors">
+                                                    <td className="py-5 text-xs font-black text-white tracking-wider">
+                                                        {fila.sku || <span className="text-gray-500 italic">SIN SKU</span>}
+                                                    </td>
+                                                    <td className="py-5 text-[10px] font-bold text-red-300 uppercase tracking-widest">
+                                                        {etiquetaMotivoSinAlmacen(fila.motivo)}
+                                                    </td>
+                                                    <td className="py-5 text-center text-xs font-black text-gray-300">
+                                                        {fila.ocurrencias}
+                                                    </td>
+                                                    <td className="py-5 text-center text-xs font-black text-gray-300">
+                                                        {fila.cantidadTotal}
+                                                    </td>
+                                                    <td className="py-5 text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                                                        {fila.ultimaFecha ? String(fila.ultimaFecha).replace('T', ' ').slice(0, 16) : '—'}
+                                                    </td>
+                                                    <td className="py-5 text-right">
+                                                        <span className="inline-block px-4 py-2 rounded-xl bg-red-900/30 border border-red-500/30 text-[9px] font-black uppercase tracking-widest text-red-200">
+                                                            {accion.label}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+
+                        <footer className="p-8 border-t border-gray-800 bg-black/20 flex justify-between items-center text-[9px] font-black uppercase text-gray-500 tracking-widest">
+                            <span>{sinAlmacenCount} incidencia(s) sin resolver</span>
+                            <button
+                                onClick={() => { setShowSinAlmacenPanel(false); fetchEventosSinAlmacen(); }}
+                                className="text-red-400 hover:text-white transition-colors"
+                            >
+                                Actualizar
+                            </button>
+                        </footer>
                     </div>
                 </div>
             )}

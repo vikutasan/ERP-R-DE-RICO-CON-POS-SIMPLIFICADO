@@ -39,6 +39,14 @@ import {
     buildPropositoCreatePayload,
     validatePropositoDelete,
     buildTrasladoSubcategoriaPayload,
+    // v11 (Fase 11.3, Deuda 3): vigilancia visible de SIN_CLASIFICAR.
+    mapEventoSinAlmacenFromApi,
+    mapEventosSinAlmacenFromApi,
+    etiquetaMotivoSinAlmacen,
+    accionSugeridaSinAlmacen,
+    contarEventosSinAlmacen,
+    agruparEventosSinAlmacenPorSku,
+    buildTrasladoSubcategoriaPayload,
 } from './warehouseMappers.js';
 
 // ---------------------------------------------------------------------------
@@ -879,5 +887,151 @@ describe('v8: guardas de borrado de subcategoria', () => {
         const payload = buildTrasladoSubcategoriaPayload('REFRI', CODIGO_CUARENTENA);
         expect(payload.origen_codigo).toBe('REFRI');
         expect(payload.destino_codigo).toBe('SIN_CLASIFICAR');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// v11 (Fase 11.3, Deuda 3): VIGILANCIA VISIBLE DE SIN_CLASIFICAR
+//
+// Deuda: el endpoint `/warehouse/diagnostico/sin-almacen` existia pero nadie lo
+// consumia. Un SKU no descontado quedaba invisible para el operador. Estos tests
+// fijan el contrato del mapeo API -> UI y de las funciones de presentacion.
+// ---------------------------------------------------------------------------
+
+describe('v11: mapEventoSinAlmacenFromApi (contrato API -> UI)', () => {
+    it('mapea un registro completo del backend', () => {
+        const api = {
+            id: 7,
+            evento_id: 42,
+            ticket_id: 930001,
+            sku: 'PAN-001',
+            cantidad: 3.5,
+            motivo: 'SIN_ALMACEN_VENTA',
+            detalle: 'No hay almacen EXHIBICION_VENTA en SECO',
+            created_at: '2026-09-13T08:30:00',
+        };
+        const r = mapEventoSinAlmacenFromApi(api);
+        expect(r.id).toBe(7);
+        expect(r.eventoId).toBe(42);
+        expect(r.ticketId).toBe(930001);
+        expect(r.sku).toBe('PAN-001');
+        expect(r.cantidad).toBe(3.5);
+        expect(r.motivo).toBe('SIN_ALMACEN_VENTA');
+        expect(r.detalle).toContain('EXHIBICION_VENTA');
+        expect(r.createdAt).toBe('2026-09-13T08:30:00');
+    });
+
+    it('tolera un registro vacio sin lanzar excepcion', () => {
+        const r = mapEventoSinAlmacenFromApi(null);
+        expect(r.id).toBeUndefined();
+        expect(r.sku).toBeNull();
+        expect(r.cantidad).toBeNull();
+        expect(r.motivo).toBe('DESCONOCIDO');
+    });
+
+    it('convierte cantidad no numerica a null (no NaN)', () => {
+        const r = mapEventoSinAlmacenFromApi({ id: 1, cantidad: 'no-es-numero' });
+        expect(r.cantidad).toBeNull();
+    });
+
+    it('mapEventosSinAlmacenFromApi mapea la lista y tolera entradas invalidas', () => {
+        expect(mapEventosSinAlmacenFromApi(null)).toEqual([]);
+        expect(mapEventosSinAlmacenFromApi('x')).toEqual([]);
+        const lista = mapEventosSinAlmacenFromApi([
+            { id: 1, sku: 'A', motivo: 'SIN_STOCK' },
+            { id: 2, sku: 'B', motivo: 'SIN_SKU' },
+        ]);
+        expect(lista).toHaveLength(2);
+        expect(lista[0].sku).toBe('A');
+        expect(lista[1].motivo).toBe('SIN_SKU');
+    });
+});
+
+describe('v11: etiquetaMotivoSinAlmacen (codigo tecnico -> lenguaje del operador)', () => {
+    it('traduce los motivos conocidos', () => {
+        expect(etiquetaMotivoSinAlmacen('SIN_ALMACEN_VENTA')).toBe('Sin almacén de venta');
+        expect(etiquetaMotivoSinAlmacen('SIN_STOCK')).toBe('Sin stock en el almacén');
+        expect(etiquetaMotivoSinAlmacen('SIN_SKU')).toBe('Producto sin SKU');
+    });
+
+    it('cae a un texto generico ante un motivo desconocido', () => {
+        expect(etiquetaMotivoSinAlmacen('MOTIVO_RARO')).toBe('Motivo desconocido');
+        expect(etiquetaMotivoSinAlmacen(undefined)).toBe('Motivo desconocido');
+    });
+});
+
+describe('v11: accionSugeridaSinAlmacen (human-in-the-loop)', () => {
+    it('sugiere asignar almacen cuando falta el almacen de venta', () => {
+        const r = accionSugeridaSinAlmacen({ motivo: 'SIN_ALMACEN_VENTA' });
+        expect(r.tipo).toBe('ASIGNAR_ALMACEN');
+        expect(r.label).toBe('Asignar almacén');
+    });
+
+    it('sugiere ver stock cuando el problema es de existencias', () => {
+        expect(accionSugeridaSinAlmacen({ motivo: 'SIN_STOCK' }).tipo).toBe('VER_STOCK');
+    });
+
+    it('sugiere revisar el producto cuando falta el SKU', () => {
+        expect(accionSugeridaSinAlmacen({ motivo: 'SIN_SKU' }).tipo).toBe('REVISAR_PRODUCTO');
+        expect(accionSugeridaSinAlmacen({ motivo: 'SKU_NO_ENCONTRADO' }).tipo).toBe('REVISAR_PRODUCTO');
+    });
+
+    it('nunca devuelve una accion vacia', () => {
+        const r = accionSugeridaSinAlmacen(null);
+        expect(r.tipo).toBe('REVISAR');
+        expect(r.label.length).toBeGreaterThan(0);
+    });
+});
+
+describe('v11: contarEventosSinAlmacen (alimenta el badge rojo)', () => {
+    it('cuenta los registros de la lista', () => {
+        expect(contarEventosSinAlmacen([{ id: 1 }, { id: 2 }, { id: 3 }])).toBe(3);
+    });
+
+    it('devuelve 0 ante una lista vacia o invalida (nunca NaN)', () => {
+        expect(contarEventosSinAlmacen([])).toBe(0);
+        expect(contarEventosSinAlmacen(null)).toBe(0);
+        expect(contarEventosSinAlmacen(undefined)).toBe(0);
+    });
+});
+
+describe('v11: agruparEventosSinAlmacenPorSku (panel de diagnostico)', () => {
+    it('agrupa varias ocurrencias del mismo SKU en una sola fila', () => {
+        const eventos = [
+            { sku: 'PAN-001', motivo: 'SIN_STOCK', cantidad: 2, createdAt: '2026-09-13T09:15:00' },
+            { sku: 'PAN-001', motivo: 'SIN_STOCK', cantidad: 3, createdAt: '2026-09-13T08:30:00' },
+            { sku: 'PAN-045', motivo: 'SIN_ALMACEN_VENTA', cantidad: 1, createdAt: '2026-09-13T07:00:00' },
+        ];
+        const r = agruparEventosSinAlmacenPorSku(eventos);
+        expect(r).toHaveLength(2);
+
+        const pan001 = r.find((x) => x.sku === 'PAN-001');
+        expect(pan001.ocurrencias).toBe(2);
+        expect(pan001.cantidadTotal).toBe(5);
+        // Conserva la fecha mas reciente (la lista llega ordenada desc).
+        expect(pan001.ultimaFecha).toBe('2026-09-13T09:15:00');
+    });
+
+    it('agrupa los registros sin SKU bajo una clave comun', () => {
+        const eventos = [
+            { sku: null, motivo: 'SIN_SKU', cantidad: 1, createdAt: '2026-09-13T09:00:00' },
+            { sku: null, motivo: 'SIN_SKU', cantidad: 1, createdAt: '2026-09-13T08:00:00' },
+        ];
+        const r = agruparEventosSinAlmacenPorSku(eventos);
+        expect(r).toHaveLength(1);
+        expect(r[0].sku).toBeNull();
+        expect(r[0].ocurrencias).toBe(2);
+    });
+
+    it('devuelve un arreglo vacio ante una entrada invalida', () => {
+        expect(agruparEventosSinAlmacenPorSku(null)).toEqual([]);
+        expect(agruparEventosSinAlmacenPorSku(undefined)).toEqual([]);
+    });
+
+    it('no muta el arreglo original', () => {
+        const eventos = [{ sku: 'A', motivo: 'SIN_STOCK', cantidad: 1, createdAt: 'x' }];
+        const copia = JSON.parse(JSON.stringify(eventos));
+        agruparEventosSinAlmacenPorSku(eventos);
+        expect(eventos).toEqual(copia);
     });
 });
