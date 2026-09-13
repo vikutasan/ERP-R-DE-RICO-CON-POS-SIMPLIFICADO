@@ -734,6 +734,7 @@ Cuando se instale la IA Local, solo se reemplaza el stub por Whisper real y la U
 > **Objetivo:** Reemplazar stubs por Whisper + LLM local.
 > **Prerequisito bloqueante:** Instalación del módulo "IA Local" en el servidor.
 > **Nota:** Esta fase **no debería pertenecer al roadmap de almacenes**. Es un módulo transversal (POS, Almacenes, RRHH). Debe ser su propio proyecto con su propia especificación.
+> **Estado:** ✅ **Documentada como proyecto transversal separado** en [`docs/SPEC_AI_GATEWAY_TRANSVERSAL.md`](../docs/SPEC_AI_GATEWAY_TRANSVERSAL.md:1). La implementación del motor real queda **bloqueada por la IA Local**.
 
 ### 7.1 Componentes
 
@@ -747,6 +748,18 @@ Cuando se instale la IA Local, solo se reemplaza el stub por Whisper real y la U
 ### 7.2 Manejo de fallos
 
 Si Whisper/LLM no responde, degradar a entrada manual con toast informativo. Nunca bloquear la operación de almacén por fallo de IA.
+
+### 7.3 Entregable de la Fase 7 (documentación)
+
+| Artefacto | Contenido |
+|---|---|
+| [`docs/SPEC_AI_GATEWAY_TRANSVERSAL.md`](../docs/SPEC_AI_GATEWAY_TRANSVERSAL.md:1) | Especificación completa: estado actual, punto de inserción del motor real, regla SaaS, matriz de degradación, arquitectura, criterios de aceptación y riesgos |
+
+**Lo que YA existe (Fase 5):** contratos Pydantic, capa de servicio con fallback 503 `IA_NO_DISPONIBLE`, endpoints `/status`, `/vision/detect`, `/voice/transcribe`, `/voice/parse-intent`, control por `AI_LOCAL_ENABLED` + `AI_LOCAL_URL`.
+
+**Lo que falta (bloqueado):** el motor real (Whisper + LLM + visión) en un contenedor separado. El punto de inserción está marcado con el comentario `# Fase 7: aqui se delegara a ...` en [`service.py`](../apps/api/modules/ai/service.py:77).
+
+**Criterios de aceptación:** ver sección 7 del documento transversal.
 
 ---
 
