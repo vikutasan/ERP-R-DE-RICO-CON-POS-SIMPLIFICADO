@@ -87,6 +87,13 @@ async def seed_settings(db: AsyncSession):
             "input_type": "number"
         },
         {
+            "key": "network_tz_offset_hours",
+            "value": "6",
+            "description": "Offset en horas de la zona horaria local respecto a UTC para el filtrado de incidentes de red (CST México = 6).",
+            "category": "network",
+            "input_type": "number"
+        },
+        {
             "key": "pos_terminals_config",
             "value": '[{"id":"T6","name":"Terminal 6","icon":"🖥️"},{"id":"T5","name":"Terminal 5","icon":"🖥️"},{"id":"T4","name":"Terminal 4","icon":"🖥️"},{"id":"T3","name":"Terminal 3","icon":"🖥️"},{"id":"T2","name":"Terminal 2","icon":"🖥️"},{"id":"CAJA","name":"CAJA","icon":"/assets/pos_register.png"}]',
             "description": "Configuración de terminales POS (JSON array con id, name, icon).",
