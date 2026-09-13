@@ -118,6 +118,9 @@ class StockAlmacenUpdate(BaseModel):
     stock_maximo: Optional[float] = None
     dias_anaquel_alerta: Optional[int] = None
     version: int
+    # v7 (Fase 2.2): actor que ejecuta el ajuste. Opcional para no romper
+    # llamadores existentes; si falta, `verificar_permiso` responde 403.
+    usuario_id: Optional[str] = None
 
 class StockAlmacenResponse(StockAlmacenBase):
     id: str

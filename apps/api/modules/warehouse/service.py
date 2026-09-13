@@ -6,6 +6,8 @@ from sqlalchemy import delete
 from fastapi import HTTPException
 from . import models, schemas
 from modules.catalog.models import Product
+# v7 (Fase 2): auditoria en la misma transaccion + RBAC (secciones 13 y 14).
+from core.audit import registrar_auditoria, verificar_permiso
 
 # v7 (Fase 0.5, D6): prohibido print() en produccion. Logger del modulo.
 logger = logging.getLogger("rderico.warehouse")
@@ -37,7 +39,10 @@ class WarehouseService:
         await db.refresh(db_wh)
         return db_wh
 
-    async def delete_warehouse(self, db: AsyncSession, wh_id: str):
+    async def delete_warehouse(self, db: AsyncSession, wh_id: str, usuario_id=None):
+        # v7 (Fase 2.2): RBAC. Eliminar un almacen es una operacion destructiva.
+        await verificar_permiso(db, usuario_id, "almacenes.eliminar")
+
         # Integridad imperial: no borrar si hay stock mayor a 0
         result = await db.execute(select(models.StockAlmacen).where(models.StockAlmacen.almacen_id == wh_id, models.StockAlmacen.cantidad_actual > 0))
         if result.scalars().first():
@@ -47,8 +52,30 @@ class WarehouseService:
         db_wh = result.scalar_one_or_none()
         if not db_wh:
             raise HTTPException(status_code=404, detail="Almacén no encontrado")
-            
+
+        # v7 (Fase 2.1): snapshot antes de borrar (el registro sobrevive al DELETE).
+        snapshot = {
+            "id": db_wh.id,
+            "nombre": db_wh.nombre,
+            "proposito": db_wh.proposito,
+            "zona_termica": db_wh.zona_termica,
+            "sucursal_id": db_wh.sucursal_id,
+        }
+
         await db.delete(db_wh)
+
+        # v7 (Fase 2.1): auditoria en la MISMA transaccion que el DELETE.
+        await registrar_auditoria(
+            db,
+            usuario_id=usuario_id,
+            accion="ELIMINAR",
+            entidad="almacen",
+            entidad_id=wh_id,
+            valores_antes=snapshot,
+            valores_despues=None,
+            detalle=f"Eliminacion del almacen {wh_id}",
+        )
+
         await db.commit()
         return {"detail": "Almacén eliminado exitosamente"}
 
@@ -199,6 +226,10 @@ class WarehouseService:
         return mov
         
     async def register_transfer(self, db: AsyncSession, payload: schemas.TraspasoRequest):
+        # v7 (Fase 2.2): RBAC. El backend valida por su cuenta; nunca se confia
+        # en que el frontend oculte el boton (Defensa en Profundidad, seccion 4.4).
+        await verificar_permiso(db, payload.usuario_id, "almacenes.traspaso")
+
         # Verificar stock suficiente en origen
         result_origen = await db.execute(
             select(models.StockAlmacen).where(
@@ -258,12 +289,39 @@ class WarehouseService:
             stock_destino.cantidad_actual += payload.cantidad
             stock_destino.version += 1  # v7 (D8): bloqueo optimista en destino
 
+        # v7 (Fase 2.1): auditoria en la MISMA transaccion. Si el commit falla,
+        # el registro de auditoria se revierte con la operacion (no se audita lo
+        # que no ocurrio).
+        await registrar_auditoria(
+            db,
+            usuario_id=payload.usuario_id,
+            accion="TRASPASO",
+            entidad="movimiento_inventario",
+            entidad_id=mov_entrada.id,
+            valores_antes={
+                "origen": {"almacen_id": payload.almacen_origen_id,
+                           "cantidad_actual": stock_origen.cantidad_actual + payload.cantidad},
+                "destino": {"almacen_id": payload.almacen_destino_id,
+                            "cantidad_actual": stock_destino.cantidad_actual - payload.cantidad},
+            },
+            valores_despues={
+                "origen": {"almacen_id": payload.almacen_origen_id,
+                           "cantidad_actual": stock_origen.cantidad_actual},
+                "destino": {"almacen_id": payload.almacen_destino_id,
+                            "cantidad_actual": stock_destino.cantidad_actual},
+            },
+            detalle=f"Traspaso de {payload.cantidad} de {payload.item_id}",
+        )
+
         await db.commit()
         await db.refresh(mov_entrada)
         return mov_entrada
 
     # --- Bloqueo Optimista ---
     async def update_stock(self, db: AsyncSession, wh_id: str, stock_id: str, payload: schemas.StockAlmacenUpdate):
+        # v7 (Fase 2.2): RBAC para ajuste manual de stock.
+        await verificar_permiso(db, payload.usuario_id, "almacenes.editar_stock")
+
         result = await db.execute(
             select(models.StockAlmacen).where(
                 models.StockAlmacen.id == stock_id,
@@ -281,10 +339,35 @@ class WarehouseService:
                 detail=f"Conflicto de versión. Esperada: {payload.version}, actual: {stock.version}. Refresca y reintenta."
             )
 
-        update_data = payload.model_dump(exclude_unset=True, exclude={"version"})
+        # v7 (Fase 2.1): snapshot del estado previo para la auditoria.
+        antes = {
+            "cantidad_actual": stock.cantidad_actual,
+            "stock_minimo": stock.stock_minimo,
+            "stock_maximo": stock.stock_maximo,
+            "version": stock.version,
+        }
+
+        update_data = payload.model_dump(exclude_unset=True, exclude={"version", "usuario_id"})
         for key, value in update_data.items():
             setattr(stock, key, value)
         stock.version += 1
+
+        # v7 (Fase 2.1): auditoria en la MISMA transaccion.
+        await registrar_auditoria(
+            db,
+            usuario_id=payload.usuario_id,
+            accion="AJUSTE",
+            entidad="stock_almacen",
+            entidad_id=stock.id,
+            valores_antes=antes,
+            valores_despues={
+                "cantidad_actual": stock.cantidad_actual,
+                "stock_minimo": stock.stock_minimo,
+                "stock_maximo": stock.stock_maximo,
+                "version": stock.version,
+            },
+            detalle=f"Ajuste manual de stock en almacen {wh_id}",
+        )
 
         await db.commit()
         await db.refresh(stock)
@@ -339,6 +422,9 @@ class WarehouseService:
 
     # --- Mermas ---
     async def register_merma(self, db: AsyncSession, wh_id: str, payload: schemas.MermaRequest):
+        # v7 (Fase 2.2): RBAC. Solo perfiles con 'almacenes.merma' pueden mermar.
+        await verificar_permiso(db, payload.usuario_id, "almacenes.merma")
+
         # Buscar stock actual
         result = await db.execute(
             select(models.StockAlmacen).where(
@@ -367,8 +453,23 @@ class WarehouseService:
         db.add(mov)
 
         # Descontar stock
+        cantidad_antes = stock.cantidad_actual
         stock.cantidad_actual -= payload.cantidad
         stock.version += 1
+
+        # v7 (Fase 2.1): auditoria en la MISMA transaccion. La merma es una
+        # operacion sensible (perdida de inventario) y debe quedar trazada con
+        # su motivo obligatorio.
+        await registrar_auditoria(
+            db,
+            usuario_id=payload.usuario_id,
+            accion="MERMA",
+            entidad="movimiento_inventario",
+            entidad_id=mov.id,
+            valores_antes={"cantidad_actual": cantidad_antes},
+            valores_despues={"cantidad_actual": stock.cantidad_actual},
+            detalle=payload.notas,
+        )
 
         await db.commit()
         await db.refresh(mov)

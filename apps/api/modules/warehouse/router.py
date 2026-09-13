@@ -22,8 +22,9 @@ async def update_warehouse(warehouse_id: str, payload: schemas.AlmacenUpdate, db
     return await warehouse_svc.update_warehouse(db, warehouse_id, payload)
 
 @router.delete("/{warehouse_id}")
-async def delete_warehouse(warehouse_id: str, db: AsyncSession = Depends(get_db)):
-    return await warehouse_svc.delete_warehouse(db, warehouse_id)
+async def delete_warehouse(warehouse_id: str, usuario_id: str = None, db: AsyncSession = Depends(get_db)):
+    """v7 (Fase 2.2): requiere permiso 'almacenes.eliminar' (403 si falta)."""
+    return await warehouse_svc.delete_warehouse(db, warehouse_id, usuario_id)
 
 @router.get("/{warehouse_id}/stock", response_model=List[schemas.StockAlmacenExtendedResponse])
 async def get_warehouse_stock(warehouse_id: str, db: AsyncSession = Depends(get_db)):

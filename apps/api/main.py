@@ -19,7 +19,7 @@ from modules.warehouse.router import router as warehouse_router
 from modules.heladeria.router import router as heladeria_router
 from core.database import AsyncSessionLocal, engine, Base
 from modules.catalog.models import Category, Product, ProductTechnicalSheet
-from modules.security.models import SecurityProfile, Employee
+from modules.security.models import SecurityProfile, Employee, Auditoria
 from sqlalchemy import select, text
 from modules.settings.service import seed_settings as seed_system_settings
 
