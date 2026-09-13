@@ -198,3 +198,22 @@ class MermaRequest(BaseModel):
     cantidad: float
     notas: str
     usuario_id: str
+
+# --- Diagnostico (Fase 1.3, D2) ---
+class EventoSinAlmacenResponse(BaseModel):
+    """v7 (Fase 1.3, D2): item de diagnostico de SKUs que no se pudieron descontar.
+
+    Antes el procesador los ignoraba en silencio. Ahora quedan registrados para
+    que el operador corrija la configuracion del producto o del almacen.
+    """
+    id: int
+    evento_id: Optional[int] = None
+    ticket_id: Optional[int] = None
+    sku: Optional[str] = None
+    cantidad: Optional[float] = None
+    motivo: str
+    detalle: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

@@ -1,9 +1,14 @@
+import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
 from fastapi import HTTPException
 from . import models, schemas
 from modules.catalog.models import Product
+
+# v7 (Fase 0.5, D6): prohibido print() en produccion. Logger del modulo.
+logger = logging.getLogger("rderico.warehouse")
 
 class WarehouseService:
     # --- CRUD Almacenes ---
@@ -397,18 +402,135 @@ class WarehouseService:
         )
         return result.scalars().all()
 
+    async def get_eventos_sin_almacen(self, db: AsyncSession, limit: int = 100):
+        """v7 (Fase 1.3, D2): SKUs que no se pudieron descontar del stock.
+
+        Devuelve las ocurrencias registradas por el procesador de eventos para
+        que el operador corrija la configuracion del producto o del almacen.
+        """
+        result = await db.execute(
+            select(models.WarehouseEventoSinAlmacen)
+            .order_by(models.WarehouseEventoSinAlmacen.created_at.desc())
+            .limit(limit)
+        )
+        return result.scalars().all()
+
 warehouse_service = WarehouseService()
 
 
 # --- Outbox Processor (Background Task) ---
+async def _process_single_event(db: AsyncSession, evento: models.WarehouseEvent) -> None:
+    """v7 (Fase 1.1, D1): procesa UN evento dentro de su propia transaccion.
+
+    Aislamiento transaccional: cada evento se confirma o se revierte por separado.
+    Si un item falla a mitad del evento, se lanza la excepcion y el llamador hace
+    rollback explicito, de modo que NUNCA queden descuentos parciales de stock
+    "a medias" que luego se confirmen junto con otros eventos.
+
+    El llamador es responsable de `commit()` (exito) o `rollback()` (fallo).
+    """
+    import json
+
+    items = json.loads(evento.items_json) if isinstance(evento.items_json, str) else evento.items_json
+
+    for item_data in items:
+        sku = item_data.get("sku")
+        qty = item_data.get("qty", 1)
+        if not sku:
+            # v7 (Fase 1.3, D2): no se ignora en silencio; se registra para diagnostico.
+            logger.warning(
+                "Evento %s: item sin SKU, se registra en diagnostico: %s",
+                evento.id, item_data,
+            )
+            db.add(models.WarehouseEventoSinAlmacen(
+                evento_id=evento.id,
+                ticket_id=evento.ticket_id,
+                sku=None,
+                cantidad=qty,
+                motivo="SIN_SKU",
+                detalle=f"Item sin SKU en el evento: {item_data}",
+            ))
+            continue
+
+        # v7 (Fase 1.2, D1): verificacion de deduplicacion ANTES de descontar.
+        # Si este evento ya genero un movimiento para este SKU (reprocesamiento
+        # tras un reinicio o un reintento), NO se vuelve a descontar stock.
+        ya_procesado = await db.execute(
+            select(models.MovimientoInventario.id).where(
+                models.MovimientoInventario.evento_id == evento.id,
+                models.MovimientoInventario.item_id == sku,
+            )
+        )
+        if ya_procesado.scalar_one_or_none() is not None:
+            logger.info(
+                "Evento %s: SKU '%s' ya fue descontado (idempotencia), se omite",
+                evento.id, sku,
+            )
+            continue
+
+        # Buscar stock en almacenes EXHIBICION_VENTA que tengan este SKU
+        stock_result = await db.execute(
+            select(models.StockAlmacen)
+            .join(models.Almacen, models.StockAlmacen.almacen_id == models.Almacen.id)
+            .where(
+                models.Almacen.proposito == "EXHIBICION_VENTA",
+                models.StockAlmacen.item_id == sku,
+                models.StockAlmacen.cantidad_actual >= qty
+            )
+            .limit(1)
+        )
+        stock = stock_result.scalar_one_or_none()
+
+        if not stock:
+            # v7 (Fase 1.3, D2): SKU sin almacen de venta con stock suficiente.
+            # No se ignora en silencio: se registra para diagnostico.
+            logger.warning(
+                "Evento %s: SKU '%s' sin stock suficiente en EXHIBICION_VENTA (qty=%s)",
+                evento.id, sku, qty,
+            )
+            db.add(models.WarehouseEventoSinAlmacen(
+                evento_id=evento.id,
+                ticket_id=evento.ticket_id,
+                sku=sku,
+                cantidad=qty,
+                motivo="SIN_STOCK_SUFICIENTE",
+                detalle=f"SKU '{sku}' sin stock suficiente en almacenes EXHIBICION_VENTA",
+            ))
+            continue
+
+        stock.cantidad_actual -= qty
+        stock.version += 1
+
+        # Registrar movimiento de salida por venta
+        mov = models.MovimientoInventario(
+            almacen_origen_id=stock.almacen_id,
+            almacen_destino_id=None,
+            item_id=sku,
+            item_type="PRODUCTO",
+            cantidad=qty,
+            tipo_movimiento="SALIDA_VENTA",
+            metodo_captura="EVENTO_POS",
+            usuario_id="SISTEMA",
+            notas=f"Ticket #{evento.ticket_id}",
+            # v7 (Fase 1.2, D1): liga el movimiento al evento para la idempotencia.
+            evento_id=evento.id,
+        )
+        db.add(mov)
+
+    evento.estado = "PROCESADO"
+
+
 async def process_warehouse_events():
     """
     Procesador asíncrono del Outbox Pattern.
     Polling cada 30s: lee eventos PENDIENTE, descuenta stock en almacenes EXHIBICION_VENTA.
     3 intentos máx → FALLIDO con error_log.
+
+    v7 (Fase 1.1, D1): cada evento se procesa en su PROPIA transaccion. Un fallo
+    en un evento hace rollback explicito SOLO de ese evento (sin descuentos
+    parciales) y no afecta a los demas. El POS nunca se bloquea por este proceso.
     """
     import asyncio
-    import json
     from core.database import AsyncSessionLocal
 
     # Esperar 10s al startup para que la BD esté lista
@@ -416,68 +538,62 @@ async def process_warehouse_events():
 
     while True:
         try:
+            # Fase 1: leer los IDs de eventos pendientes en una sesion corta y cerrarla,
+            # para no mantener una transaccion abierta mientras se procesan uno a uno.
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(models.WarehouseEvent)
+                    select(models.WarehouseEvent.id)
                     .where(models.WarehouseEvent.estado == "PENDIENTE")
                     .order_by(models.WarehouseEvent.created_at)
                     .limit(50)
                 )
-                eventos = result.scalars().all()
+                evento_ids = result.scalars().all()
 
-                for evento in eventos:
+            # Fase 2: procesar cada evento en su propia transaccion aislada.
+            for evento_id in evento_ids:
+                async with AsyncSessionLocal() as db:
                     try:
-                        items = json.loads(evento.items_json) if isinstance(evento.items_json, str) else evento.items_json
+                        evento = await db.get(models.WarehouseEvent, evento_id)
+                        if not evento or evento.estado != "PENDIENTE":
+                            continue
 
-                        for item_data in items:
-                            sku = item_data.get("sku")
-                            qty = item_data.get("qty", 1)
-                            if not sku:
-                                continue
-
-                            # Buscar stock en almacenes EXHIBICION_VENTA que tengan este SKU
-                            stock_result = await db.execute(
-                                select(models.StockAlmacen)
-                                .join(models.Almacen, models.StockAlmacen.almacen_id == models.Almacen.id)
-                                .where(
-                                    models.Almacen.proposito == "EXHIBICION_VENTA",
-                                    models.StockAlmacen.item_id == sku,
-                                    models.StockAlmacen.cantidad_actual >= qty
-                                )
-                                .limit(1)
-                            )
-                            stock = stock_result.scalar_one_or_none()
-
-                            if stock:
-                                stock.cantidad_actual -= qty
-                                stock.version += 1
-
-                                # Registrar movimiento de salida por venta
-                                mov = models.MovimientoInventario(
-                                    almacen_origen_id=stock.almacen_id,
-                                    almacen_destino_id=None,
-                                    item_id=sku,
-                                    item_type="PRODUCTO",
-                                    cantidad=qty,
-                                    tipo_movimiento="SALIDA_VENTA",
-                                    metodo_captura="EVENTO_POS",
-                                    usuario_id="SISTEMA",
-                                    notas=f"Ticket #{evento.ticket_id}"
-                                )
-                                db.add(mov)
-
-                        evento.estado = "PROCESADO"
+                        await _process_single_event(db, evento)
+                        await db.commit()
 
                     except Exception as e:
-                        evento.intentos += 1
-                        if evento.intentos >= 3:
-                            evento.estado = "FALLIDO"
-                            evento.error_log = str(e)[:500]
-
-                if eventos:
-                    await db.commit()
+                        # Rollback explicito: descarta cualquier descuento parcial
+                        # de ESTE evento. Los demas eventos no se ven afectados.
+                        await db.rollback()
+                        logger.error(
+                            "Evento %s fallo y se revirtio: %s", evento_id, e, exc_info=True
+                        )
+                        await _mark_event_failed(evento_id, e)
 
         except Exception:
-            pass  # Silenciar errores del procesador — NUNCA crashear el servidor
+            logger.error("Error en el bucle del procesador de eventos", exc_info=True)
 
         await asyncio.sleep(30)
+
+
+async def _mark_event_failed(evento_id: int, error: Exception) -> None:
+    """v7 (Fase 1.1, D1): incrementa intentos y marca FALLIDO tras 3 fallos.
+
+    Se ejecuta en una sesion NUEVA y limpia (la anterior ya se revirtio), para
+    que el contador de intentos y el error_log persistan aunque el procesamiento
+    del evento haya fallado.
+    """
+    from core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        try:
+            evento = await db.get(models.WarehouseEvent, evento_id)
+            if not evento:
+                return
+            evento.intentos = (evento.intentos or 0) + 1
+            if evento.intentos >= 3:
+                evento.estado = "FALLIDO"
+                evento.error_log = str(error)[:500]
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.error("No se pudo marcar el evento %s como fallido", evento_id, exc_info=True)

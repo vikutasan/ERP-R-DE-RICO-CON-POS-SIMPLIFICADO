@@ -109,3 +109,11 @@ async def list_pending_events(db: AsyncSession = Depends(get_db)):
 async def list_failed_events(db: AsyncSession = Depends(get_db)):
     """Dead-Letter Queue: eventos que fallaron 3+ veces."""
     return await warehouse_svc.get_failed_events(db)
+
+# v7 (Fase 1.3, D2): diagnostico de SKUs que no se pudieron descontar del stock.
+# Debe declararse ANTES de las rutas con path param "/{warehouse_id}/..." para
+# que "diagnostico" no se interprete como un warehouse_id.
+@router.get("/diagnostico/sin-almacen", response_model=List[schemas.EventoSinAlmacenResponse])
+async def list_eventos_sin_almacen(limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """SKUs que no se pudieron descontar (sin SKU, sin stock o sin almacen de venta)."""
+    return await warehouse_svc.get_eventos_sin_almacen(db, limit)
