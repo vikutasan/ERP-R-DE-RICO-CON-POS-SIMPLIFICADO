@@ -70,8 +70,9 @@ Permitir que el cliente arme su producto sin la ayuda de un empleado, reduciendo
 ### Objetivo técnico
 
 - Extraer TODA la lógica de armado a un módulo puro `tiendaConfigurator.js` (sin React, sin DOM, sin fetch) con tests vitest.
-- Reutilizar el patrón de **switch de caja** ya probado en [`GestorDeCaja.jsx`](apps/pos/components/GestorDeCaja.jsx:73) — sin duplicarlo.
-- Persistir la pre-comanda vía el endpoint existente `POST /pos/tickets/reserve` + `POST /pos/tickets/items/add` (ya usado por [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96)).
+- **Replicar el contrato de props** del switch de caja ya probado en [`GestorDeCaja.jsx`](apps/pos/components/GestorDeCaja.jsx:73) — **sin importarlo** (vive en `apps/pos/` y es UI con estado; importarlo rompería la Barrera 1).
+- Persistir la pre-comanda vía los endpoints existentes `POST /pos/tickets/reserve` + `PUT /pos/tickets/{account_num}` + `POST /pos/tickets/items/add` (ya usados por [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96)).
+- **⚠️ Corregir el flujo no atómico de `createHeladeriaTicket()`:** hoy reserva el folio y luego setea `channel='HELADERIA'` en un **segundo request cuyo `res.ok` NO se verifica**. Si ese `PUT` falla, el ticket queda con `channel=NULL` y **aparece en el POS de Panadería**. Este plan DEBE cerrar ese hueco (ver Fase 14.4).
 
 ---
 
@@ -85,8 +86,9 @@ Permitir que el cliente arme su producto sin la ayuda de un empleado, reduciendo
 | Hook de carrito | [`useHeladeriaCart.js`](apps/heladeria/hooks/useHeladeriaCart.js:1) | 🟢 Funcional |
 | Builder rápido | [`useQuickBuilder.js`](apps/heladeria/hooks/useQuickBuilder.js:1) | 🟢 Funcional |
 | Componentes | [`FlavorGrid.jsx`](apps/heladeria/components/FlavorGrid.jsx:1), [`QuickIceCreamPanel.jsx`](apps/heladeria/components/QuickIceCreamPanel.jsx:1) | 🟢 Funcionales |
-| Switch de caja | [`GestorDeCaja.jsx`](apps/pos/components/GestorDeCaja.jsx:73) | 🟢 Patrón reutilizable |
-| Almacén offline | [`heladeriaOfflineStore.js`](apps/heladeria/services/heladeriaOfflineStore.js:1) | 🟢 Funcional |
+| Switch de caja | [`GestorDeCaja.jsx`](apps/pos/components/GestorDeCaja.jsx:73) | 🟢 Contrato replicable (NO importable) |
+| Almacén offline | [`heladeriaOfflineStore.js`](apps/heladeria/services/heladeriaOfflineStore.js:1) | 🟢 Funcional (pero **NO conectado** a `heladeriaService`) |
+| Flujo de canal | [`heladeriaService.js`](apps/heladeria/services/heladeriaService.js:96) | 🔴 **NO atómico** — el `PUT` del canal no verifica `res.ok` |
 
 **Conclusión:** la infraestructura de datos ya existe. Este plan es **mayoritariamente UI + lógica pura**, con riesgo bajo.
 
@@ -101,21 +103,36 @@ Permitir que el cliente arme su producto sin la ayuda de un empleado, reduciendo
 **🔧 Cambios:**
 
 1. Crear `apps/heladeria/utils/tiendaConfigurator.js` con exports puros:
-   - `CONFIGURATOR_STEPS` — array ordenado de pasos (`['base', 'tamano', 'sabores', 'toppings', 'extras']`).
+   - `CONFIGURATOR_STEPS` — array ordenado de pasos de UI (`['base', 'tamano', 'sabores', 'toppings', 'extras']`).
+   - `STEP_TO_COMPONENT_TYPE` — **mapeo explícito** paso UI → enum del backend (ver tabla abajo). **Sin este mapeo, `buildPreComandaPayload` no puede producir la forma que espera el backend.**
    - `DEFAULT_CONFIGURATOR_STATE` — estado inicial vacío.
    - `canAdvanceStep(state, stepId)` → `{ ok: boolean, reason: string }`.
    - `advanceStep(state)` / `goBackStep(state)` — navegación de pasos.
-   - `toggleFlavor(state, flavorId, maxSabores)` — respeta el máximo de sabores.
-   - `toggleTopping(state, toppingId, maxToppings)`.
-   - `computeUnitPrice(state, menu)` — suma base + tamaño + toppings + extras.
-   - `buildPreComandaPayload(state, menu, meta)` → payload listo para `createHeladeriaTicket` + `addItemToTicket`.
+   - `toggleFlavor(state, flavorId, maxSabores)` — respeta el máximo de sabores. **`maxSabores` se recibe como parámetro derivado del menú** (ver origen abajo); la función NO lo inventa.
+   - `toggleTopping(state, toppingId, maxToppings)` — `maxToppings` también derivado del menú.
+   - `computeUnitPrice(state, menu)` — suma base + tamaño + toppings + extras, **leyendo precios del `menu`** (cero hardcodeo).
+   - `buildPreComandaPayload(state, menu, meta)` → payload listo para `createHeladeriaTicket` + `addItemToTicket`, usando `STEP_TO_COMPONENT_TYPE`.
    - `validateConfiguratorState(state)` → `{ ok, errors[] }`.
-   - `normalizeConfiguratorState(raw)` — tolerante a datos corruptos de localStorage.
+   - `normalizeConfiguratorState(raw)` — tolerante a datos corruptos de `sessionStorage`.
+
+   **📐 Mapeo obligatorio `STEP_TO_COMPONENT_TYPE` (paso UI → enum `component_type` del backend):**
+
+   | Paso UI | `component_type` (backend) | Notas |
+   |---|---|---|
+   | `base` | `RECIPIENTE` | El recipiente (cono, vaso, tina) |
+   | `tamano` | `TAMAÑO` | El tamaño del recipiente |
+   | `sabores` | `SABOR` | Cada bola es un `SABOR` (hasta `max_scoops`) |
+   | `toppings` | `EXTRA` | Toppings = extras |
+   | `extras` | `EXTRA` | Extras adicionales (mismo enum que toppings) |
+   | *(sin paso UI)* | `BEBIDA_BASE` | **No aplica a la Tienda Interactiva** (es para malteadas del POS Heladería). El configurador NO lo emite. |
+
+   > **Origen de `maxSabores`:** proviene del campo `max_scoops` de `HeladeriaProductConfig` (por producto), expuesto en `GET /heladeria/menu`. El configurador lo lee del **recipiente seleccionado** (`menu.recipientes[].max_scoops`) y lo pasa a `toggleFlavor`. **No es una constante global.**
+
 2. Crear `apps/heladeria/utils/tiendaConfigurator.test.js` con **~15 tests**:
    - Avance de pasos bloqueado si falta base.
-   - Máximo de sabores respetado (no permite 4 si el máximo es 3).
-   - Precio calculado correctamente con combinaciones.
-   - `buildPreComandaPayload` produce la forma exacta que espera el backend.
+   - Máximo de sabores respetado (no permite 4 si `max_scoops` del recipiente es 3).
+   - Precio calculado correctamente con combinaciones (leyendo del `menu`, no de constantes).
+   - `buildPreComandaPayload` produce la forma exacta que espera el backend, **con `component_type` correcto por cada paso** (verifica el mapeo).
    - `normalizeConfiguratorState` no explota con `null`/`undefined`/basura.
    - `validateConfiguratorState` detecta estados incompletos.
 
@@ -123,7 +140,7 @@ Permitir que el cliente arme su producto sin la ayuda de un empleado, reduciendo
 ```bash
 npx vitest run apps/heladeria/utils/tiendaConfigurator.test.js
 ```
-Debe pasar 100%. Baseline global: **141/141 → 156/156**.
+Debe pasar 100%. Baseline global: **~153/153 → ~168/168** (V17 corre antes; ver tabla de baselines del maestro).
 
 **⚠️ Riesgo POS:** 🟢 **NULO.** Archivo nuevo, módulo puro, sin imports de React/DOM/fetch. No toca nada del POS.
 
@@ -156,7 +173,7 @@ Debe compilar sin errores. Baseline: **1419 módulos**. Nuevo esperado: ~1422.
 
 ---
 
-## 🎯 FASE 14.3 — Switch de caja (reutilizar `GestorDeCaja.jsx`)
+## 🎯 FASE 14.3 — Switch de caja (REPLICAR el contrato de `GestorDeCaja.jsx`, NO importarlo)
 
 **🎯 Objetivo:** Permitir que la Tienda Interactiva opere en dos modos: **Kiosco** (cliente arma solo) y **Caja** (empleado cobra). Reutilizar el patrón existente, NO duplicarlo.
 
@@ -180,35 +197,41 @@ Debe compilar sin errores. Baseline: **1419 módulos**. Nuevo esperado: ~1422.
 ```bash
 npm run build && npx vitest run
 ```
-Build OK + 156/156 tests.
+Build OK + ~168/168 tests.
 
 **⚠️ Riesgo POS:** 🟡 **MEDIO-BAJO.** Se replica un contrato, no se importa código del POS. El riesgo real es que un futuro refactor de `GestorDeCaja.jsx` rompa la paridad — mitigado con un test de contrato (ver Fase 14.4).
 
 ---
 
-## 🎯 FASE 14.4 — Pre-comanda + cancelaciones + test de contrato
+## 🎯 FASE 14.4 — Pre-comanda + cierre del flujo no atómico + test de contrato
 
-**🎯 Objetivo:** Enviar la pre-comanda al backend y permitir cancelarla antes de que el KDS la tome.
+**🎯 Objetivo:** Enviar la pre-comanda al backend **garantizando** que el ticket quede con `channel='HELADERIA'` (o se compense si falla), y permitir cancelarla antes de que el KDS la tome.
 
-**📍 Evidencia:** [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96) ya reserva folio vía `POST /pos/tickets/reserve`. [`heladeriaService.addItemToTicket()`](apps/heladeria/services/heladeriaService.js:127) ya agrega items.
+**📍 Evidencia:** [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96) hace **DOS requests secuenciales**: (1) `POST /pos/tickets/reserve` (reserva folio) y (2) `PUT /pos/tickets/{account_num}` (setea `channel='HELADERIA'`). **El segundo request NO verifica `res.ok`.** El endpoint `reserve` **NO acepta `channel`** (confirmado en [`pos/router.py:34`](apps/api/modules/pos/router.py:34): solo recibe `terminal_id` y `captured_by_id`), por eso el canal se setea aparte. [`heladeriaService.addItemToTicket()`](apps/heladeria/services/heladeriaService.js:127) agrega items.
+
+> **🔴 DEFECTO A CERRAR EN ESTA FASE:** si el `PUT` del canal falla (red, timeout, 500), el ticket queda con `channel=NULL` → **aparece en el POS de Panadería**, violando el criterio de aceptación. Esta fase DEBE cerrar ese hueco.
 
 **🔧 Cambios:**
 
-1. Crear `apps/heladeria/hooks/usePreComanda.js`:
-   - `enviarPreComanda(state)` → llama `createHeladeriaTicket` + `addItemToTicket`.
-   - `cancelarPreComanda(accountNum)` → marca el ticket como cancelado (endpoint existente del POS, **sin modificarlo**).
-   - Manejo de errores con reintentos vía `withRetries` (ya en `heladeriaService`).
+1. **Corregir `heladeriaService.createHeladeriaTicket()`** (archivo de Heladería, NO del POS):
+   - Verificar `res.ok` del `PUT` del canal. Si falla → **lanzar error** (no silenciarlo).
+   - **Compensación:** si el `PUT` falla tras reservar el folio, **cancelar/liberar el ticket huérfano** para que NO quede con `channel=NULL` en el POS de Panadería. Si no existe endpoint de cancelación, **reintentar el `PUT` del canal** con `withRetries` antes de rendirse y, si aun así falla, registrar el `account_num` en un log de "huérfanos" para limpieza manual.
+   - **Decisión de diseño a confirmar con el usuario:** la alternativa más limpia es hacer el canal **atómico en el backend** (añadir `channel` opcional a `ReserveTicketRequest`). Eso toca `apps/api/modules/pos/`, lo cual **NO** viola la Restricción A (el POS IA es el frontend `RetailVisionPOS.jsx`; el endpoint es aditivo y `NULL`-able). **Se documenta como opción preferida si el usuario la aprueba.**
+2. Crear `apps/heladeria/hooks/usePreComanda.js`:
+   - `enviarPreComanda(state)` → llama `createHeladeriaTicket` + `addItemToTicket`, y **solo reporta éxito si el canal quedó confirmado**.
+   - `cancelarPreComanda(accountNum)` → **⚠️ VERIFICAR PRIMERO** que exista un endpoint de cancelación en [`pos/router.py`](apps/api/modules/pos/router.py:1). Los endpoints actuales son `reserve`, `create`, `items/add`, `items/update`, `items/remove`, `emergency-save`. **Si NO existe `cancel`, esta función se implementa como "marcar el ticket como cancelado vía `items/remove` de todos los items" o se pospone.** No asumir un endpoint inexistente.
+   - **Cola offline REAL:** si el backend está caído, llamar `heladeriaOfflineStore.enqueueOperation()` (hoy **NO** se llama desde `heladeriaService`). Sin esto, la pre-comanda se pierde.
    - **NO** genera folios localmente — los recibe del backend.
-2. Crear `apps/heladeria/utils/tiendaContract.test.js` — **test de contrato** que verifica que el payload de `buildPreComandaPayload` coincide con lo que el backend espera (campos `channel: 'HELADERIA'`, `station`, etc.).
-3. Actualizar [`TiendaInteractivaUI.jsx`](apps/heladeria/sections/TiendaInteractivaUI.jsx:7) para montar `TiendaConfigurator` y eliminar la animación `float infinite` del placeholder.
+3. Crear `apps/heladeria/utils/tiendaContract.test.js` — **test de contrato** que verifica que el payload de `buildPreComandaPayload` coincide con lo que el backend espera: campos `channel: 'HELADERIA'`, `component_type` correcto por paso (usando `STEP_TO_COMPONENT_TYPE`), `station`, etc.
+4. Actualizar [`TiendaInteractivaUI.jsx`](apps/heladeria/sections/TiendaInteractivaUI.jsx:7) para montar `TiendaConfigurator` y eliminar la animación `float infinite` del placeholder.
 
 **✅ Verificación:**
 ```bash
 npx vitest run && npm run build
 ```
-156/156 tests + build OK.
+~168/168 tests + build OK. **Prueba manual obligatoria:** simular fallo del `PUT` del canal y verificar que NO queda ningún ticket con `channel=NULL` creado por la Tienda.
 
-**⚠️ Riesgo POS:** 🟡 **MEDIO.** Se usan endpoints del POS (`/pos/tickets/reserve`, `/pos/tickets/items/add`) pero **sin modificarlos**. El campo `channel: 'HELADERIA'` ya separa los tickets (NULL = PANADERÍA). Verificar en PostgreSQL que los tickets de heladería NO aparecen en el POS de panadería.
+**⚠️ Riesgo POS:** 🟡 **MEDIO.** Se usan endpoints del POS (`/pos/tickets/reserve`, `/pos/tickets/items/add`) pero **sin modificarlos** (salvo que el usuario apruebe el cambio aditivo en `ReserveTicketRequest`). El campo `channel: 'HELADERIA'` separa los tickets (NULL = PANADERÍA). **Verificar en PostgreSQL que NO existen tickets con `channel=NULL` creados por la Tienda** (consulta: `SELECT * FROM tickets WHERE channel IS NULL AND created_at > <inicio_prueba>`).
 
 ---
 
@@ -238,7 +261,7 @@ npx vitest run && npm run build
 | 1 | 14.1 | `feat(heladeria): tiendaConfigurator.js puro + 15 tests` | 🟢 Nulo | 🟢 Bajo |
 | 2 | 14.2 | `feat(heladeria): TiendaConfigurator UI doble columna` | 🟢 Bajo | 🟡 Medio |
 | 3 | 14.3 | `feat(heladeria): switch Kiosco/Caja (contrato replicado)` | 🟡 Medio-Bajo | 🟡 Medio |
-| 4 | 14.4 | `feat(heladeria): pre-comanda + cancelaciones + test contrato` | 🟡 Medio | 🟡 Medio |
+| 4 | 14.4 | `feat(heladeria): pre-comanda + cierre flujo canal no atómico + test contrato` | 🟡 Medio | 🟡 Medio |
 | 5 | 14.5 | `docs(heladeria): actualizar doc maestra V14` | 🟢 Nulo | 🟢 Bajo |
 
 **Regla:** un commit por fase. Si una fase falla la verificación, NO se avanza a la siguiente.
@@ -250,12 +273,14 @@ npx vitest run && npm run build
 ## 🎯 CRITERIOS DE ACEPTACIÓN
 
 - [ ] `tiendaConfigurator.js` es 100% puro (sin React/DOM/fetch) y tiene ≥15 tests.
-- [ ] `npx vitest run` → **156/156** (baseline 141 + 15 nuevos).
-- [ ] `npm run build` → compila sin errores (~1422 módulos).
+- [ ] `npx vitest run` → **~168/168** (baseline ~153 de V17 + 15 nuevos).
+- [ ] `npm run build` → compila sin errores (~1424 módulos).
 - [ ] La Tienda Interactiva arma un helado completo y genera una pre-comanda `PENDING`.
-- [ ] El ticket generado tiene `channel = 'HELADERIA'` y NO aparece en el POS de Panadería.
+- [ ] **El ticket generado tiene `channel = 'HELADERIA'` Y el flujo lo GARANTIZA:** si el `PUT` del canal falla, el ticket huérfano se compensa (cancelado/liberado) y **NO queda ningún ticket con `channel=NULL`** creado por la Tienda. *(Criterio reformulado: el código actual NO garantiza esto; la Fase 14.4 lo corrige.)*
+- [ ] `buildPreComandaPayload` emite el `component_type` correcto por paso (mapeo `STEP_TO_COMPONENT_TYPE` verificado por el test de contrato).
+- [ ] `toggleFlavor` respeta el `max_scoops` del recipiente seleccionado (leído del menú, no constante global).
 - [ ] El switch Kiosco/Caja funciona sin tocar `terminal_locks` del POS.
-- [ ] NO se modificó ningún archivo de `apps/pos/` (verificar con `git diff --stat`).
+- [ ] NO se modificó ningún archivo de `apps/pos/` (verificar con `git diff --stat`) — **salvo** que el usuario apruebe el cambio aditivo en `ReserveTicketRequest`.
 - [ ] NO hay animaciones CSS infinitas en la sección.
 - [ ] El POS de Panadería sigue operando si la Tienda Interactiva falla (Barrera 2).
 
@@ -267,7 +292,8 @@ npx vitest run && npm run build
 2. **Reversión total:** `git revert` de los 5 commits en orden inverso (14.5 → 14.1).
 3. **Reversión de emergencia (POS afectado):** restaurar `TiendaInteractivaUI.jsx` al placeholder original (el archivo está aislado; el POS no lo importa).
 4. **Reversión de estado externo:** este plan **NO** crea claves en `system_settings` ni volúmenes Docker. Los tickets con `channel='HELADERIA'` son **datos de negocio reales** y NO se borran al revertir el código.
-5. **Verificación post-reversión:** `npx vitest run` → 141/141, `npm run build` → 1419 módulos.
+5. **⚠️ Limpieza de tickets huérfanos:** si durante la ejecución se generaron tickets con `channel=NULL` por el fallo del `PUT` (defecto #1), **deben identificarse y limpiarse** antes de dar la reversión por completa. Consulta: `SELECT id, account_num, created_at FROM tickets WHERE channel IS NULL AND created_at > <inicio_ejecucion> AND terminal_id LIKE 'H%';`. Estos tickets contaminan el POS de Panadería.
+6. **Verificación post-reversión:** `npx vitest run` → ~153/153 (baseline de V17), `npm run build` → ~1421 módulos.
 
 ---
 
@@ -286,8 +312,11 @@ npx vitest run && npm run build
 4. **¿Por qué `sessionStorage` y no `localStorage` para el modo Caja?**
    El modo Caja es por sesión de navegador. Si el kiosco se reinicia, debe volver a modo Kiosco por defecto (más seguro).
 
-5. **¿Qué pasa si el backend está caído?**
-   `heladeriaService` usa `withRetries` y `heladeriaOfflineStore.js` cachea el menú. La pre-comanda se encola y se envía al reconectar. El configurador NUNCA bloquea su render esperando red.
+5. **¿Qué pasa si el backend está caído?** *(corregido — antes afirmaba una cola offline que NO existe)*
+   `heladeriaService` usa `withRetries` (reintenta **en el lugar**) y `heladeriaOfflineStore.js` **cachea el menú** (eso sí funciona). **PERO** `heladeriaService` **NO importa** `heladeriaOfflineStore` y **NO llama** `enqueueOperation`: hoy la pre-comanda **NO se encola**; si el backend está caído más allá de los reintentos, **se pierde**. La Fase 14.4 debe conectar la cola real (`enqueueOperation`) para que esta nota sea cierta. El configurador NUNCA bloquea su render esperando red (eso sí es cierto).
+
+6. **¿Por qué el flujo de `channel` es un riesgo?** *(nuevo — defecto #1)*
+   Porque `createHeladeriaTicket()` hace **2 requests no atómicos**: reserva el folio y luego setea el canal con un `PUT` **cuyo `res.ok` no verifica**. Si ese `PUT` falla, el ticket queda con `channel=NULL` y aparece en el POS de Panadería. La Fase 14.4 cierra este hueco con verificación + compensación. La alternativa preferida (si el usuario la aprueba) es hacer el canal atómico añadiendo `channel` a `ReserveTicketRequest` — cambio aditivo y `NULL`-able que NO viola la Restricción A.
 
 ---
 
@@ -296,7 +325,8 @@ npx vitest run && npm run build
 - [ ] El usuario aprueba el alcance (configurador doble columna + pre-comanda + switch Kiosco/Caja).
 - [ ] El usuario aprueba el orden de ejecución (FASE 0 → 14.1 → 14.5).
 - [ ] El usuario confirma que la **FASE 0** (saneamiento de `heladeriaTerminals.js`) se ejecuta ANTES de la Fase 14.3.
-- [ ] El usuario confirma que NO se **modificará** ningún archivo de `apps/pos/` (se permite importar `CONFIG` y `withRetries`).
+- [ ] El usuario confirma que NO se **modificará** ningún archivo de `apps/pos/` (se permite importar `CONFIG` y `withRetries`), **salvo** que apruebe el cambio aditivo en `ReserveTicketRequest` para hacer el canal atómico.
 - [ ] El usuario confirma la estrategia de caja: **replicar el contrato**, no importar `GestorDeCaja.jsx`.
-- [ ] El usuario confirma el baseline de tests (141/141 → 156/156).
+- [ ] El usuario confirma el baseline de tests (**~153/153 → ~168/168**, V17 corre antes).
+- [ ] El usuario decide cómo cerrar el **defecto #1** (flujo de canal no atómico): compensación en frontend **o** `channel` atómico en `ReserveTicketRequest`.
 - [ ] El usuario aprueba el commit por fase.

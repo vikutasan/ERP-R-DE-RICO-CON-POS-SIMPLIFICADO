@@ -4,8 +4,10 @@
 **Autor:** Auditoría técnica derivada de [`DOCUMENTACION_MODULO_HELADERIA.md`](../ESPECIFICACIONES%20DEL%20PROYECTO/DOCUMENTACION_MODULO_HELADERIA.md)
 **Estado:** ⏳ PROPUESTO — pendiente de ejecución
 **Alcance:** Convertir el placeholder [`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7) en un tótem de antojo visual macro con gestor de contenido 4K/8K, control fino de reproducción, torre dinámica y selector estético.
-**Predecesor:** [`PLAN_HELADERIA_V17_DISPLAY_PRECIOS.md`](PLAN_HELADERIA_V17_DISPLAY_PRECIOS.md)
-**Sucesor:** [`PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md`](PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md)
+**Predecesor:** [`PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md`](PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md)
+**Sucesor:** [`PLAN_HELADERIA_V15_KDS_INTELIGENTE.md`](PLAN_HELADERIA_V15_KDS_INTELIGENTE.md)
+
+> **Orden de ejecución corregido:** FASE 0 → V17 → V14 → **V16** → V15 (ver tabla de baselines del [`PLAN_HELADERIA_MAESTRO.md`](PLAN_HELADERIA_MAESTRO.md)).
 
 ---
 
