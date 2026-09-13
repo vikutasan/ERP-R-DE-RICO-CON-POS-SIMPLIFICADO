@@ -8,19 +8,14 @@ class ZonaTermica(str, Enum):
     REFRIGERADO = "REFRIGERADO"
     CONGELADO = "CONGELADO"
 
-class PropositoAlmacen(str, Enum):
-    """v7 (D-ENUM) — DEPRECADO en v8.
-
-    v8: el proposito de un almacen ya NO es un enum cerrado. Ahora es un
-    `codigo` libre validado contra la tabla `warehouse_propositos` (catalogo
-    configurable por el usuario). Se conserva esta clase unicamente por
-    compatibilidad hacia atras (imports existentes y tests de la Fase 3);
-    NO debe usarse en validaciones nuevas. La validacion real vive en
-    `WarehouseService._validar_proposito`.
-    """
-    ALMACENAMIENTO = "ALMACENAMIENTO"
-    EXHIBICION_VENTA = "EXHIBICION_VENTA"
-    EQUIPAMIENTO = "EQUIPAMIENTO"
+# v11 (Fase 11.4, Deuda 4): se ELIMINO el enum `PropositoAlmacen`.
+# ---------------------------------------------------------------------------
+# Era una trampa para futuros desarrolladores: parecia la fuente de verdad del
+# proposito de un almacen, pero desde v8 el proposito es un `codigo` libre
+# validado contra la tabla `warehouse_propositos` (catalogo configurable).
+# La auditoria de la Fase 11.4 confirmo que NINGUN codigo de produccion ni
+# ningun test lo usaba: solo aparecia en comentarios. La validacion real vive
+# en `WarehouseService._validar_proposito`.
 
 # v8: patron de validacion del codigo de subcategoria. Mayusculas, digitos y
 # guion bajo. Se aplica tanto a `almacenes.proposito` como a

@@ -624,7 +624,19 @@ Sin ella, el navegador usa su barra por defecto (gris claro, ~15px), que contras
 
 **Tests (5, en `test_warehouse_fase11.py`):** valor del `LOCK_ID`; una sola instancia adquiere; liberar permite adquirir a otra; liberar un lock no adquirido no falla; el lock persiste si la conexión vuelve al pool.
 
-### 11.10 Pendiente
+### 11.10 Eliminación del enum `PropositoAlmacen` (v11 — Fase 11.4)
+
+**Deuda reparada:** el enum `PropositoAlmacen` (en `schemas.py`) quedó **deprecado** desde v8, cuando el propósito de un almacén pasó a ser un `codigo` libre validado contra la tabla `warehouse_propositos`. Se conservó "por compatibilidad", pero era una **trampa**: parecía la fuente de verdad y podía inducir a un desarrollador a usarlo en validaciones nuevas.
+
+**Auditoría (Paso 1):** `findstr /S /I "PropositoAlmacen" apps\api\*.py` confirmó que **ningún** código de producción ni test lo usaba. Solo aparecía en:
+- La propia definición de la clase.
+- Comentarios/docstrings históricos (migración, `models.py`, `service.py`).
+
+**Decisión (Paso 2):** al no haber usos legítimos, se **eliminó la clase** (no se aplicó el aislamiento con `DeprecationWarning`, que solo procedía si hubiera usos reales). Se dejó un comentario explicativo en su lugar.
+
+**Verificación:** `findstr` ya no encuentra la definición; la suite completa pasa (pytest 33/33, vitest 113/113, build 1417 módulos).
+
+### 11.11 Pendiente
 
 - Escáner IA (visión de charolas) — Fase 2 del plan
 - AI Gateway real (Whisper + LLM local) — depende del módulo IA Local
