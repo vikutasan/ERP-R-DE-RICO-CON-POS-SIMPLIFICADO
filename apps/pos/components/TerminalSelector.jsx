@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { terminals, loadTerminalsConfig, saveTerminalsConfig } from '../utils/posConstants';
 import { posService } from '../services/POSService';
+import { resolveCardState } from '../utils/terminalCardState';
 
 const PRESET_ICONS = [
     { label: 'Monitor', value: '🖥️' },
@@ -38,9 +39,11 @@ export const TerminalSelector = ({ currentUser, terminalStatuses, setTerminalSta
     // Estado de red por terminal (misma lógica que el Monitor de Red)
     const getNetStatus = useCallback((tid) => {
         const info = terminalStatuses[tid];
-        if (!info || !info.occupier_id) return { color: '#555', label: 'SIN CONEXIÓN' }; // gris
+        if (!info || !info.occupier_id) return { color: '#555', label: 'DISPONIBLE' }; // gris
         if (info.stale_session) return { color: '#ef4444', label: 'SESIÓN EXPIRADA' }; // rojo
-        const safeDate = info.locked_at.endsWith('Z') ? info.locked_at : info.locked_at + 'Z';
+        // v12 (Fase 12.4): la API ya normaliza con 'Z'; el parche queda defensivo
+        // por si algun dia serializa con offset (+00:00).
+        const safeDate = (info.locked_at.endsWith('Z') || info.locked_at.includes('+')) ? info.locked_at : info.locked_at + 'Z';
         const lockAge = info.locked_at ? (Date.now() - new Date(safeDate).getTime()) / 60000 : 999;
         if (lockAge < 25) return { color: '#4ade80', label: 'EN LÍNEA' }; // verde
         return { color: '#f59e0b', label: 'INACTIVA' }; // amarillo
@@ -285,14 +288,23 @@ export const TerminalSelector = ({ currentUser, terminalStatuses, setTerminalSta
             <div className="grid grid-cols-3 md:grid-cols-6 gap-8 max-w-7xl w-full">
                 {terminalList.map(t => {
                     const isOccupied = terminalStatuses[t.id];
-                    const isMine = isOccupied && isOccupied.occupier_id === currentUser?.id;
-                    const lockedByOther = isOccupied && !isMine;
+                    // v12 (Fase 12.1): clasificacion pura con TRES estados.
+                    // Antes: isMine=true caia en el else y se pintaba como LIBRE.
+                    const cardState = resolveCardState(isOccupied, currentUser?.id);
+                    const isMine = cardState === 'mine';
+                    const lockedByOther = cardState === 'occupied';
                     const enabled = isTerminalEnabled(t.id);
 
                     return (
                         <button key={t.id} disabled={!enabled && !lockedByOther}
                             onClick={async () => {
                                 if (!enabled) return;
+                                // v12 (Fase 12.1): si la terminal ya es MIA, re-entrar
+                                // sin re-lockear (respeta la regla anti-ping-pong).
+                                if (isMine) {
+                                    onTerminalSelected(t.id);
+                                    return;
+                                }
                                 if (lockedByOther) {
                                     const role = (currentUser?.role || '').toUpperCase();
                                     const hasUnlock = currentUser?.permissions?.pos_force_unlock === 'full' || currentUser?.permissions?.pos_force_unlock === true;
@@ -315,10 +327,34 @@ export const TerminalSelector = ({ currentUser, terminalStatuses, setTerminalSta
                                 } catch (e) { setDeniedModal({ title: "ERROR", message: e.message }); }
                             }}
                             className={`group relative transition-all duration-500 rounded-[40px] border flex flex-col items-center shadow-2xl overflow-hidden
-                            ${!enabled && !lockedByOther ? 'opacity-25 cursor-not-allowed p-10 gap-6 bg-black/20 border-white/5 grayscale'
+                            ${!enabled && !lockedByOther && !isMine ? 'opacity-25 cursor-not-allowed p-10 gap-6 bg-black/20 border-white/5 grayscale'
                                 : lockedByOther ? 'cursor-not-allowed border-red-500/60 bg-[#1a0808]'
+                                : isMine ? 'cursor-pointer border-amber-500/60 bg-[#1a1408] hover:border-amber-400 hover:scale-105'
                                 : `p-10 gap-6 bg-black/20 hover:bg-orange-600 border-white/5 hover:border-orange-400 hover:scale-110 ${assignedTerminal === t.id ? 'ring-2 ring-orange-500/50' : ''}`}`}>
-                            {lockedByOther ? (
+                            {isMine ? (
+                                <div className="w-full flex flex-col relative">
+                                    <div className="bg-amber-900/60 px-4 py-2 flex items-center justify-between">
+                                        <span className="text-white font-black text-sm uppercase tracking-widest">{t.id}</span>
+                                        <span className="text-[9px] font-black uppercase tracking-wider bg-amber-500 text-black px-2 py-0.5 rounded-full">
+                                            TU SESIÓN
+                                        </span>
+                                    </div>
+                                    <div className="px-4 py-5 flex flex-col items-center gap-3">
+                                        <span className="text-5xl">🔑</span>
+                                        <div className="text-center">
+                                            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400 mb-1">Sesión activa</p>
+                                            <p className="text-white font-black text-base uppercase leading-tight">{isOccupied.occupier_name}</p>
+                                        </div>
+                                    </div>
+                                    {/* Circulito estado LAN — inferior derecha */}
+                                    {(() => { const ns = getNetStatus(t.id); return (
+                                        <div className="absolute bottom-2 right-3 flex items-center gap-1.5" title={ns.label}>
+                                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ns.color, boxShadow: `0 0 6px ${ns.color}` }}></span>
+                                            <span className="text-[7px] font-black uppercase tracking-wider" style={{ color: ns.color }}>{ns.label}</span>
+                                        </div>
+                                    ); })()}
+                                </div>
+                            ) : lockedByOther ? (
                                 <div className="w-full flex flex-col relative">
                                     <div className="bg-red-900/60 px-4 py-2 flex items-center justify-between">
                                         <span className="text-white font-black text-sm uppercase tracking-widest">{t.id}</span>

@@ -249,7 +249,9 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         }
     }, [selectedTerminal, currentAccountNum, generateNewAccountNum]);
 
-    useBeforeUnload(cartRef, accountNumRef, CONFIG.API_BASE_URL);
+    // v12 (Fase 12.3): se pasan selectedTerminal y currentUser para liberar
+    // el lock huérfano al cerrar/navegar fuera de la pestaña.
+    useBeforeUnload(cartRef, accountNumRef, CONFIG.API_BASE_URL, selectedTerminal, currentUser);
 
     useBarcodeScanner(PRODUCTS, handleAddToCart);
 

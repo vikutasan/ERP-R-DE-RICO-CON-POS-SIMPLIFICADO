@@ -91,7 +91,8 @@ export const NetworkMonitorUI = () => {
                             termStatus = 'cash_open';
                         } else {
                             // Verificar si el lock es reciente (últimos 25 min = TTL + margen)
-                            const safeDate = info.locked_at.endsWith('Z') ? info.locked_at : info.locked_at + 'Z';
+                            // v12 (Fase 12.4): la API ya normaliza con 'Z'; parche defensivo.
+                            const safeDate = (info.locked_at.endsWith('Z') || info.locked_at.includes('+')) ? info.locked_at : info.locked_at + 'Z';
                             const lockAge = info.locked_at 
                                 ? (Date.now() - new Date(safeDate).getTime()) / 60000 
                                 : 999;

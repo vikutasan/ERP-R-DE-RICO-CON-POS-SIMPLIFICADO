@@ -209,6 +209,21 @@ async def get_audit_log(
         "events": events,
         "security_alerts": security_alerts[-20:],
     }
+def _iso_utc(dt):
+    """v12 (Fase 12.4): serializa un datetime naive (UTC) con sufijo Z explicito.
+
+    Las columnas `locked_at`/`opened_at` son `timestamp WITHOUT time zone` y la
+    API las serializaba sin sufijo, obligando al front a un parche fragil
+    (`endsWith('Z')`). Aqui normalizamos el contrato: siempre termina en `Z`.
+    """
+    if dt is None:
+        return None
+    iso = dt.isoformat()
+    if iso.endswith("Z") or "+" in iso:
+        return iso
+    return iso + "Z"
+
+
 @router.get("/terminals/status")
 async def get_terminals_status(db: AsyncSession = Depends(get_db)):
     """
@@ -281,6 +296,11 @@ async def get_terminals_status(db: AsyncSession = Depends(get_db)):
                 }
         else:
             res[tid]["is_cash_register"] = True
+
+    # v12 (Fase 12.4): normalizar locked_at con sufijo Z explicito.
+    for info in res.values():
+        if info.get("locked_at") is not None:
+            info["locked_at"] = _iso_utc(info["locked_at"])
     return res
 
 @router.post("/terminals/{terminal_id}/lock")
