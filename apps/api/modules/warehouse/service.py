@@ -338,6 +338,16 @@ class WarehouseService:
         if not db_wh:
             raise HTTPException(status_code=404, detail="Almacén no encontrado")
         
+        # v11 (Deuda 1): semantica explicita del PATCH parcial.
+        # `exclude_unset=True` significa: "solo toca lo que el cliente envio".
+        #   - Campo OMITIDO en el JSON  -> NO se toca (se conserva el valor).
+        #   - Campo enviado como `null` -> SI esta "set" -> SI limpia el valor.
+        #   - Campo enviado con valor   -> se actualiza.
+        #
+        # ADVERTENCIA PARA FUTUROS CLIENTES: para BORRAR `foto_url`,
+        # `planograma_url` o `pautas_acomodo` hay que enviarlos explicitamente
+        # como `null` (o `[]`). Omitirlos los conserva. El contrato completo
+        # esta documentado en `schemas.AlmacenUpdate`.
         update_data = payload.model_dump(exclude_unset=True)
 
         # v8: si se cambia el proposito, debe existir en el catalogo.

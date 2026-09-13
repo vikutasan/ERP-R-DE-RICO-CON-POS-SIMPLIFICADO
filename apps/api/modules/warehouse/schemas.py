@@ -92,6 +92,28 @@ class AlmacenCreate(AlmacenBase):
     pass
 
 class AlmacenUpdate(BaseModel):
+    """v11 (Deuda 1): contrato explicito de actualizacion parcial.
+
+    REGLA DE ORO — la diferencia entre OMITIR un campo y enviarlo como `null`:
+
+    | Intencion del cliente     | Payload enviado      | Resultado           |
+    |---------------------------|----------------------|---------------------|
+    | "No toques la foto"       | `{"nombre": "X"}`    | La foto SE CONSERVA |
+    | "Borra la foto"           | `{"foto_url": null}` | La foto SE LIMPIA   |
+    | "Borra la foto" (omitida) | `{"nombre": "X"}`    | IMPOSIBLE de expresar |
+
+    El servicio aplica `payload.model_dump(exclude_unset=True)`, por lo que
+    **solo los campos presentes en el JSON del cliente se tocan**. Un campo
+    enviado explicitamente como `null` SI cuenta como "presente" y por lo
+    tanto SI limpia el valor en la base de datos.
+
+    ADVERTENCIA PARA CLIENTES (scripts de importacion, apps moviles,
+    integraciones futuras): si necesitas BORRAR `foto_url`, `planograma_url`
+    o `pautas_acomodo`, DEBES enviarlos explicitamente como `null` (o `[]`
+    para listas). Omitirlos los conserva. El frontend actual
+    (`buildWarehouseCreatePayload`) siempre envia los tres campos, pero eso
+    es una convencion del cliente, NO una garantia del backend.
+    """
     nombre: Optional[str] = None
     zona_termica: Optional[ZonaTermica] = None
     # v8: codigo libre validado contra el catalogo (ver AlmacenBase).

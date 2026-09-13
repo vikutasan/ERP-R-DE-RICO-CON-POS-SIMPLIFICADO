@@ -358,6 +358,29 @@ describe('Payload de creacion de almacen', () => {
         });
         expect(payload.pautas_acomodo).toEqual([]);
     });
+
+    // v11 (Deuda 1): GUARDIAN DEL CONTRATO FRONTEND <-> BACKEND.
+    // El backend (`AlmacenUpdate` + `exclude_unset=True`) distingue:
+    //   - campo OMITIDO  -> se conserva
+    //   - campo `null`   -> se limpia
+    // Por eso el frontend DEBE enviar SIEMPRE los 3 campos de representacion
+    // visual, incluso cuando el operador los dejo vacios. Si este test falla,
+    // el operador perdera la capacidad de BORRAR una foto o un planograma.
+    it('v11: SIEMPRE incluye las 3 claves de representacion visual (nunca las omite)', () => {
+        const payload = buildWarehouseCreatePayload({ name: 'X' });
+        // Las claves deben EXISTIR en el objeto (no basta con que sean null).
+        expect(Object.prototype.hasOwnProperty.call(payload, 'foto_url')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(payload, 'planograma_url')).toBe(true);
+        expect(Object.prototype.hasOwnProperty.call(payload, 'pautas_acomodo')).toBe(true);
+    });
+
+    it('v11: enviar null explicito es lo que permite BORRAR una foto', () => {
+        // Simula al operador que quita la foto: el form queda sin fotoUrl.
+        const payload = buildWarehouseCreatePayload({ name: 'X', fotoUrl: null });
+        // `null` explicito => el backend lo interpreta como "limpia la foto".
+        expect(payload.foto_url).toBeNull();
+        expect('foto_url' in payload).toBe(true);
+    });
 });
 
 // ---------------------------------------------------------------------------
