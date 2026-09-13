@@ -17,6 +17,7 @@ from modules.grandeza.router import router as grandeza_router
 from modules.hr.router import router as hr_router
 from modules.warehouse.router import router as warehouse_router
 from modules.heladeria.router import router as heladeria_router
+from modules.ai.router import router as ai_router
 from core.database import AsyncSessionLocal, engine, Base
 from modules.catalog.models import Category, Product, ProductTechnicalSheet
 from modules.security.models import SecurityProfile, Employee, Auditoria
@@ -54,6 +55,10 @@ from modules.hr.models import (
     HRSeverance, HRSeveranceConfig
 )
 from modules.warehouse.models import Almacen, StockAlmacen, MovimientoInventario, WarehouseEvent, Insumo
+# v7 (Fase 5): el modulo AI no define modelos propios todavia, pero se importa
+# explicitamente para dejar constancia de que debe registrarse aqui cuando los
+# tenga (Incidente 16.3: un modelo no importado no se crea y provoca crash loop).
+from modules.ai import models as ai_models  # noqa: F401
 
 app = FastAPI(
     title="R de Rico ERP API",
@@ -262,6 +267,7 @@ app.include_router(grandeza_router, prefix="/api/v1/grandeza", tags=["Grandeza"]
 app.include_router(hr_router, prefix="/api/v1/hr", tags=["HR"])
 app.include_router(warehouse_router, prefix="/api/v1/warehouse", tags=["Warehouse"])
 app.include_router(heladeria_router, prefix="/api/v1/heladeria", tags=["Heladeria"])
+app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI"])
 
 # Montar carpetas de archivos estáticos
 app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")
