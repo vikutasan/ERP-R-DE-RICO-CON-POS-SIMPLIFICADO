@@ -3,27 +3,46 @@
  *
  * Antes era un placeholder "Próximamente" con una animación `float infinite`
  * (prohibida por el blindaje del POS — Incidente 16.1 "Efecto Estrobo").
- * Ahora monta el configurador visual de doble columna.
+ * Ahora monta el configurador visual de doble columna y lo cablea al hook
+ * real de pre-comanda (`usePreComanda`), que reserva el ticket con
+ * `channel='HELADERIA'` de forma ATÓMICA y encola offline si no hay red.
  *
  * La sección está aislada: el POS de Panadería NO la importa, y la Barrera 2
  * (`SectionErrorBoundary` del Hub) contiene cualquier fallo.
  */
 import React, { useCallback } from 'react';
 import { TiendaConfigurator } from '../components/TiendaConfigurator';
+import { usePreComanda } from '../hooks/usePreComanda';
 
-export const TiendaInteractivaUI = ({ onBack, onPreComandaReady }) => {
-    // El padre (Hub) puede inyectar el manejador real de la pre-comanda.
-    // Si no lo hace, el configurador funciona igual (solo muestra el feedback).
+export const TiendaInteractivaUI = ({
+    onBack,
+    onPreComandaReady,
+    sessionId = null,
+    terminalId = 'H1',
+    capturedById = null,
+    menu = null,
+}) => {
+    // Hook real: reserva atómica + cola offline. El canal lo garantiza el backend.
+    const preComanda = usePreComanda({ sessionId, terminalId, capturedById, menu });
+
     const handlePreComanda = useCallback(
-        async (item) => {
+        async (state, meta) => {
+            // 1) Enviar por el canal real (o encolar si no hay red).
+            const result = await preComanda.enviarPreComanda(state, meta);
+
+            // 2) Notificar al padre (Hub) si inyectó un manejador.
             if (onPreComandaReady) {
-                return onPreComandaReady(item);
+                try {
+                    await onPreComandaReady({ ...result, state, meta });
+                } catch (err) {
+                    // Un fallo del consumidor NO debe romper la Tienda.
+                    console.warn('[TiendaInteractiva] onPreComandaReady falló:', err.message);
+                }
             }
-            // Sin manejador inyectado: no se envía a red, solo se registra.
-            console.info('[TiendaInteractiva] Pre-comanda lista:', item);
-            return item;
+
+            return result;
         },
-        [onPreComandaReady],
+        [preComanda, onPreComandaReady],
     );
 
     return (

@@ -137,6 +137,32 @@ class HeladeriaService {
             return res.json();
         }, { label: 'addItemToTicket' });
     }
+
+    /**
+     * v14 (Fase 14.4): elimina un item del ticket.
+     *
+     * ⚠️ NO existe endpoint `cancel` en el backend. La cancelación de una
+     * pre-comanda se implementa vaciando el ticket con este endpoint; al quedar
+     * sin items, el GC de tickets lo reclama. Endpoint real:
+     * `DELETE /pos/tickets/items/remove` (ver apps/api/modules/pos/router.py:71).
+     */
+    async removeItemFromTicket(accountNum, productId) {
+        return withRetries(async () => {
+            const res = await fetch(`${CONFIG.API_BASE_URL}/pos/tickets/items/remove`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account_num: accountNum,
+                    product_id: productId,
+                }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.detail || 'Error eliminando item');
+            }
+            return res.json();
+        }, { label: 'removeItemFromTicket' });
+    }
 }
 
 export const heladeriaService = new HeladeriaService();
