@@ -6,6 +6,8 @@
 **Alcance:** Completar las 4 secciones que hoy son placeholders y elevar los 2 KDS existentes a "KDS Inteligente", con paridad absoluta de terminales y productos respecto al resto del ERP.
 
 > **REVISIÓN 2 (13/Sept/2026):** Este documento fue corregido tras una auto-auditoría crítica. Se corrigieron 7 defectos: (1) se descubrió que `heladeriaTerminals.js` está **roto** y se añadió una **FASE 0 de saneamiento**; (2) se resolvió la contradicción V14 vs Nota #5; (3) se separaron los ejes de riesgo; (4) se completó el protocolo de reversión; (5) se definió "funcional" por sección; (6) se verificaron los endpoints de backend contra el código real; (7) se corrigió el baseline de tests. Ver **ANEXO A — Bitácora de correcciones**.
+>
+> **REVISIÓN 3 (13/Sept/2026):** Se incorporaron **2 restricciones arquitectónicas definidas por el negocio** (ver sección "RESTRICCIONES ARQUITECTÓNICAS DEL PROYECTO"): **(A)** el POS intocable es específicamente el módulo **Punto de Venta IA** (Panadería), no el concepto genérico de POS; **(B)** **Gestión de Productos es el maestro único** de productos y categorías, y desde ahí se define en qué POS aparece cada producto. Heladería **solo lee** el catálogo.
 
 ---
 
@@ -39,6 +41,58 @@
 | [`heladeriaService.js`](../apps/heladeria/services/heladeriaService.js:1) | `CONFIG` (vía `config.js`) | — |
 
 **Decisión:** se **acepta** el acoplamiento a `CONFIG` y `withRetries` (son utilidades estables y sin estado), pero se **prohíbe** importar componentes de UI del POS (`GestorDeCaja.jsx`, `POSHeader.jsx`, etc.). La regla #1 se reinterpreta como: **"PROHIBIDO MODIFICAR archivos de `apps/pos/`"**, no "prohibido importarlos".
+
+---
+
+## 🧭 RESTRICCIONES ARQUITECTÓNICAS DEL PROYECTO (definidas por el negocio)
+
+> Estas dos restricciones **no son negociables** y aplican a los 5 planes. Se documentan aquí porque condicionan el diseño de V14, V15, V16 y V17.
+
+### Restricción A — El POS que NO se toca es el módulo **"Punto de Venta IA"**
+
+Cuando este plan dice "no interferir con el POS", se refiere **específicamente** al módulo del ERP llamado **Punto de Venta IA** (el POS de Panadería en producción, [`apps/pos/RetailVisionPOS.jsx`](../apps/pos/RetailVisionPOS.jsx:29)).
+
+**Implicaciones:**
+- El POS de Heladería ([`PosHeladeriaUI.jsx`](../apps/heladeria/sections/PosHeladeriaUI.jsx:15)) es un **módulo distinto** y **sí** puede modificarse.
+- La Tienda Interactiva (V14), los Displays (V16, V17) y los KDS (V15) son **módulos de Heladería** y **sí** pueden modificarse.
+- Lo único intocable es el POS IA de Panadería y sus archivos núcleo (ver regla #1).
+
+### Restricción B — **Gestión de Productos es el MAESTRO ÚNICO de productos**
+
+El módulo **Gestión de Productos** ([`apps/api/modules/catalog/`](../apps/api/modules/catalog/models.py:1)) es la **única fuente de verdad** respecto a productos y categorías. **Ningún plan de Heladería puede crear, duplicar ni redefinir productos.**
+
+**El mecanismo de asignación a POS se define DESDE Gestión de Productos**, no desde Heladería: desde ese módulo se decidirá **en qué POS aparece cada producto o categoría de productos**.
+
+**Estado actual verificado (lo que YA existe):**
+
+| Pieza | Tabla / Archivo | Rol |
+|---|---|---|
+| Producto maestro | [`products`](../apps/api/modules/catalog/models.py:17) | SKU, nombre, precio, categoría, `active` |
+| Categoría maestra | [`categories`](../apps/api/modules/catalog/models.py:5) | Nombre, icono, posición |
+| Extensión de Heladería | [`heladeria_product_config`](../apps/api/modules/heladeria/models.py:11) | **Extiende** un producto del catálogo con `component_type` (RECIPIENTE/SABOR/EXTRA/BEBIDA_BASE/TAMAÑO), `max_scoops`, `base_price`, `price_per_scoop`, `is_available`, `position` |
+
+**Lo que esto significa para los planes:**
+
+1. **V14 (Tienda Interactiva)** — El configurador **NO define sabores ni precios**. Los **lee** de `GET /heladeria/menu`, que a su vez los lee de `heladeria_product_config` → `products`. Si un sabor no está en Gestión de Productos, no existe para la Tienda.
+2. **V15 (KDS)** — Los tiempos de urgencia y la compatibilidad de lotes **NO crean productos**. Operan sobre los `ticket_items` ya generados.
+3. **V16 (Tótem)** — El contenido del tótem es **publicidad**, no catálogo. **PROHIBIDO** que el tótem defina precios o productos; si muestra un precio, lo **lee** del catálogo.
+4. **V17 (Display Precios)** — **PROHIBIDO** hardcodear precios. El display **lee** de `GET /heladeria/display/menu`, que lee del catálogo. Un cambio de precio en Gestión de Productos debe reflejarse en el display sin tocar código.
+
+**Frontera explícita (quién hace qué):**
+
+| Acción | Módulo responsable | ¿Puede Heladería hacerlo? |
+|---|---|---|
+| Crear/editar/borrar un producto | **Gestión de Productos** | ❌ **NO** |
+| Crear/editar/borrar una categoría | **Gestión de Productos** | ❌ **NO** |
+| Cambiar el precio de un producto | **Gestión de Productos** | ❌ **NO** |
+| Decidir en qué POS aparece un producto/categoría | **Gestión de Productos** | ❌ **NO** |
+| Marcar un producto como componente de heladería (SABOR, EXTRA…) | **Gestión de Productos** (escribe `heladeria_product_config`) | ❌ **NO** (solo lee) |
+| Agotar temporalmente un sabor (`is_available`) | **Heladería** | ✅ **SÍ** (es operativo, no maestro) |
+| Leer el menú para mostrarlo | **Heladería** | ✅ **SÍ** |
+
+> **Regla de oro:** Heladería **LEE** el catálogo y **ESCRIBE** solo estado operativo (`is_available`, tickets, KDS). Nunca escribe en `products` ni en `categories`.
+
+> **⚠️ PENDIENTE DE DISEÑO (fuera del alcance de estos 5 planes):** el mecanismo concreto de "en qué POS aparece cada producto/categoría" **aún no existe** en el código. Hoy `heladeria_product_config` es el único vínculo producto→Heladería. Cuando el usuario lo defina en Gestión de Productos, los planes V14/V16/V17 deberán **consumir ese mecanismo** en lugar de asumir que todo producto de heladería aparece en todos los POS. **Se documenta como dependencia futura, no como bloqueante.**
 
 ### Verificación obligatoria por fase
 
@@ -168,6 +222,9 @@ Al terminar los 5 planes (FASE 0 + V14 + V15 + V16 + V17):
 - [ ] **Cero** archivos del POS de Panadería **modificados** (`git diff --name-only` no incluye `apps/pos/RetailVisionPOS.jsx`, `useTerminalLocking.js`, `useBeforeUnload.js`, `POSService.js`, `config.js`).
 - [ ] **El POS de Panadería funciona idéntico** (verificación manual: seleccionar terminal, agregar producto, sin banner falso).
 - [ ] **El aislamiento se mantiene:** apagar el API y verificar que el POS de Panadería sigue operando.
+- [ ] **Restricción A respetada:** el único POS intocable es el **Punto de Venta IA**; los módulos de Heladería sí se modifican.
+- [ ] **Restricción B respetada:** **cero** escrituras a `products` o `categories` desde `apps/heladeria/`. Heladería solo **lee** el catálogo y escribe estado operativo (`is_available`, tickets, KDS).
+- [ ] **Cero precios hardcodeados** en V14/V16/V17: todo precio se lee del catálogo vía `/heladeria/menu` o `/heladeria/display/menu`.
 - [ ] Documentación actualizada: [`DOCUMENTACION_MODULO_HELADERIA.md`](../ESPECIFICACIONES%20DEL%20PROYECTO/DOCUMENTACION_MODULO_HELADERIA.md) sección 13 "Próximos Pasos (Oleada 2)" marcada como resuelta.
 
 ### 📏 DEFINICIÓN DE "FUNCIONAL" POR SECCIÓN (criterios medibles)
@@ -278,6 +335,12 @@ npm run build                                      # 1419 módulos
 6. **¿Por qué la FASE 0 es obligatoria?**
    Porque `heladeriaTerminals.js` llama a 3 endpoints inexistentes. Si V14 intenta usar los locks de terminal sin repararlo, fallará en runtime. Repararlo es barato (cambiar 3 URLs) y desbloquea V14.
 
+7. **¿Por qué el "POS que no se toca" es específicamente el Punto de Venta IA?**
+   Porque el ERP tiene **varios POS**: el POS IA de Panadería (producción, intocable) y el POS de Heladería (módulo propio, modificable). Confundirlos paralizaría el proyecto: si "POS" significara "todo lo que vende", no se podría construir la Tienda Interactiva. La restricción protege **el POS IA de Panadería**, no el concepto genérico de punto de venta.
+
+8. **¿Por qué Heladería NO puede crear productos?**
+   Porque **Gestión de Productos es el maestro único**. Si Heladería creara sus propios sabores, tendríamos **doble fuente de verdad**: un sabor podría existir en Heladería pero no en el catálogo, o tener dos precios distintos. El diseño correcto ya existe: `heladeria_product_config` **extiende** un producto del catálogo (FK a `products.id`), no lo duplica. Heladería **lee** el catálogo y **escribe** solo estado operativo (`is_available`). Esto garantiza que un cambio de precio en Gestión de Productos se refleje automáticamente en la Tienda, el Tótem y el Display de Precios.
+
 ---
 
 ## 🎯 FASE 0 — SANEAMIENTO: Reparar `heladeriaTerminals.js`
@@ -317,6 +380,9 @@ Test verde + build OK. Baseline: 141/141 → 141/141 (el test nuevo es de contra
 Antes de ejecutar, confirmar:
 
 - [ ] El plan respeta el protocolo de no-interferencia al POS (reinterpretado: prohibido MODIFICAR `apps/pos/`, permitido importar utilidades sin estado).
+- [ ] **Restricción A confirmada:** el único POS intocable es el **Punto de Venta IA** (Panadería). Los módulos de Heladería sí se modifican.
+- [ ] **Restricción B confirmada:** **Gestión de Productos es el maestro único**. Heladería solo **lee** el catálogo; **cero** escrituras a `products`/`categories`.
+- [ ] **Cero precios hardcodeados** en V14/V16/V17 (todo precio se lee del catálogo).
 - [ ] La FASE 0 (saneamiento de `heladeriaTerminals.js`) se ejecuta ANTES que V14.
 - [ ] La estrategia de caja es **replicar el contrato**, no importar `GestorDeCaja.jsx` (Nota #5 corregida).
 - [ ] El orden de ejecución se justifica por **riesgo de ejecución** (V16 penúltimo, no segundo).
@@ -340,3 +406,5 @@ Antes de ejecutar, confirmar:
 | 6 | **REVERSIÓN INGENUA:** solo revertía código, no estado externo. | Se completó con **limpieza de `system_settings`, volúmenes Docker y migraciones Alembic**. |
 | 7 | **"FUNCIONAL" SIN DEFINICIÓN:** no había criterios medibles. | Se añadió la sección **"DEFINICIÓN DE FUNCIONAL POR SECCIÓN"**. |
 | 8 | **ACOPLAMIENTO NO RECONOCIDO:** el plan prohibía tocar `apps/pos/` pero la Heladería ya importa de ahí. | Se añadió la sección **"Deuda técnica reconocida"** y se reinterpretó la regla #1. |
+| 9 | **"POS" AMBIGUO:** el plan decía "no tocar el POS" sin especificar cuál, cuando el ERP tiene varios. | Se añadió la **Restricción A**: el POS intocable es específicamente el **Punto de Venta IA** (Panadería). |
+| 10 | **MAESTRO DE PRODUCTOS NO DECLARADO:** el plan no decía de dónde salen los productos/sabores. | Se añadió la **Restricción B**: **Gestión de Productos es el maestro único**; Heladería solo lee el catálogo. |

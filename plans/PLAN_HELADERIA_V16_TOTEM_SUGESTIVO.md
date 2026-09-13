@@ -41,6 +41,43 @@ npm run build
 
 ---
 
+## 🧭 RESTRICCIONES ARQUITECTÓNICAS DEL PROYECTO (aplican a este plan)
+
+### Restricción A — El POS intocable es "Punto de Venta IA"
+
+El único módulo POS que **NO se puede tocar** es **"Punto de Venta IA"** (Panadería, [`apps/pos/RetailVisionPOS.jsx`](../apps/pos/RetailVisionPOS.jsx:29)).
+
+| Módulo | ¿Modificable? |
+|---|---|
+| Punto de Venta IA (Panadería) | ❌ **PROHIBIDO** |
+| POS Heladería ([`PosHeladeriaUI.jsx`](../apps/heladeria/sections/PosHeladeriaUI.jsx:15)) | ✅ Permitido |
+| Tienda Interactiva | ✅ Permitido |
+| Displays (Precios / Tótem) | ✅ Permitido |
+| KDS (Helados / Malteadas) | ✅ Permitido |
+
+> El Tótem es un **display de solo lectura**: no cobra, no reserva folios, no bloquea terminales. Su riesgo sobre el POS es nulo por diseño.
+
+### Restricción B — Gestión de Productos es el maestro único
+
+**Gestión de Productos** ([`apps/api/modules/catalog/`](../apps/api/modules/catalog/models.py:1)) es la **única fuente de verdad** de productos y categorías.
+
+**Este plan (V16) SOLO LEE el catálogo y ESCRIBE su propia configuración visual.**
+
+| Acción | ¿Permitido? |
+|---|---|
+| Leer sabores activos (`GET /heladeria/display/flavors`) | ✅ |
+| Leer menú (`GET /heladeria/display/menu`) | ✅ |
+| Guardar configuración visual del tótem en `system_settings` | ✅ |
+| Subir imágenes macro al volumen `totem_media` | ✅ |
+| Crear/editar sabores o productos | ❌ |
+| Cambiar precios | ❌ |
+| Decidir en qué POS aparece un producto | ❌ (se define en Gestión de Productos) |
+| Escribir en `products` / `categories` | ❌ |
+
+> **Nota:** el mecanismo "en qué POS aparece cada producto/categoría" se definirá **desde Gestión de Productos** y aún no existe. Es una **dependencia futura NO bloqueante** para V16 (el tótem muestra lo que el catálogo ya marca como activo).
+
+---
+
 ## 🎯 OBJETIVO
 
 Convertir el placeholder de 100 líneas en un tótem de antojo visual con:
@@ -351,6 +388,9 @@ Al terminar las fases 16.1-16.4 (núcleo) y 16.6:
 - [ ] pytest: 39 → ~45 tests, todos OK.
 - [ ] build: sin errores.
 - [ ] **El POS de Panadería funciona idéntico.**
+- [ ] **Restricción A respetada:** cero archivos de `apps/pos/` modificados.
+- [ ] **Restricción B respetada:** cero escrituras a `products` / `categories`.
+- [ ] **Cero precios hardcodeados** en el código del tótem.
 - [ ] Documentación actualizada.
 
 ---
@@ -389,6 +429,9 @@ git push origin main
 ## ✅ CHECKLIST DE APROBACIÓN
 
 - [ ] El plan respeta el protocolo de no-interferencia al POS.
+- [ ] **Restricción A confirmada:** el POS intocable es "Punto de Venta IA"; el tótem no lo toca.
+- [ ] **Restricción B confirmada:** Gestión de Productos es el maestro; el tótem solo lee.
+- [ ] Cero precios hardcodeados.
 - [ ] Cada fase es reversible de forma independiente.
 - [ ] La verificación es objetiva (tests + build + manual).
 - [ ] El orden de ejecución minimiza el riesgo.

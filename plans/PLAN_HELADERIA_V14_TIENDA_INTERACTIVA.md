@@ -37,6 +37,26 @@ ExperimentCenterUI.jsx
 
 Si la Tienda Interactiva falla, el POS de Panadería sigue operando. **Este plan NO rompe ninguna barrera; solo rellena un placeholder.**
 
+### 🧭 Restricciones arquitectónicas del proyecto (aplican a este plan)
+
+**Restricción A — El POS intocable es el módulo "Punto de Venta IA".**
+Cuando este plan dice "no interferir con el POS", se refiere al **POS IA de Panadería** ([`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29)). La **Tienda Interactiva es un módulo de Heladería** y **sí se modifica**. No confundir "POS" (genérico) con "POS IA" (el módulo intocable).
+
+**Restricción B — Gestión de Productos es el MAESTRO ÚNICO de productos.**
+La Tienda Interactiva **NO define sabores, recipientes, extras ni precios**. Los **lee** de `GET /heladeria/menu`, que a su vez lee de `heladeria_product_config` → `products` (catálogo maestro).
+
+| Acción | ¿Puede hacerla la Tienda Interactiva? |
+|---|---|
+| Crear/editar un sabor, recipiente o extra | ❌ **NO** — se hace en Gestión de Productos |
+| Cambiar un precio | ❌ **NO** — se hace en Gestión de Productos |
+| Decidir en qué POS aparece un producto | ❌ **NO** — se define en Gestión de Productos |
+| Leer el menú para mostrarlo | ✅ **SÍ** |
+| Agotar temporalmente un sabor (`is_available`) | ✅ **SÍ** (estado operativo, no maestro) |
+
+> **Consecuencia de diseño:** el configurador es **100% data-driven**. Si un sabor no está en Gestión de Productos, no existe para la Tienda. **Cero precios hardcodeados** en [`tiendaConfigurator.js`](apps/heladeria/utils/tiendaConfigurator.js:1): el precio siempre se calcula a partir de los datos que llegan de `/heladeria/menu`.
+
+> **⚠️ Dependencia futura (no bloqueante):** el mecanismo de "en qué POS aparece cada producto/categoría" se definirá en Gestión de Productos. Cuando exista, la Tienda deberá **consumirlo** en lugar de asumir que todo producto de heladería aparece siempre. Se documenta para no crear deuda técnica.
+
 ---
 
 ## 📋 RESUMEN
