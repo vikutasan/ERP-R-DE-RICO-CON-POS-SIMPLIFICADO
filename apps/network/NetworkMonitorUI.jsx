@@ -1,4 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+    classifyTerminalStatus,
+    classifyEvents,
+    summarizeSuspiciousIncidents,
+    normalizeUtcString,
+} from './utils/networkClassifiers';
 
 /**
  * Módulo: Monitoreo de Red
@@ -80,26 +86,10 @@ export const NetworkMonitorUI = () => {
                 TERMINALS.forEach(tid => {
                     const info = data[tid];
                     const isOccupied = info && info.occupier_id;
-                    
-                    let termStatus = 'idle';
-                    if (isOccupied) {
-                        if (info.stale_session) {
-                            termStatus = 'stale';
-                        } else if (info.is_cash_register && info.operator_absent) {
-                            termStatus = 'cash_open';
-                        } else if (info.is_cash_register && !info.locked_at) {
-                            termStatus = 'cash_open';
-                        } else {
-                            // Verificar si el lock es reciente (últimos 25 min = TTL + margen)
-                            // v12 (Fase 12.4): la API ya normaliza con 'Z'; parche defensivo.
-                            const safeDate = (info.locked_at.endsWith('Z') || info.locked_at.includes('+')) ? info.locked_at : info.locked_at + 'Z';
-                            const lockAge = info.locked_at 
-                                ? (Date.now() - new Date(safeDate).getTime()) / 60000 
-                                : 999;
-                            termStatus = lockAge < 25 ? 'online' : 'cash_open';
-                        }
-                    }
-                    
+
+                    // v13 (Fase 13.1): clasificación delegada a función pura testeada.
+                    const termStatus = classifyTerminalStatus(info, Date.now());
+
                     newData[tid] = {
                         status: termStatus,
                         occupier: isOccupied ? info.occupier_name : null,
@@ -177,7 +167,7 @@ export const NetworkMonitorUI = () => {
 
             // Mapear eventos base — agregar 'Z' para que JS interprete como UTC y convierta a hora local
             const mapped = data.map(inc => {
-                const utcStr = String(inc.created_at).endsWith('Z') ? inc.created_at : inc.created_at + 'Z';
+                const utcStr = normalizeUtcString(inc.created_at);
                 const localDate = new Date(utcStr);
                 return {
                     time: localDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -190,28 +180,11 @@ export const NetworkMonitorUI = () => {
                 };
             });
 
-            // Clasificar desconexiones: normal (reconexión rápida <2min) vs sospechosa
-            const classified = mapped.map((evt, idx) => {
-                if (evt.rawType !== 'disconnect') return { ...evt, severity: 'normal' };
-                // Buscar si hubo reconexión en la misma terminal dentro de 2 min
-                // Los eventos vienen DESC, así que la reconexión más reciente está ANTES (índice menor)
-                const reconnect = mapped.find((e, j) => 
-                    j < idx && e.terminal === evt.terminal && e.rawType === 'reconnect' &&
-                    Math.abs(e.timestamp - evt.timestamp) < 120000
-                );
-                return { ...evt, severity: reconnect ? 'normal' : 'suspicious' };
-            });
+            // v13 (Fase 13.1): clasificación y resumen delegados a funciones puras testeadas.
+            const classified = classifyEvents(mapped);
 
             setEventLog(classified);
-
-            // Calcular resumen solo con desconexiones sospechosas
-            const summary = {};
-            classified.forEach(evt => {
-                if (evt.rawType === 'disconnect' && evt.severity === 'suspicious') {
-                    summary[evt.terminal] = (summary[evt.terminal] || 0) + 1;
-                }
-            });
-            setIncidentSummary(summary);
+            setIncidentSummary(summarizeSuspiciousIncidents(classified));
         } catch (e) { console.warn('Could not load incidents:', e); }
     };
 
