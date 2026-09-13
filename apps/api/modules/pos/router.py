@@ -466,4 +466,19 @@ async def upload_vision_training(payload: schemas.VisionTrainingUpload):
 
 @router.post("/vision/predict", response_model=schemas.VisionPredictionResponse)
 async def predict_vision(payload: schemas.VisionPredictionRequest):
-    return await pos_service.predict_vision(payload)
+    """v7 (Fase 6.2): deteccion por vision reutilizando el motor ORB existente.
+
+    Envuelto en try/except para NO interrumpir el POS: si el motor de vision
+    falla (OpenCV ausente, imagen invalida, etc.) se devuelve una respuesta
+    vacia con engine="unavailable" en lugar de propagar un 500. La UI lo
+    traduce a un toast y el operador continua en modo manual.
+    """
+    try:
+        return await pos_service.predict_vision(payload)
+    except Exception as e:
+        logger.warning(f"⚠️ Vision predict no disponible: {e}")
+        return schemas.VisionPredictionResponse(
+            detections=[],
+            engine="unavailable",
+            latency_ms=0.0,
+        )

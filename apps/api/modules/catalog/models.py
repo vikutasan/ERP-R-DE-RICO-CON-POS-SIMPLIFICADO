@@ -23,8 +23,28 @@ class Product(Base):
     name = Column(String, index=True, nullable=False)
     price = Column(Numeric(12, 2), nullable=False)
     cost = Column(Numeric(12, 2), default=0)
+    # v7 (Fase 0.5, D-STOCK): OBSOLETO. NO USAR COMO FUENTE DE VERDAD.
+    #
+    # La fuente unica de stock es la tabla `stock_almacen` (modulo warehouse),
+    # que registra cantidad por almacen y soporta bloqueo optimista (version).
+    # Esta columna `products.stock` es un remanente del diseno anterior y
+    # provoca el conflicto de doble fuente de verdad: el POS descuenta en
+    # stock_almacen mientras el catalogo muestra un numero distinto.
+    #
+    # Se conserva temporalmente para no romper migraciones ni lectores
+    # heredados, pero:
+    #   - NO escribir en ella desde codigo nuevo.
+    #   - NO leerla para mostrar disponibilidad. Usar
+    #     GET /api/v1/warehouse/stock-por-sku/{sku}.
+    #   - Se migrara su contenido a stock_almacen y se eliminara en una
+    #     fase posterior (ver Fase 0.5.3E del plan v7).
     stock = Column(Float, default=0.0)
-    warehouse = Column(String, default="Bóveda Central")
+    # v7 (Fase 0.5, D-WH): el valor por defecto "Bóveda Central" era un
+    # hardcode de una sucursal concreta, prohibido por el principio SaaS
+    # (el sistema debe servir a cualquier negocio). La ubicacion real de un
+    # producto se determina por su registro en `stock_almacen`, no por este
+    # campo. Se deja nullable y sin default para no inventar ubicaciones.
+    warehouse = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
     position = Column(Integer, nullable=True)
     nature = Column(String, default="MANUFACTURADO")  # MANUFACTURADO, PREPARADO, REVENTA

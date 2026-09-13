@@ -3,8 +3,56 @@ import axios from 'axios';
 import REAL_PRODUCTS from '../../importar_productos_AQUI.json';
 import { PROVIDERS_MASTER } from './PurchaseManagerUI';
 import { CONFIG } from '../pos/config';
+// v7 (Fase 3.2): mapeadores y validadores puros, cubiertos por Vitest.
+import {
+    resolveUserId,
+    mapWarehousesFromApi,
+    mapStockListFromApi,
+    buildWarehouseCreatePayload,
+    validateBulkEntry,
+    buildBulkEntryPayload,
+    validateMerma,
+    validateTraspaso,
+    // v7 (Fase 6.3): escáner IA de visión (human-in-the-loop).
+    mapVisionDetectionsToProposals,
+    validateVisionSnapshot,
+    buildVisionSnapshotPayload,
+    // v7 (Fase 6.5): captura de inventario por voz (human-in-the-loop).
+    mapVoiceIntentToProposal,
+    validateVoiceEntry,
+    buildVoiceEntryPayload,
+} from './utils/warehouseMappers';
+// v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
+import {
+    createWarehouseNetworkMonitor,
+    getPendingCount,
+    enqueueOperacion,
+} from './services/offlineQueue';
+import { inicializarPWA } from './services/pwaRuntime';
 
 const API_BASE = CONFIG.API_BASE_URL.replace('/api/v1', '');
+
+/**
+ * v7 (D11): logger estructurado en lugar de console.error suelto.
+ *
+ * Los console.error dispersos no llevan contexto ni se pueden silenciar en
+ * producción. Este helper centraliza el prefijo del módulo y respeta el modo
+ * de producción (solo emite en desarrollo), evitando ruido en la consola del
+ * operador durante la jornada.
+ */
+const LOG_PREFIX = '[Warehouse]';
+const logger = {
+    error: (message, error) => {
+        if (import.meta.env.DEV) {
+            console.error(`${LOG_PREFIX} ${message}`, error);
+        }
+    },
+    warn: (message, error) => {
+        if (import.meta.env.DEV) {
+            console.warn(`${LOG_PREFIX} ${message}`, error);
+        }
+    },
+};
 
 /**
  * R DE RICO - WAREHOUSE & STORAGE MANAGER
@@ -43,31 +91,78 @@ const UNIT_OPTIONS = {
     "Volumen": ["LT", "ML", "GAL", "OZ FL", "COPA"]
 };
 
-export const WarehouseManagerUI = () => {
+// v7 (Fase 3.2): `resolveUserId` y los mapeadores/validadores puros viven en
+// ./utils/warehouseMappers y están cubiertos por Vitest. Se importan arriba
+// para que los tests validen el código realmente en uso (no código muerto).
+
+export const WarehouseManagerUI = ({ currentUser = null }) => {
+    const usuarioId = resolveUserId(currentUser);
     const [warehouses, setWarehouses] = useState([]);
     const [showAiScanner, setShowAiScanner] = useState(false);
     
     const fetchWarehouses = async () => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
-            // Mapear campos API (español) → campos UI (inglés)
-            const mapped = res.data.map(wh => ({
-                ...wh,
-                name: wh.nombre || wh.name || 'Sin nombre',
-                type: wh.zona_termica || wh.type || 'SECO',
-                icon: wh.zona_termica === 'CONGELADO' ? '❄️' : wh.zona_termica === 'REFRIGERADO' ? '🧊' : '📦',
-                capacity: 100,
-                current: 0
-            }));
-            setWarehouses(mapped);
+            // v7 (Fase 3.2): mapeo API (español) → UI (inglés) delegado al
+            // módulo puro cubierto por Vitest.
+            setWarehouses(mapWarehousesFromApi(res.data));
         } catch(e) {
-            console.error(e);
+            logger.error('Error fetching warehouses:', e);
         }
     };
 
     useEffect(() => {
         fetchWarehouses();
     }, []);
+
+    // --- v7 (Fase 4): estado de red y cola offline ---
+    // Incidente 16.1: el indicador NO usa animaciones de bucle infinito.
+    // Solo transiciones de montaje único (animate-in) para evitar efecto estrobo.
+    const [isOnline, setIsOnline] = useState(
+        typeof navigator !== 'undefined' ? navigator.onLine : true
+    );
+    const [pendingOps, setPendingOps] = useState(0);
+    const [syncNotice, setSyncNotice] = useState(null); // { text, type }
+
+    useEffect(() => {
+        // Inicializa la capa PWA (SW + manifest desde system_settings).
+        inicializarPWA();
+
+        const refrescarPendientes = async () => {
+            try {
+                const n = await getPendingCount();
+                setPendingOps(n);
+            } catch (e) {
+                // IndexedDB no disponible: se ignora silenciosamente.
+            }
+        };
+        refrescarPendientes();
+
+        const monitor = createWarehouseNetworkMonitor({
+            onStatusChange: (online) => {
+                setIsOnline(online);
+                if (online) refrescarPendientes();
+            },
+            onSync: (resultado) => {
+                refrescarPendientes();
+                if (resultado && resultado.synced > 0) {
+                    setSyncNotice({
+                        text: `Sincronizadas ${resultado.synced} operación(es) pendiente(s).`,
+                        type: 'success',
+                    });
+                }
+                if (resultado && resultado.conflicts && resultado.conflicts.length > 0) {
+                    setSyncNotice({
+                        text: `${resultado.conflicts.length} operación(es) con conflicto; revísalas en el historial.`,
+                        type: 'error',
+                    });
+                }
+            },
+        });
+
+        return () => monitor.destroy();
+    }, []);
+
     const [warehouseTypes, setWarehouseTypes] = useState(INITIAL_TYPES);
     const [selectedWH, setSelectedWH] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -95,6 +190,21 @@ export const WarehouseManagerUI = () => {
     const [bulkEntryItems, setBulkEntryItems] = useState([]);
     const [bulkTargetWH, setBulkTargetWH] = useState('');
     const [bulkInsumoSearch, setBulkInsumoSearch] = useState('');
+    // v7 (Fase 6.3): Escáner IA de Visión (human-in-the-loop)
+    const [visionTargetWH, setVisionTargetWH] = useState('');
+    const [visionProposals, setVisionProposals] = useState([]);
+    const [visionScanning, setVisionScanning] = useState(false);
+    const [visionPreview, setVisionPreview] = useState(null);
+    const visionFileRef = useRef(null);
+    // v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop)
+    const [voiceTargetWH, setVoiceTargetWH] = useState('');
+    const [voiceRecording, setVoiceRecording] = useState(false);
+    const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const [voiceProposal, setVoiceProposal] = useState(null);
+    const [voiceAvailable, setVoiceAvailable] = useState(true);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
     // Mermas
     const [mermaForm, setMermaForm] = useState({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
     // Traspasos
@@ -116,7 +226,7 @@ export const WarehouseManagerUI = () => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse/insumos`);
             setInsumos(res.data || []);
-        } catch(e) { console.error('Error fetching insumos:', e); }
+        } catch(e) { logger.error('Error fetching insumos:', e); }
     };
 
     const fetchMovements = async (almacenId = null) => {
@@ -126,14 +236,14 @@ export const WarehouseManagerUI = () => {
                 : `${API_BASE}/api/v1/warehouse/movimientos?limit=200`;
             const res = await axios.get(url);
             setMovements(res.data || []);
-        } catch(e) { console.error('Error fetching movements:', e); }
+        } catch(e) { logger.error('Error fetching movements:', e); }
     };
 
     const fetchWarehouseStock = async (whId) => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse/${whId}/stock`);
             return res.data || [];
-        } catch(e) { console.error('Error fetching stock:', e); return []; }
+        } catch(e) { logger.error('Error fetching stock:', e); return []; }
     };
 
     // Cargar insumos al montar
@@ -150,74 +260,105 @@ export const WarehouseManagerUI = () => {
         setTimeout(() => setOpMessage({ text: '', type: '' }), 4000);
     };
 
-    const handleSubmitBulkEntry = async () => {
-        if (!bulkTargetWH || bulkEntryItems.length === 0) {
-            showOpMessage('Selecciona un almacén destino y agrega al menos un insumo', 'error');
-            return;
+    /**
+     * v7 (Fase 4.1): intenta una escritura contra el backend y, si no hay red,
+     * la encola en IndexedDB para sincronizarla al reconectar. La UI nunca se
+     * bloquea: aplica optimista y reconcilia al sincronizar.
+     *
+     * @returns {Promise<{offline:boolean, error?:string}>}
+     */
+    const ejecutarOEncolar = async ({ ruta, body, label, exitoMsg }) => {
+        // Sin red conocida: encolar directamente sin intentar la petición.
+        if (!isOnline) {
+            await enqueueOperacion({ ruta, body, label, sucursalId: usuarioId });
+            const n = await getPendingCount();
+            setPendingOps(n);
+            showOpMessage(`📥 Sin conexión: ${exitoMsg} (en cola para sincronizar)`);
+            return { offline: true };
         }
-        const invalidItems = bulkEntryItems.filter(i => !i.cantidad || i.cantidad <= 0);
-        if (invalidItems.length > 0) {
-            showOpMessage('Todos los items deben tener cantidad mayor a 0', 'error');
+        try {
+            await axios.post(`${API_BASE}/api/v1/warehouse${ruta}`, body);
+            showOpMessage(`✅ ${exitoMsg}`);
+            return { offline: false };
+        } catch (e) {
+            // Fallo de red (no respuesta del servidor): encolar para reintento.
+            const esFalloDeRed = !e.response;
+            if (esFalloDeRed) {
+                await enqueueOperacion({ ruta, body, label, sucursalId: usuarioId });
+                const n = await getPendingCount();
+                setPendingOps(n);
+                setIsOnline(false);
+                showOpMessage(`📥 Sin conexión: ${exitoMsg} (en cola para sincronizar)`);
+                return { offline: true };
+            }
+            // Error de negocio (4xx/5xx con respuesta): reportar al operador.
+            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
+            return { offline: false, error: e.response?.data?.detail || e.message };
+        }
+    };
+
+    const handleSubmitBulkEntry = async () => {
+        // v7 (Fase 3.2): validación y armado del payload delegados al módulo
+        // puro cubierto por Vitest.
+        const { ok, error } = validateBulkEntry(bulkTargetWH, bulkEntryItems);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
         try {
-            const payload = {
-                items: bulkEntryItems.map(i => ({
-                    item_id: i.item_id,
-                    item_type: i.item_type || 'INSUMO',
-                    cantidad: parseFloat(i.cantidad),
-                    notas: i.notas || null
-                })),
-                usuario_id: 'VICTOR'
-            };
-            await axios.post(`${API_BASE}/api/v1/warehouse/${bulkTargetWH}/entrada-masiva`, payload);
-            showOpMessage(`✅ Entrada masiva registrada: ${bulkEntryItems.length} items en lote`);
+            const payload = buildBulkEntryPayload(bulkEntryItems, usuarioId);
+            await ejecutarOEncolar({
+                ruta: `/${bulkTargetWH}/entrada-masiva`,
+                body: payload,
+                label: `Entrada masiva (${bulkEntryItems.length} items)`,
+                exitoMsg: `Entrada masiva registrada: ${bulkEntryItems.length} items en lote`,
+            });
             setBulkEntryItems([]);
             setBulkTargetWH('');
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
     const handleSubmitMerma = async () => {
         const { almacen_id, item_id, item_type, cantidad, notas } = mermaForm;
-        if (!almacen_id || !item_id || !cantidad || !notas) {
-            showOpMessage('Todos los campos son obligatorios (especialmente las notas/motivo)', 'error');
+        // v7 (Fase 3.2): validación delegada al módulo puro cubierto por Vitest.
+        const { ok, error } = validateMerma(mermaForm);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/${almacen_id}/mermas`, {
-                item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: 'VICTOR'
+            await ejecutarOEncolar({
+                ruta: `/${almacen_id}/mermas`,
+                body: { item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: usuarioId },
+                label: `Merma de ${cantidad} ${item_type === 'INSUMO' ? 'insumo' : 'producto'}`,
+                exitoMsg: 'Merma registrada correctamente',
             });
-            showOpMessage(`✅ Merma registrada correctamente`);
             setMermaForm({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
     const handleSubmitTraspaso = async () => {
         const { almacen_origen_id, almacen_destino_id, item_id, item_type, cantidad } = traspasoForm;
-        if (!almacen_origen_id || !almacen_destino_id || !item_id || !cantidad) {
-            showOpMessage('Todos los campos son obligatorios', 'error');
-            return;
-        }
-        if (almacen_origen_id === almacen_destino_id) {
-            showOpMessage('Origen y destino no pueden ser el mismo almacén', 'error');
+        // v7 (Fase 3.2): validación delegada al módulo puro cubierto por Vitest.
+        const { ok, error } = validateTraspaso(traspasoForm);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/traspasos`, {
-                almacen_origen_id, almacen_destino_id, item_id, item_type,
-                cantidad: parseFloat(cantidad), usuario_id: 'VICTOR'
+            await ejecutarOEncolar({
+                ruta: '/traspasos',
+                body: {
+                    almacen_origen_id, almacen_destino_id, item_id, item_type,
+                    cantidad: parseFloat(cantidad), usuario_id: usuarioId,
+                },
+                label: `Traspaso de ${cantidad} unidades`,
+                exitoMsg: 'Traspaso ejecutado correctamente',
             });
-            showOpMessage(`✅ Traspaso ejecutado correctamente`);
             setTraspasoForm({ almacen_origen_id: '', almacen_destino_id: '', item_id: '', item_type: 'INSUMO', cantidad: '' });
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
@@ -242,6 +383,296 @@ export const WarehouseManagerUI = () => {
 
     const removeBulkItem = (index) => {
         setBulkEntryItems(bulkEntryItems.filter((_, i) => i !== index));
+    };
+
+    // --- v7 (Fase 6.3): Escáner IA de Visión (human-in-the-loop) ---
+    // Regla de oro (spec línea 537): la IA PROPONE, el operador CONFIRMA.
+    // Nunca se registra stock automáticamente sin confirmación humana.
+
+    /**
+     * Abre la cámara trasera del dispositivo (o el selector de archivos en
+     * escritorio) mediante un <input type="file" capture="environment">.
+     */
+    const handleVisionCapture = () => {
+        if (visionFileRef.current) visionFileRef.current.click();
+    };
+
+    /**
+     * Lee la imagen elegida como DataURL, la guarda para la vista previa y
+     * dispara el análisis contra el motor ORB existente del POS.
+     */
+    const handleVisionFileChange = async (e) => {
+        const file = e.target.files?.[0];
+        // Permite volver a elegir el mismo archivo dos veces seguidas.
+        e.target.value = '';
+        if (!file) return;
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+        setVisionPreview(dataUrl);
+        await handleVisionAnalyze(dataUrl);
+    };
+
+    /**
+     * Envía la imagen al endpoint de detección. Si el motor no está
+     * disponible (IA apagada) el backend responde engine="unavailable" y
+     * aquí solo se avisa al operador: el flujo manual sigue intacto.
+     */
+    const handleVisionAnalyze = async (dataUrl) => {
+        setVisionScanning(true);
+        try {
+            const base64 = String(dataUrl).split(',')[1] || '';
+            const res = await axios.post(`${API_BASE}/api/v1/pos/vision/predict`, {
+                image: base64,
+                terminal_id: 'ALMACEN',
+            });
+            const data = res.data || {};
+            if (data.engine === 'unavailable' || !data.detections?.length) {
+                setVisionProposals([]);
+                showOpMessage('🤖 La IA no detectó productos. Captura manualmente o reintenta.', 'error');
+                return;
+            }
+            // La IA solo propone: todo llega con confirmado=false.
+            setVisionProposals(mapVisionDetectionsToProposals(data.detections, insumos));
+            showOpMessage(`🤖 IA propuso ${data.detections.length} línea(s). Confirma las cantidades.`);
+        } catch (err) {
+            logger.error('Error en análisis de visión:', err);
+            setVisionProposals([]);
+            showOpMessage('❌ No se pudo analizar la imagen. Usa la captura manual.', 'error');
+        } finally {
+            setVisionScanning(false);
+        }
+    };
+
+    /** Alterna la confirmación humana de una propuesta detectada. */
+    const handleVisionConfirm = (index) => {
+        const updated = [...visionProposals];
+        updated[index] = { ...updated[index], confirmado: !updated[index].confirmado };
+        setVisionProposals(updated);
+    };
+
+    /** Permite corregir la cantidad propuesta por la IA antes de confirmar. */
+    const handleVisionQtyChange = (index, value) => {
+        const updated = [...visionProposals];
+        updated[index] = { ...updated[index], cantidad: value };
+        setVisionProposals(updated);
+    };
+
+    /** Descarta una propuesta que el operador no reconoce. */
+    const handleVisionDiscard = (index) => {
+        setVisionProposals(visionProposals.filter((_, i) => i !== index));
+    };
+
+    /** Limpia por completo el estado del escáner de visión. */
+    const resetVisionScanner = () => {
+        setVisionProposals([]);
+        setVisionPreview(null);
+        setVisionScanning(false);
+    };
+
+    /**
+     * Registra la entrada SOLO con las líneas confirmadas explícitamente por
+     * el operador. La validación y el armado del payload viven en el módulo
+     * puro cubierto por Vitest.
+     */
+    const handleSubmitVisionEntry = async () => {
+        const { ok, error } = validateVisionSnapshot(visionTargetWH, visionProposals);
+        if (!ok) {
+            showOpMessage(error, 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            const confirmadas = visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0);
+            const payload = buildVisionSnapshotPayload(visionProposals, usuarioId, {
+                imagen_ref: visionPreview ? 'captura_charola' : null,
+                modelo: 'orb-local',
+            });
+            await ejecutarOEncolar({
+                ruta: `/${visionTargetWH}/entrada-vision`,
+                body: payload,
+                label: `Entrada por visión (${confirmadas.length} items)`,
+                exitoMsg: `Entrada por visión registrada: ${confirmadas.length} items confirmados`,
+            });
+            resetVisionScanner();
+            setVisionTargetWH('');
+        } finally { setLoadingOp(false); }
+    };
+
+    // --- v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop) ---
+    // Regla de oro (spec línea 664): la IA PROPONE, el operador CONFIRMA.
+    // Nunca se registra stock automáticamente por voz. Si la IA local no está
+    // instalada, el flujo manual sigue funcionando (spec línea 692).
+
+    const resetVoiceCapture = () => {
+        setVoiceProposal(null);
+        setVoiceTranscript('');
+        setVoiceRecording(false);
+        setVoiceTranscribing(false);
+        audioChunksRef.current = [];
+    };
+
+    /**
+     * Fase 6.5.2: inicia la grabación con MediaRecorder.
+     * Fase 6.5.3: si el navegador no soporta audio o el permiso falla, se
+     * degrada al flujo manual sin romper la UI.
+     */
+    const handleVoiceStart = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            setVoiceAvailable(false);
+            showOpMessage('🎙️ Dictado por voz no disponible en este dispositivo. Capture manualmente.', 'error');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioChunksRef.current = [];
+            const recorder = new MediaRecorder(stream);
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+            };
+            recorder.onstop = async () => {
+                stream.getTracks().forEach((t) => t.stop());
+                const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+                await handleVoiceTranscribe(blob);
+            };
+            mediaRecorderRef.current = recorder;
+            recorder.start();
+            setVoiceRecording(true);
+            setVoiceProposal(null);
+            setVoiceTranscript('');
+        } catch (err) {
+            logger.error('Error al iniciar grabación de voz:', err);
+            setVoiceAvailable(false);
+            showOpMessage('🎙️ No se pudo acceder al micrófono. Capture manualmente.', 'error');
+        }
+    };
+
+    const handleVoiceStop = () => {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+        setVoiceRecording(false);
+    };
+
+    /**
+     * Fase 6.5.3: transcribe el audio y luego pide la intención estructurada.
+     * Fallback 503 IA_NO_DISPONIBLE => toast informativo, sin congelar la UI.
+     */
+    const handleVoiceTranscribe = async (blob) => {
+        setVoiceTranscribing(true);
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+            const res = await axios.post(`${API_BASE}/api/v1/ai/voice/transcribe`, {
+                audio_base64: base64,
+                idioma: 'es',
+                formato: blob.type || 'audio/webm',
+            });
+            const texto = (res.data?.texto || '').trim();
+            if (!texto) {
+                showOpMessage('🎙️ No se entendió el dictado. Intenta de nuevo o captura manualmente.', 'error');
+                return;
+            }
+            setVoiceTranscript(texto);
+            await handleVoiceParseIntent(texto);
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status === 503) {
+                setVoiceAvailable(false);
+                showOpMessage('🎙️ Dictado por voz no disponible (IA local apagada). Capture manualmente.', 'error');
+            } else {
+                logger.error('Error al transcribir voz:', err);
+                showOpMessage('🎙️ No se pudo procesar el audio. Capture manualmente.', 'error');
+            }
+        } finally {
+            setVoiceTranscribing(false);
+        }
+    };
+
+    /**
+     * Fase 6.5.5: convierte el texto en una intención estructurada y la mapea a
+     * una propuesta editable. La confianza baja marca la línea para revisión.
+     */
+    const handleVoiceParseIntent = async (texto) => {
+        try {
+            const res = await axios.post(`${API_BASE}/api/v1/ai/voice/parse-intent`, {
+                texto,
+                almacen_id: voiceTargetWH || null,
+                skus_disponibles: (insumos || []).map((i) => i.id),
+            });
+            const propuesta = mapVoiceIntentToProposal(res.data, insumos);
+            setVoiceProposal(propuesta);
+            if (!propuesta.sku_resuelto) {
+                showOpMessage('🎙️ La IA no reconoció el insumo. Selecciónalo manualmente.', 'error');
+            } else if (propuesta.revisar) {
+                showOpMessage('🎙️ Confianza baja: revisa la cantidad y el insumo antes de confirmar.', 'error');
+            } else {
+                showOpMessage('🎙️ Dictado interpretado. Confirma los datos antes de registrar.');
+            }
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status === 503) {
+                setVoiceAvailable(false);
+                showOpMessage('🎙️ Interpretación por voz no disponible (IA local apagada). Capture manualmente.', 'error');
+            } else {
+                logger.error('Error al interpretar la intención de voz:', err);
+                showOpMessage('🎙️ No se pudo interpretar el dictado. Capture manualmente.', 'error');
+            }
+        }
+    };
+
+    // Fase 6.5.4: el operador edita SKU, cantidad y unidad antes de confirmar.
+    const handleVoiceProposalChange = (field, value) => {
+        setVoiceProposal((prev) => {
+            if (!prev) return prev;
+            if (field === 'item_id') {
+                const match = (insumos || []).find((i) => i.id === value);
+                return {
+                    ...prev,
+                    item_id: value,
+                    nombre: match ? match.nombre : value,
+                    unidad: match?.unidad_base || prev.unidad,
+                    sku_resuelto: Boolean(match),
+                };
+            }
+            return { ...prev, [field]: value };
+        });
+    };
+
+    const handleVoiceConfirm = () => {
+        setVoiceProposal((prev) => (prev ? { ...prev, confirmado: !prev.confirmado } : prev));
+    };
+
+    /**
+     * Fase 6.5.6: registra el movimiento con metodo_captura = VOZ y conserva
+     * texto_original para trazabilidad. Solo si el operador confirmó.
+     */
+    const handleSubmitVoiceEntry = async () => {
+        const { ok, error } = validateVoiceEntry(voiceTargetWH, voiceProposal);
+        if (!ok) {
+            showOpMessage(error, 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            const payload = buildVoiceEntryPayload(voiceProposal, usuarioId);
+            await ejecutarOEncolar({
+                ruta: `/${voiceTargetWH}/stock`,
+                body: payload,
+                label: `Entrada por voz (${voiceProposal.nombre})`,
+                exitoMsg: `Entrada por voz registrada: ${voiceProposal.cantidad} ${voiceProposal.unidad} de ${voiceProposal.nombre}`,
+            });
+            resetVoiceCapture();
+            setVoiceTargetWH('');
+        } finally { setLoadingOp(false); }
     };
 
     // Helpers de movimiento
@@ -306,19 +737,9 @@ export const WarehouseManagerUI = () => {
         const loadStock = async () => {
             if (selectedWH) {
                 const stockData = await fetchWarehouseStock(selectedWH.id);
-                const mappedStock = stockData.map(item => ({
-                    sku: item.item_id,
-                    name: item.item_name || item.item_id,
-                    category: item.item_type,
-                    stock: item.cantidad_actual,
-                    unit: item.item_unit || 'PZA',
-                    minStock: item.stock_minimo,
-                    alertDays: item.dias_anaquel_alerta || 0,
-                    presentation: '1 ' + (item.item_unit || 'PZA'),
-                    costPerPresentation: item.item_price || 0,
-                    imgUrl: item.item_image_url || null,
-                    provider: 'PROVEEDOR GENERAL' // Default temporal
-                }));
+                // v7 (Fase 3.2): mapeo de stock API (español) → UI (inglés)
+                // delegado al módulo puro cubierto por Vitest.
+                const mappedStock = mapStockListFromApi(stockData);
                 setWhInventories(prev => ({ ...prev, [selectedWH.id]: mappedStock }));
             }
         };
@@ -334,19 +755,17 @@ export const WarehouseManagerUI = () => {
             if (formData.id && !formData.id.startsWith('wh_')) {
                 await axios.put(`${API_BASE}/api/v1/warehouse/${formData.id}`, formData);
             } else {
-                const payload = {
-                    nombre: formData.name,
-                    zona_termica: formData.type || selectedZone || 'SECO',
-                    proposito: formData.proposito || subCategoryTab || 'EXHIBICION_VENTA',
-                    activo: true
-                };
+                // v7 (Fase 3.2): armado del payload delegado al módulo puro
+                // cubierto por Vitest.
+                const payload = buildWarehouseCreatePayload(formData, selectedZone, subCategoryTab);
                 await axios.post(`${API_BASE}/api/v1/warehouse`, payload);
             }
             fetchWarehouses();
             setShowWHEditor(false);
             setEditingWHData(null);
         } catch(e) {
-            alert('Error guardando almacén');
+            logger.error('Error guardando almacén:', e);
+            showOpMessage(e.response?.data?.detail || 'Error guardando almacén', 'error');
         }
     };
 
@@ -357,21 +776,30 @@ export const WarehouseManagerUI = () => {
             setWhToDelete(null);
             setSelectedWH(null);
         } catch(e) {
-            alert(e.response?.data?.detail || 'Error eliminando almacén');
+            logger.error('Error eliminando almacén:', e);
+            showOpMessage(e.response?.data?.detail || 'Error eliminando almacén', 'error');
         }
     };
 
     const addItemToWH = async (product) => {
+        // v7 (D5): el endpoint POST /{id}/items NO existe en el router.
+        // El endpoint real es POST /{warehouse_id}/stock y espera el contrato
+        // MovimientoInventarioCreate (item_id, item_type, cantidad, tipo_movimiento,
+        // metodo_captura, usuario_id). Se registra un movimiento de entrada con
+        // cantidad 0 para "dar de alta" el SKU en el almacén sin alterar existencias.
         const payload = {
-            sku: product.sku,
-            name: product.name,
-            quantity: 0,
-            unit: product.unit || 'PZA',
-            category: product.category || 'NA',
-            price: product.price || 0
+            almacen_origen_id: null,
+            almacen_destino_id: selectedWH.id,
+            item_id: product.sku,
+            item_type: 'PRODUCTO',
+            cantidad: 0,
+            tipo_movimiento: 'AJUSTE',
+            metodo_captura: 'MANUAL',
+            usuario_id: usuarioId,
+            notas: `Alta de artículo en almacén: ${product.name}`
         };
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/${selectedWH.id}/items`, payload);
+            await axios.post(`${API_BASE}/api/v1/warehouse/${selectedWH.id}/stock`, payload);
             fetchWarehouses();
             
             const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
@@ -380,7 +808,8 @@ export const WarehouseManagerUI = () => {
             
             setShowItemPicker(false);
         } catch(e) {
-            alert('Error agregando artículo');
+            logger.error('Error agregando artículo:', e);
+            showOpMessage(e.response?.data?.detail || 'Error agregando artículo', 'error');
         }
     };
 
@@ -399,7 +828,8 @@ export const WarehouseManagerUI = () => {
 
         const validationErrors = validateTechnicalData(updatedData);
         if (validationErrors.length > 0) {
-            alert("⚠️ No se puede guardar la ficha técnica. Faltan datos críticos:\n\n" + validationErrors.map(e => "• " + e).join("\n"));
+            // v7 (D11): toast en lugar de alert() nativo (bloquea el hilo de UI).
+            showOpMessage("No se puede guardar la ficha técnica. Faltan datos críticos: " + validationErrors.join(" · "), 'error');
             return;
         }
 
@@ -426,7 +856,8 @@ export const WarehouseManagerUI = () => {
                 data: { ...editingItem.data, imgUrl: res.data.image_url }
             });
         } catch(err) {
-            alert("Error al subir imagen");
+            logger.error('Error al subir imagen:', err);
+            showOpMessage("Error al subir imagen", 'error');
         }
     };
 
@@ -467,14 +898,14 @@ export const WarehouseManagerUI = () => {
     const executeRestoreItem = () => {
         const { itemIndex, targetWhId } = restoreDialog;
         if (!targetWhId) {
-            alert("Selecciona un Almacén Destino");
+            showOpMessage("Selecciona un Almacén Destino", 'error');
             return;
         }
 
         const currentWhContent = getWHContent(targetWhId);
-        if(!currentWhContent) { 
-            alert("ID de Almacén inválido."); 
-            return; 
+        if(!currentWhContent) {
+            showOpMessage("ID de Almacén inválido.", 'error');
+            return;
         }
 
         const itemToRestore = discontinuedItems[itemIndex];
@@ -546,6 +977,42 @@ export const WarehouseManagerUI = () => {
 
     return (
         <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
+
+            {/* === v7 (Fase 4.4): INDICADOR DE ESTADO DE RED ===
+                Incidente 16.1: PROHIBIDO animate-pulse u otras animaciones de
+                bucle infinito. Solo `animate-in` de montaje único para evitar
+                el efecto estrobo en el operador. */}
+            <div className="fixed top-4 right-4 z-[60] flex flex-col items-end gap-2 pointer-events-none">
+                <div
+                    className={`animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest backdrop-blur-md shadow-lg ${
+                        isOnline
+                            ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300'
+                            : 'bg-amber-950/80 border-amber-500/50 text-amber-300'
+                    }`}
+                >
+                    <span
+                        className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                        aria-hidden="true"
+                    />
+                    {isOnline ? 'En línea' : 'Sin conexión'}
+                    {pendingOps > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-black/40 border border-white/10">
+                            {pendingOps} en cola
+                        </span>
+                    )}
+                </div>
+                {syncNotice && (
+                    <div
+                        className={`animate-in fade-in slide-in-from-top-2 duration-300 px-3 py-1.5 rounded-xl border text-[10px] font-bold backdrop-blur-md shadow-lg max-w-[260px] text-right ${
+                            syncNotice.type === 'success'
+                                ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-200'
+                                : 'bg-rose-950/80 border-rose-500/50 text-rose-200'
+                        }`}
+                    >
+                        {syncNotice.text}
+                    </div>
+                )}
+            </div>
 
             {/* === HEADER CONDICIONAL === */}
             {!selectedZone ? (
@@ -1067,6 +1534,260 @@ export const WarehouseManagerUI = () => {
                             {loadingOp ? '⏳ Procesando...' : `📥 Registrar Entrada (${bulkEntryItems.length} items)`}
                         </button>
                     </div>
+
+                    {/* ===== v7 (Fase 6.3): ESCÁNER IA DE VISIÓN ===== */}
+                    <div className="mt-6 bg-slate-900/50 border border-cyan-500/25 rounded-[32px] p-8">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-cyan-300 to-cyan-500 bg-clip-text text-transparent">📷 Escanear Charola (IA)</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">La IA propone cantidades · tú confirmas antes de registrar</p>
+                        <p className="text-[10px] font-bold text-cyan-300/80 uppercase tracking-widest mb-8">🔒 Regla human-in-the-loop: nunca se registra stock sin tu confirmación</p>
+
+                        {/* Input oculto: cámara trasera en móvil, selector en escritorio */}
+                        <input
+                            ref={visionFileRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={handleVisionFileChange}
+                            className="hidden"
+                        />
+
+                        {/* Selector de almacén destino */}
+                        <div className="mb-6">
+                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén Destino</label>
+                            <select
+                                value={visionTargetWH}
+                                onChange={(e) => setVisionTargetWH(e.target.value)}
+                                className="w-full max-w-md bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-cyan-400 appearance-none text-white"
+                            >
+                                <option value="">Selecciona un almacén...</option>
+                                {warehouses.map(wh => (
+                                    <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Botón de captura */}
+                        <button
+                            onClick={handleVisionCapture}
+                            disabled={visionScanning}
+                            className="bg-cyan-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-cyan-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {visionScanning ? '⏳ Analizando imagen...' : '📷 Escanear Charola'}
+                        </button>
+
+                        {/* Vista previa de la captura */}
+                        {visionPreview && (
+                            <div className="mt-6">
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Vista Previa</label>
+                                <img
+                                    src={visionPreview}
+                                    alt="Captura de charola"
+                                    className="max-w-xs rounded-2xl border border-cyan-500/30 shadow-lg"
+                                />
+                            </div>
+                        )}
+
+                        {/* Panel de confirmación human-in-the-loop */}
+                        {visionProposals.length > 0 && (
+                            <div className="mt-8">
+                                <label className="text-[9px] font-black uppercase text-cyan-300 mb-3 block tracking-widest">
+                                    Propuestas de la IA ({visionProposals.filter(p => p.confirmado).length}/{visionProposals.length} confirmadas)
+                                </label>
+                                <div className="space-y-3">
+                                    {visionProposals.map((p, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`flex items-center gap-4 border rounded-xl p-4 transition-colors ${p.confirmado ? 'bg-cyan-900/30 border-cyan-400/50' : 'bg-slate-800/60 border-slate-600/30'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={!!p.confirmado}
+                                                onChange={() => handleVisionConfirm(idx)}
+                                                className="w-5 h-5 accent-cyan-500 cursor-pointer"
+                                                title="Confirmar esta línea"
+                                            />
+                                            <div className="flex-1">
+                                                <span className="text-sm font-bold text-white block">{p.nombre}</span>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                    Confianza IA: {Math.round((p.confianza || 0) * 100)}%
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                value={p.cantidad}
+                                                onChange={(e) => handleVisionQtyChange(idx, e.target.value)}
+                                                className="w-28 bg-slate-900/80 border border-slate-500/30 p-2 rounded-lg text-sm font-mono text-center outline-none focus:border-cyan-400 text-white"
+                                            />
+                                            <span className="text-[9px] font-black text-slate-400 uppercase w-12">{p.unidad}</span>
+                                            <button
+                                                onClick={() => handleVisionDiscard(idx)}
+                                                className="text-red-400 hover:text-red-300 text-lg"
+                                                title="Descartar propuesta"
+                                            >✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex items-center gap-4 mt-6">
+                                    <button
+                                        onClick={handleSubmitVisionEntry}
+                                        disabled={loadingOp || visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0).length === 0}
+                                        className="bg-cyan-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-cyan-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {loadingOp ? '⏳ Procesando...' : `✅ Registrar Confirmadas (${visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0).length})`}
+                                    </button>
+                                    <button
+                                        onClick={resetVisionScanner}
+                                        className="text-slate-400 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                                    >
+                                        Descartar todo
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop) */}
+                    <div className="mt-6 bg-slate-900/50 border border-violet-500/25 rounded-[32px] p-8">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-violet-300 to-violet-500 bg-clip-text text-transparent">🎙️ Dictar Entrada (Voz)</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">La IA propone · tú confirmas antes de registrar</p>
+                        <p className="text-[10px] text-slate-500 mb-6">
+                            Requiere la IA local instalada. Si no está disponible, usa la captura manual de arriba.
+                        </p>
+
+                        {!voiceAvailable && (
+                            <div className="mb-6 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
+                                <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">
+                                    ⚠️ Dictado por voz no disponible (IA local apagada). El flujo manual sigue funcionando.
+                                </p>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Almacén destino</label>
+                                <select
+                                    value={voiceTargetWH}
+                                    onChange={(e) => setVoiceTargetWH(e.target.value)}
+                                    className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-bold text-white outline-none focus:border-violet-400"
+                                >
+                                    <option value="">— Selecciona almacén —</option>
+                                    {warehouses.map((wh) => (
+                                        <option key={wh.id} value={wh.id}>{wh.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-end">
+                                <button
+                                    onClick={voiceRecording ? handleVoiceStop : handleVoiceStart}
+                                    disabled={voiceTranscribing || !voiceAvailable}
+                                    className={`w-full px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        voiceRecording
+                                            ? 'bg-red-600 text-white hover:bg-red-500 shadow-red-600/20 animate-pulse'
+                                            : 'bg-violet-600 text-white hover:bg-violet-500 hover:scale-105 active:scale-95 shadow-violet-600/20'
+                                    }`}
+                                >
+                                    {voiceTranscribing
+                                        ? '⏳ Procesando audio...'
+                                        : voiceRecording
+                                            ? '⏹ Detener y procesar'
+                                            : '🎙️ Grabar dictado'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {voiceTranscript && (
+                            <div className="mb-6 bg-slate-950/60 border border-slate-500/20 rounded-2xl p-4">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto reconocido</p>
+                                <p className="text-sm text-slate-200 italic">"{voiceTranscript}"</p>
+                            </div>
+                        )}
+
+                        {voiceProposal && (
+                            <div className={`border rounded-2xl p-6 ${voiceProposal.revisar ? 'bg-amber-500/10 border-amber-500/40' : 'bg-slate-950/60 border-violet-500/25'}`}>
+                                <div className="flex items-center justify-between mb-4">
+                                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                                        Propuesta de la IA — revisa y confirma
+                                    </p>
+                                    <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
+                                        voiceProposal.revisar ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                                    }`}>
+                                        Confianza {Math.round((voiceProposal.confianza || 0) * 100)}%
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Insumo</label>
+                                        <select
+                                            value={voiceProposal.item_id}
+                                            onChange={(e) => handleVoiceProposalChange('item_id', e.target.value)}
+                                            className={`w-full bg-slate-900/80 border p-3 rounded-xl text-sm font-bold text-white outline-none ${
+                                                voiceProposal.sku_resuelto ? 'border-slate-500/30 focus:border-violet-400' : 'border-amber-500/60'
+                                            }`}
+                                        >
+                                            {!voiceProposal.sku_resuelto && (
+                                                <option value={voiceProposal.item_id}>⚠️ {voiceProposal.item_id || 'Sin reconocer'}</option>
+                                            )}
+                                            {(insumos || []).map((i) => (
+                                                <option key={i.id} value={i.id}>{i.nombre}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Cantidad</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={voiceProposal.cantidad}
+                                            onChange={(e) => handleVoiceProposalChange('cantidad', e.target.value)}
+                                            className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-mono text-center text-white outline-none focus:border-violet-400"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Unidad</label>
+                                        <input
+                                            type="text"
+                                            value={voiceProposal.unidad}
+                                            onChange={(e) => handleVoiceProposalChange('unidad', e.target.value)}
+                                            className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-bold text-center text-white outline-none focus:border-violet-400"
+                                        />
+                                    </div>
+                                </div>
+
+                                <label className="flex items-center gap-3 cursor-pointer mb-4">
+                                    <input
+                                        type="checkbox"
+                                        checked={voiceProposal.confirmado}
+                                        onChange={handleVoiceConfirm}
+                                        className="w-5 h-5 accent-violet-500"
+                                    />
+                                    <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                                        Confirmo que estos datos son correctos
+                                    </span>
+                                </label>
+
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={handleSubmitVoiceEntry}
+                                        disabled={loadingOp || !voiceProposal.confirmado}
+                                        className="bg-violet-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-violet-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {loadingOp ? '⏳ Procesando...' : '✅ Registrar Entrada por Voz'}
+                                    </button>
+                                    <button
+                                        onClick={resetVoiceCapture}
+                                        className="text-slate-400 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                                    >
+                                        Descartar dictado
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -1547,7 +2268,10 @@ export const WarehouseManagerUI = () => {
                         <footer className="p-8 border-t border-gray-800 bg-black/40 flex justify-end gap-4">
                             <button onClick={() => setShowAiScanner(false)} className="px-6 py-3 rounded-xl bg-gray-800 text-xs font-bold hover:bg-gray-700 text-white">Cancelar</button>
                             <button className="px-8 py-3 rounded-xl bg-pink-600 text-xs font-bold hover:bg-pink-500 shadow-lg shadow-pink-600/20 text-white" onClick={() => {
-                                alert('Simulando escaneo: 12 piezas de Concha Blanca detectadas.');
+                                // v7 (D11): MOCK pendiente de Fase 6. Se reemplazará por la
+                                // llamada real a POST /api/v1/pos/vision/predict con
+                                // human-in-the-loop. Se usa toast en lugar de alert() nativo.
+                                showOpMessage('Simulando escaneo: 12 piezas de Concha Blanca detectadas.', 'success');
                                 setShowAiScanner(false);
                             }}>Capturar y Contar</button>
                         </footer>

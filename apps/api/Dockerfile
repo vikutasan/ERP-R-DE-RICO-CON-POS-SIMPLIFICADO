@@ -22,4 +22,7 @@ COPY . .
 EXPOSE 3001
 
 # Comando para iniciar la aplicación
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3001", "--reload"]
+# NOTA (v7): --reload desactivado para evitar reinicios en vivo durante la
+# implementación del módulo de almacenes. Reactivar solo en desarrollo local
+# aislado, nunca con el POS operando.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3001"]

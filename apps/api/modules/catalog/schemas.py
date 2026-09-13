@@ -25,7 +25,10 @@ class ProductBase(BaseModel):
     price: float
     cost: Optional[float] = 0.0
     stock: Optional[float] = 0.0
-    warehouse: Optional[str] = "Bóveda Central"
+    # v7 (Fase 0.5, D-WH): sin default. "Bóveda Central" era un hardcode de una
+    # sucursal concreta, prohibido por el principio SaaS. La ubicacion real de un
+    # producto vive en `stock_almacen` (modulo warehouse), no en este campo.
+    warehouse: Optional[str] = None
     image_url: Optional[str] = None
     position: Optional[int] = None
     nature: str = "MANUFACTURADO"

@@ -22,12 +22,21 @@ async def update_warehouse(warehouse_id: str, payload: schemas.AlmacenUpdate, db
     return await warehouse_svc.update_warehouse(db, warehouse_id, payload)
 
 @router.delete("/{warehouse_id}")
-async def delete_warehouse(warehouse_id: str, db: AsyncSession = Depends(get_db)):
-    return await warehouse_svc.delete_warehouse(db, warehouse_id)
+async def delete_warehouse(warehouse_id: str, usuario_id: str = None, db: AsyncSession = Depends(get_db)):
+    """v7 (Fase 2.2): requiere permiso 'almacenes.eliminar' (403 si falta)."""
+    return await warehouse_svc.delete_warehouse(db, warehouse_id, usuario_id)
 
 @router.get("/{warehouse_id}/stock", response_model=List[schemas.StockAlmacenExtendedResponse])
 async def get_warehouse_stock(warehouse_id: str, db: AsyncSession = Depends(get_db)):
     return await warehouse_svc.get_warehouse_stock(db, warehouse_id)
+
+# v7 (Fase 0.5, D-STOCK): fuente unica de verdad del stock total por SKU.
+# IMPORTANTE: debe declararse ANTES de las rutas con path param "/{warehouse_id}/..."
+# para que "stock-por-sku" no se interprete como un warehouse_id.
+@router.get("/stock-por-sku/{sku}", response_model=schemas.StockPorSkuResponse)
+async def get_stock_by_sku(sku: str, db: AsyncSession = Depends(get_db)):
+    """Stock total de un SKU sumando todos los almacenes (fuente unica de verdad)."""
+    return await warehouse_svc.get_stock_by_sku(db, sku)
 
 @router.post("/{warehouse_id}/stock", response_model=schemas.MovimientoInventarioResponse)
 async def add_stock(warehouse_id: str, payload: schemas.MovimientoInventarioCreate, db: AsyncSession = Depends(get_db)):
@@ -82,6 +91,18 @@ async def bulk_entry(warehouse_id: str, payload: schemas.EntradaMasivaRequest, d
     """Entrada en lote con lote_entrada_id compartido."""
     return await warehouse_svc.register_bulk_entry(db, warehouse_id, payload)
 
+# v7 (Fase 6.2): entrada asistida por vision. El frontend captura la foto, la IA
+# propone cantidades y el operador las confirma/edita. Solo entonces se llama
+# aqui. El movimiento queda con metodo_captura = VISION_SNAPSHOT.
+@router.post("/{warehouse_id}/entrada-vision", response_model=schemas.VisionSnapshotResponse)
+async def vision_snapshot_entry(
+    warehouse_id: str,
+    payload: schemas.VisionSnapshotRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Registra una entrada confirmada por el operador tras deteccion por IA."""
+    return await warehouse_svc.register_vision_snapshot(db, warehouse_id, payload)
+
 @router.post("/{warehouse_id}/mermas", response_model=schemas.MovimientoInventarioResponse)
 async def register_merma(warehouse_id: str, payload: schemas.MermaRequest, db: AsyncSession = Depends(get_db)):
     """Registrar merma auditable (notas obligatorias)."""
@@ -101,3 +122,11 @@ async def list_pending_events(db: AsyncSession = Depends(get_db)):
 async def list_failed_events(db: AsyncSession = Depends(get_db)):
     """Dead-Letter Queue: eventos que fallaron 3+ veces."""
     return await warehouse_svc.get_failed_events(db)
+
+# v7 (Fase 1.3, D2): diagnostico de SKUs que no se pudieron descontar del stock.
+# Debe declararse ANTES de las rutas con path param "/{warehouse_id}/..." para
+# que "diagnostico" no se interprete como un warehouse_id.
+@router.get("/diagnostico/sin-almacen", response_model=List[schemas.EventoSinAlmacenResponse])
+async def list_eventos_sin_almacen(limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """SKUs que no se pudieron descontar (sin SKU, sin stock o sin almacen de venta)."""
+    return await warehouse_svc.get_eventos_sin_almacen(db, limit)

@@ -519,7 +519,7 @@ export const ExperimentCenterUI = () => {
                         {activeModule === 'repartos' && <GestorRepartosUI onBack={() => setActiveModule('overview')} />}
                         {activeModule === 'b2b' && <B2BManagerUI clients={mockData.clients} products={[]} />}
                         {activeModule === 'inventory' && <ProductCatalogUI userPermissions={userPermissions} />}
-                        {activeModule === 'warehouse' && <WarehouseManagerUI />}
+                        {activeModule === 'warehouse' && <WarehouseManagerUI currentUser={currentUser} />}
                         {activeModule === 'purchasing' && <PurchaseManagerUI />}
                         { activeModule === 'procurement' && <PurchasingHubUI /> }
                         { activeModule === 'logistics' && <LogisticsDashboardUI pendingDeliveries={mockData.pendingDeliveries} vehicles={mockData.vehicles} drivers={mockData.drivers} /> }
