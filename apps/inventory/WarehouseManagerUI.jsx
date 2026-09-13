@@ -7,6 +7,28 @@ import { CONFIG } from '../pos/config';
 const API_BASE = CONFIG.API_BASE_URL.replace('/api/v1', '');
 
 /**
+ * v7 (D11): logger estructurado en lugar de console.error suelto.
+ *
+ * Los console.error dispersos no llevan contexto ni se pueden silenciar en
+ * producción. Este helper centraliza el prefijo del módulo y respeta el modo
+ * de producción (solo emite en desarrollo), evitando ruido en la consola del
+ * operador durante la jornada.
+ */
+const LOG_PREFIX = '[Warehouse]';
+const logger = {
+    error: (message, error) => {
+        if (import.meta.env.DEV) {
+            console.error(`${LOG_PREFIX} ${message}`, error);
+        }
+    },
+    warn: (message, error) => {
+        if (import.meta.env.DEV) {
+            console.warn(`${LOG_PREFIX} ${message}`, error);
+        }
+    },
+};
+
+/**
  * R DE RICO - WAREHOUSE & STORAGE MANAGER
  * 
  * Hub visual para gestión de ubicaciones físicas, stock por almacén
@@ -43,7 +65,27 @@ const UNIT_OPTIONS = {
     "Volumen": ["LT", "ML", "GAL", "OZ FL", "COPA"]
 };
 
-export const WarehouseManagerUI = () => {
+/**
+ * v7 (D4): Resuelve el usuario_id de la sesión activa.
+ *
+ * Antes se enviaba la cadena literal 'VICTOR' en cada movimiento, lo que
+ * rompía la trazabilidad y la auditoría (violación de la regla SaaS: nada
+ * hardcodeado). Ahora se deriva del usuario autenticado que el shell de la
+ * aplicación inyecta como prop `currentUser`.
+ *
+ * Fallback: si el shell aún no propaga el usuario (módulo montado sin props),
+ * se usa 'SISTEMA' — un valor explícito y auditable, nunca el nombre de una
+ * persona real. El backend exige usuario_id no vacío.
+ */
+const resolveUserId = (currentUser) => {
+    if (currentUser && currentUser.id !== undefined && currentUser.id !== null) {
+        return String(currentUser.id);
+    }
+    return 'SISTEMA';
+};
+
+export const WarehouseManagerUI = ({ currentUser = null }) => {
+    const usuarioId = resolveUserId(currentUser);
     const [warehouses, setWarehouses] = useState([]);
     const [showAiScanner, setShowAiScanner] = useState(false);
     
@@ -61,7 +103,7 @@ export const WarehouseManagerUI = () => {
             }));
             setWarehouses(mapped);
         } catch(e) {
-            console.error(e);
+            logger.error('Error fetching warehouses:', e);
         }
     };
 
@@ -116,7 +158,7 @@ export const WarehouseManagerUI = () => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse/insumos`);
             setInsumos(res.data || []);
-        } catch(e) { console.error('Error fetching insumos:', e); }
+        } catch(e) { logger.error('Error fetching insumos:', e); }
     };
 
     const fetchMovements = async (almacenId = null) => {
@@ -126,14 +168,14 @@ export const WarehouseManagerUI = () => {
                 : `${API_BASE}/api/v1/warehouse/movimientos?limit=200`;
             const res = await axios.get(url);
             setMovements(res.data || []);
-        } catch(e) { console.error('Error fetching movements:', e); }
+        } catch(e) { logger.error('Error fetching movements:', e); }
     };
 
     const fetchWarehouseStock = async (whId) => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse/${whId}/stock`);
             return res.data || [];
-        } catch(e) { console.error('Error fetching stock:', e); return []; }
+        } catch(e) { logger.error('Error fetching stock:', e); return []; }
     };
 
     // Cargar insumos al montar
@@ -169,7 +211,7 @@ export const WarehouseManagerUI = () => {
                     cantidad: parseFloat(i.cantidad),
                     notas: i.notas || null
                 })),
-                usuario_id: 'VICTOR'
+                usuario_id: usuarioId
             };
             await axios.post(`${API_BASE}/api/v1/warehouse/${bulkTargetWH}/entrada-masiva`, payload);
             showOpMessage(`✅ Entrada masiva registrada: ${bulkEntryItems.length} items en lote`);
@@ -189,7 +231,7 @@ export const WarehouseManagerUI = () => {
         setLoadingOp(true);
         try {
             await axios.post(`${API_BASE}/api/v1/warehouse/${almacen_id}/mermas`, {
-                item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: 'VICTOR'
+                item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: usuarioId
             });
             showOpMessage(`✅ Merma registrada correctamente`);
             setMermaForm({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
@@ -212,7 +254,7 @@ export const WarehouseManagerUI = () => {
         try {
             await axios.post(`${API_BASE}/api/v1/warehouse/traspasos`, {
                 almacen_origen_id, almacen_destino_id, item_id, item_type,
-                cantidad: parseFloat(cantidad), usuario_id: 'VICTOR'
+                cantidad: parseFloat(cantidad), usuario_id: usuarioId
             });
             showOpMessage(`✅ Traspaso ejecutado correctamente`);
             setTraspasoForm({ almacen_origen_id: '', almacen_destino_id: '', item_id: '', item_type: 'INSUMO', cantidad: '' });
@@ -346,7 +388,8 @@ export const WarehouseManagerUI = () => {
             setShowWHEditor(false);
             setEditingWHData(null);
         } catch(e) {
-            alert('Error guardando almacén');
+            logger.error('Error guardando almacén:', e);
+            showOpMessage(e.response?.data?.detail || 'Error guardando almacén', 'error');
         }
     };
 
@@ -357,21 +400,30 @@ export const WarehouseManagerUI = () => {
             setWhToDelete(null);
             setSelectedWH(null);
         } catch(e) {
-            alert(e.response?.data?.detail || 'Error eliminando almacén');
+            logger.error('Error eliminando almacén:', e);
+            showOpMessage(e.response?.data?.detail || 'Error eliminando almacén', 'error');
         }
     };
 
     const addItemToWH = async (product) => {
+        // v7 (D5): el endpoint POST /{id}/items NO existe en el router.
+        // El endpoint real es POST /{warehouse_id}/stock y espera el contrato
+        // MovimientoInventarioCreate (item_id, item_type, cantidad, tipo_movimiento,
+        // metodo_captura, usuario_id). Se registra un movimiento de entrada con
+        // cantidad 0 para "dar de alta" el SKU en el almacén sin alterar existencias.
         const payload = {
-            sku: product.sku,
-            name: product.name,
-            quantity: 0,
-            unit: product.unit || 'PZA',
-            category: product.category || 'NA',
-            price: product.price || 0
+            almacen_origen_id: null,
+            almacen_destino_id: selectedWH.id,
+            item_id: product.sku,
+            item_type: 'PRODUCTO',
+            cantidad: 0,
+            tipo_movimiento: 'AJUSTE',
+            metodo_captura: 'MANUAL',
+            usuario_id: usuarioId,
+            notas: `Alta de artículo en almacén: ${product.name}`
         };
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/${selectedWH.id}/items`, payload);
+            await axios.post(`${API_BASE}/api/v1/warehouse/${selectedWH.id}/stock`, payload);
             fetchWarehouses();
             
             const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
@@ -380,7 +432,8 @@ export const WarehouseManagerUI = () => {
             
             setShowItemPicker(false);
         } catch(e) {
-            alert('Error agregando artículo');
+            logger.error('Error agregando artículo:', e);
+            showOpMessage(e.response?.data?.detail || 'Error agregando artículo', 'error');
         }
     };
 
@@ -399,7 +452,8 @@ export const WarehouseManagerUI = () => {
 
         const validationErrors = validateTechnicalData(updatedData);
         if (validationErrors.length > 0) {
-            alert("⚠️ No se puede guardar la ficha técnica. Faltan datos críticos:\n\n" + validationErrors.map(e => "• " + e).join("\n"));
+            // v7 (D11): toast en lugar de alert() nativo (bloquea el hilo de UI).
+            showOpMessage("No se puede guardar la ficha técnica. Faltan datos críticos: " + validationErrors.join(" · "), 'error');
             return;
         }
 
@@ -426,7 +480,8 @@ export const WarehouseManagerUI = () => {
                 data: { ...editingItem.data, imgUrl: res.data.image_url }
             });
         } catch(err) {
-            alert("Error al subir imagen");
+            logger.error('Error al subir imagen:', err);
+            showOpMessage("Error al subir imagen", 'error');
         }
     };
 
@@ -467,14 +522,14 @@ export const WarehouseManagerUI = () => {
     const executeRestoreItem = () => {
         const { itemIndex, targetWhId } = restoreDialog;
         if (!targetWhId) {
-            alert("Selecciona un Almacén Destino");
+            showOpMessage("Selecciona un Almacén Destino", 'error');
             return;
         }
 
         const currentWhContent = getWHContent(targetWhId);
-        if(!currentWhContent) { 
-            alert("ID de Almacén inválido."); 
-            return; 
+        if(!currentWhContent) {
+            showOpMessage("ID de Almacén inválido.", 'error');
+            return;
         }
 
         const itemToRestore = discontinuedItems[itemIndex];
@@ -1547,7 +1602,10 @@ export const WarehouseManagerUI = () => {
                         <footer className="p-8 border-t border-gray-800 bg-black/40 flex justify-end gap-4">
                             <button onClick={() => setShowAiScanner(false)} className="px-6 py-3 rounded-xl bg-gray-800 text-xs font-bold hover:bg-gray-700 text-white">Cancelar</button>
                             <button className="px-8 py-3 rounded-xl bg-pink-600 text-xs font-bold hover:bg-pink-500 shadow-lg shadow-pink-600/20 text-white" onClick={() => {
-                                alert('Simulando escaneo: 12 piezas de Concha Blanca detectadas.');
+                                // v7 (D11): MOCK pendiente de Fase 6. Se reemplazará por la
+                                // llamada real a POST /api/v1/pos/vision/predict con
+                                // human-in-the-loop. Se usa toast en lugar de alert() nativo.
+                                showOpMessage('Simulando escaneo: 12 piezas de Concha Blanca detectadas.', 'success');
                                 setShowAiScanner(false);
                             }}>Capturar y Contar</button>
                         </footer>

@@ -9,6 +9,14 @@ class ZonaTermica(str, Enum):
     CONGELADO = "CONGELADO"
 
 class PropositoAlmacen(str, Enum):
+    """v7 (D-ENUM): proposito de un almacen.
+
+    EQUIPAMIENTO NO es un valor huerfano: el frontend lo usa como subcategoria
+    de UI y lo envia como `proposito` al crear almacenes de equipamiento
+    (WarehouseManagerUI.jsx -> SUB_CATEGORIES). Se conserva para no romper la
+    creacion de esos almacenes. Si en el futuro se decide retirarlo, primero
+    hay que migrar los registros existentes en la tabla `almacenes`.
+    """
     ALMACENAMIENTO = "ALMACENAMIENTO"
     EXHIBICION_VENTA = "EXHIBICION_VENTA"
     EQUIPAMIENTO = "EQUIPAMIENTO"

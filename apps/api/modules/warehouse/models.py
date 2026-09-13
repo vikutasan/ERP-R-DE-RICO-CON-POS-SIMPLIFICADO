@@ -5,6 +5,14 @@ import datetime
 import uuid
 import json
 
+
+def _utcnow():
+    """v7 (D3): UTC timezone-aware. Reemplaza datetime.utcnow() (deprecado en Python 3.12).
+
+    Regla de oro del proyecto: almacenar en UTC, mostrar en hora local.
+    """
+    return datetime.datetime.now(datetime.timezone.utc)
+
 class Insumo(Base):
     __tablename__ = "insumos"
     id = Column(String, primary_key=True, default=lambda: f"ins_{uuid.uuid4().hex[:8]}")
@@ -20,13 +28,18 @@ class Almacen(Base):
     id = Column(String, primary_key=True, default=lambda: f"alm_{uuid.uuid4().hex[:8]}")
     nombre = Column(String, nullable=False)
     zona_termica = Column(String, nullable=False) # SECO, REFRIGERADO, CONGELADO
-    proposito = Column(String, nullable=False) # ALMACENAMIENTO, EXHIBICION_VENTA
+    # v7 (D-ENUM): valores validos = ALMACENAMIENTO, EXHIBICION_VENTA, EQUIPAMIENTO.
+    # El comentario anterior omitia EQUIPAMIENTO, lo que hacia parecer huerfano el
+    # valor del enum en schemas.py. EQUIPAMIENTO SI se persiste: el frontend lo
+    # envia como proposito al crear almacenes de equipamiento (ver SUB_CATEGORIES
+    # en WarehouseManagerUI.jsx). No eliminar del enum.
+    proposito = Column(String, nullable=False)
     sucursal_id = Column(String, nullable=True)
     foto_url = Column(String, nullable=True)
     planograma_url = Column(String, nullable=True)
     pautas_acomodo = Column(JSON, default=list)
     activo = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     stock = relationship("StockAlmacen", back_populates="almacen", cascade="all, delete-orphan")
 
@@ -39,10 +52,10 @@ class StockAlmacen(Base):
     cantidad_actual = Column(Float, default=0.0)
     stock_minimo = Column(Float, default=0.0)
     stock_maximo = Column(Float, default=0.0)
-    fecha_ingreso = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_ingreso = Column(DateTime, default=_utcnow)
     dias_anaquel_alerta = Column(Integer, nullable=True)
     version = Column(Integer, default=1)
-    ultima_actualizacion = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    ultima_actualizacion = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     almacen = relationship("Almacen", back_populates="stock")
 
@@ -59,7 +72,7 @@ class MovimientoInventario(Base):
     usuario_id = Column(String, nullable=False)
     notas = Column(String, nullable=True)
     lote_entrada_id = Column(String, nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=_utcnow)
 
 class WarehouseEvent(Base):
     __tablename__ = "warehouse_events"
@@ -69,4 +82,4 @@ class WarehouseEvent(Base):
     estado = Column(String, default="PENDIENTE") # PENDIENTE, PROCESADO, FALLIDO
     intentos = Column(Integer, default=0)
     error_log = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)

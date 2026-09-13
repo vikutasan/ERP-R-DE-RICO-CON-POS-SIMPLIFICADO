@@ -63,27 +63,50 @@ class WarehouseService:
     async def get_warehouse_stock(self, db: AsyncSession, wh_id: str):
         result = await db.execute(select(models.StockAlmacen).where(models.StockAlmacen.almacen_id == wh_id))
         stock_items = result.scalars().all()
-        
-        # Enriquecer con info de producto/insumo
+
+        if not stock_items:
+            return []
+
+        # v7 (D10): antes se ejecutaba 1 query por cada item (N+1). Con 200 SKUs
+        # eso eran 201 round-trips a la BD. Ahora se hace un solo SELECT ... IN
+        # por cada tipo de item y se resuelve el enriquecimiento en memoria.
+        producto_skus = [
+            s.item_id for s in stock_items
+            if s.item_type == schemas.ItemType.PRODUCTO.value
+        ]
+        insumo_ids = [
+            s.item_id for s in stock_items
+            if s.item_type != schemas.ItemType.PRODUCTO.value
+        ]
+
+        productos_map = {}
+        if producto_skus:
+            prod_res = await db.execute(select(Product).where(Product.sku.in_(producto_skus)))
+            productos_map = {p.sku: p for p in prod_res.scalars().all()}
+
+        insumos_map = {}
+        if insumo_ids:
+            ins_res = await db.execute(select(models.Insumo).where(models.Insumo.id.in_(insumo_ids)))
+            insumos_map = {i.id: i for i in ins_res.scalars().all()}
+
+        # Enriquecer con info de producto/insumo (lookup en memoria, sin queries)
         enriched = []
         for stock in stock_items:
             stock_dict = schemas.StockAlmacenExtendedResponse.model_validate(stock).model_dump()
             if stock.item_type == schemas.ItemType.PRODUCTO.value:
-                prod_res = await db.execute(select(Product).where(Product.sku == stock.item_id))
-                prod = prod_res.scalar_one_or_none()
+                prod = productos_map.get(stock.item_id)
                 if prod:
                     stock_dict["item_name"] = prod.name
                     stock_dict["item_image_url"] = prod.image_url
                     stock_dict["item_price"] = float(prod.price)
                     stock_dict["item_unit"] = "PZA"
             else:
-                ins_res = await db.execute(select(models.Insumo).where(models.Insumo.id == stock.item_id))
-                ins = ins_res.scalar_one_or_none()
+                ins = insumos_map.get(stock.item_id)
                 if ins:
                     stock_dict["item_name"] = ins.nombre
                     stock_dict["item_unit"] = ins.unidad_base
             enriched.append(stock_dict)
-            
+
         return enriched
         
     async def register_movement(self, db: AsyncSession, payload: schemas.MovimientoInventarioCreate):
@@ -104,12 +127,14 @@ class WarehouseService:
                 almacen_id=payload.almacen_destino_id,
                 item_id=payload.item_id,
                 item_type=payload.item_type.value,
-                cantidad_actual=payload.cantidad
+                cantidad_actual=payload.cantidad,
+                version=1  # v7 (D9): stock nuevo nace en version 1
             )
             db.add(stock)
         else:
             stock.cantidad_actual += payload.cantidad
-            
+            stock.version += 1  # v7 (D7): bloqueo optimista, toda mutacion incrementa version
+
         await db.commit()
         await db.refresh(mov)
         return mov
@@ -139,6 +164,7 @@ class WarehouseService:
         )
         db.add(mov_salida)
         stock_origen.cantidad_actual -= payload.cantidad
+        stock_origen.version += 1  # v7 (D8): bloqueo optimista en origen
 
         # Entrada al destino
         mov_entrada = models.MovimientoInventario(
@@ -165,11 +191,13 @@ class WarehouseService:
                 almacen_id=payload.almacen_destino_id,
                 item_id=payload.item_id,
                 item_type=payload.item_type.value,
-                cantidad_actual=payload.cantidad
+                cantidad_actual=payload.cantidad,
+                version=1  # v7 (D9): stock nuevo nace en version 1
             )
             db.add(stock_destino)
         else:
             stock_destino.cantidad_actual += payload.cantidad
+            stock_destino.version += 1  # v7 (D8): bloqueo optimista en destino
 
         await db.commit()
         await db.refresh(mov_entrada)
@@ -237,12 +265,13 @@ class WarehouseService:
                     almacen_id=wh_id,
                     item_id=item.item_id,
                     item_type=item.item_type.value,
-                    cantidad_actual=item.cantidad
+                    cantidad_actual=item.cantidad,
+                    version=1  # v7 (D9): stock nuevo nace en version 1
                 )
                 db.add(stock)
             else:
                 stock.cantidad_actual += item.cantidad
-                stock.version += 1
+                stock.version += 1  # v7 (D9): ya existia, se mantiene el incremento
 
             resultados.append({"item_id": item.item_id, "cantidad": item.cantidad, "status": "OK"})
 
