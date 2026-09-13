@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { CONFIG } from '../pos/config';
 import {
     classifyTerminalStatus,
     classifyEvents,
@@ -13,11 +14,9 @@ import {
  * y un historial de eventos de desconexión de las últimas 24 horas.
  */
 
-const API_BASE = (() => {
-    const host = window.location.hostname;
-    const port = '5001';
-    return `http://${host}:${port}/api/v1`;
-})();
+// v13 (Fase 13.2): única fuente de verdad de la URL del API (Incidente 16.6).
+// PROHIBIDO reconstruir la URL con window.location.hostname + ':5001'.
+const API_BASE = CONFIG.API_BASE_URL;
 
 const TERMINALS = ['T6', 'T5', 'T4', 'T3', 'T2', 'CAJA'];
 
