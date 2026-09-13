@@ -14,6 +14,13 @@ import {
     validateMerma,
     validateTraspaso,
 } from './utils/warehouseMappers';
+// v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
+import {
+    createWarehouseNetworkMonitor,
+    getPendingCount,
+    enqueueOperacion,
+} from './services/offlineQueue';
+import { inicializarPWA } from './services/pwaRuntime';
 
 const API_BASE = CONFIG.API_BASE_URL.replace('/api/v1', '');
 
@@ -99,6 +106,55 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     useEffect(() => {
         fetchWarehouses();
     }, []);
+
+    // --- v7 (Fase 4): estado de red y cola offline ---
+    // Incidente 16.1: el indicador NO usa animaciones de bucle infinito.
+    // Solo transiciones de montaje único (animate-in) para evitar efecto estrobo.
+    const [isOnline, setIsOnline] = useState(
+        typeof navigator !== 'undefined' ? navigator.onLine : true
+    );
+    const [pendingOps, setPendingOps] = useState(0);
+    const [syncNotice, setSyncNotice] = useState(null); // { text, type }
+
+    useEffect(() => {
+        // Inicializa la capa PWA (SW + manifest desde system_settings).
+        inicializarPWA();
+
+        const refrescarPendientes = async () => {
+            try {
+                const n = await getPendingCount();
+                setPendingOps(n);
+            } catch (e) {
+                // IndexedDB no disponible: se ignora silenciosamente.
+            }
+        };
+        refrescarPendientes();
+
+        const monitor = createWarehouseNetworkMonitor({
+            onStatusChange: (online) => {
+                setIsOnline(online);
+                if (online) refrescarPendientes();
+            },
+            onSync: (resultado) => {
+                refrescarPendientes();
+                if (resultado && resultado.synced > 0) {
+                    setSyncNotice({
+                        text: `Sincronizadas ${resultado.synced} operación(es) pendiente(s).`,
+                        type: 'success',
+                    });
+                }
+                if (resultado && resultado.conflicts && resultado.conflicts.length > 0) {
+                    setSyncNotice({
+                        text: `${resultado.conflicts.length} operación(es) con conflicto; revísalas en el historial.`,
+                        type: 'error',
+                    });
+                }
+            },
+        });
+
+        return () => monitor.destroy();
+    }, []);
+
     const [warehouseTypes, setWarehouseTypes] = useState(INITIAL_TYPES);
     const [selectedWH, setSelectedWH] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -181,6 +237,43 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         setTimeout(() => setOpMessage({ text: '', type: '' }), 4000);
     };
 
+    /**
+     * v7 (Fase 4.1): intenta una escritura contra el backend y, si no hay red,
+     * la encola en IndexedDB para sincronizarla al reconectar. La UI nunca se
+     * bloquea: aplica optimista y reconcilia al sincronizar.
+     *
+     * @returns {Promise<{offline:boolean, error?:string}>}
+     */
+    const ejecutarOEncolar = async ({ ruta, body, label, exitoMsg }) => {
+        // Sin red conocida: encolar directamente sin intentar la petición.
+        if (!isOnline) {
+            await enqueueOperacion({ ruta, body, label, sucursalId: usuarioId });
+            const n = await getPendingCount();
+            setPendingOps(n);
+            showOpMessage(`📥 Sin conexión: ${exitoMsg} (en cola para sincronizar)`);
+            return { offline: true };
+        }
+        try {
+            await axios.post(`${API_BASE}/api/v1/warehouse${ruta}`, body);
+            showOpMessage(`✅ ${exitoMsg}`);
+            return { offline: false };
+        } catch (e) {
+            // Fallo de red (no respuesta del servidor): encolar para reintento.
+            const esFalloDeRed = !e.response;
+            if (esFalloDeRed) {
+                await enqueueOperacion({ ruta, body, label, sucursalId: usuarioId });
+                const n = await getPendingCount();
+                setPendingOps(n);
+                setIsOnline(false);
+                showOpMessage(`📥 Sin conexión: ${exitoMsg} (en cola para sincronizar)`);
+                return { offline: true };
+            }
+            // Error de negocio (4xx/5xx con respuesta): reportar al operador.
+            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
+            return { offline: false, error: e.response?.data?.detail || e.message };
+        }
+    };
+
     const handleSubmitBulkEntry = async () => {
         // v7 (Fase 3.2): validación y armado del payload delegados al módulo
         // puro cubierto por Vitest.
@@ -192,12 +285,14 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         setLoadingOp(true);
         try {
             const payload = buildBulkEntryPayload(bulkEntryItems, usuarioId);
-            await axios.post(`${API_BASE}/api/v1/warehouse/${bulkTargetWH}/entrada-masiva`, payload);
-            showOpMessage(`✅ Entrada masiva registrada: ${bulkEntryItems.length} items en lote`);
+            await ejecutarOEncolar({
+                ruta: `/${bulkTargetWH}/entrada-masiva`,
+                body: payload,
+                label: `Entrada masiva (${bulkEntryItems.length} items)`,
+                exitoMsg: `Entrada masiva registrada: ${bulkEntryItems.length} items en lote`,
+            });
             setBulkEntryItems([]);
             setBulkTargetWH('');
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
@@ -211,13 +306,13 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         }
         setLoadingOp(true);
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/${almacen_id}/mermas`, {
-                item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: usuarioId
+            await ejecutarOEncolar({
+                ruta: `/${almacen_id}/mermas`,
+                body: { item_id, item_type, cantidad: parseFloat(cantidad), notas, usuario_id: usuarioId },
+                label: `Merma de ${cantidad} ${item_type === 'INSUMO' ? 'insumo' : 'producto'}`,
+                exitoMsg: 'Merma registrada correctamente',
             });
-            showOpMessage(`✅ Merma registrada correctamente`);
             setMermaForm({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
@@ -231,14 +326,16 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         }
         setLoadingOp(true);
         try {
-            await axios.post(`${API_BASE}/api/v1/warehouse/traspasos`, {
-                almacen_origen_id, almacen_destino_id, item_id, item_type,
-                cantidad: parseFloat(cantidad), usuario_id: usuarioId
+            await ejecutarOEncolar({
+                ruta: '/traspasos',
+                body: {
+                    almacen_origen_id, almacen_destino_id, item_id, item_type,
+                    cantidad: parseFloat(cantidad), usuario_id: usuarioId,
+                },
+                label: `Traspaso de ${cantidad} unidades`,
+                exitoMsg: 'Traspaso ejecutado correctamente',
             });
-            showOpMessage(`✅ Traspaso ejecutado correctamente`);
             setTraspasoForm({ almacen_origen_id: '', almacen_destino_id: '', item_id: '', item_type: 'INSUMO', cantidad: '' });
-        } catch(e) {
-            showOpMessage(`❌ Error: ${e.response?.data?.detail || e.message}`, 'error');
         } finally { setLoadingOp(false); }
     };
 
@@ -567,6 +664,42 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     return (
         <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
+
+            {/* === v7 (Fase 4.4): INDICADOR DE ESTADO DE RED ===
+                Incidente 16.1: PROHIBIDO animate-pulse u otras animaciones de
+                bucle infinito. Solo `animate-in` de montaje único para evitar
+                el efecto estrobo en el operador. */}
+            <div className="fixed top-4 right-4 z-[60] flex flex-col items-end gap-2 pointer-events-none">
+                <div
+                    className={`animate-in fade-in slide-in-from-top-2 duration-300 flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest backdrop-blur-md shadow-lg ${
+                        isOnline
+                            ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-300'
+                            : 'bg-amber-950/80 border-amber-500/50 text-amber-300'
+                    }`}
+                >
+                    <span
+                        className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                        aria-hidden="true"
+                    />
+                    {isOnline ? 'En línea' : 'Sin conexión'}
+                    {pendingOps > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded-full bg-black/40 border border-white/10">
+                            {pendingOps} en cola
+                        </span>
+                    )}
+                </div>
+                {syncNotice && (
+                    <div
+                        className={`animate-in fade-in slide-in-from-top-2 duration-300 px-3 py-1.5 rounded-xl border text-[10px] font-bold backdrop-blur-md shadow-lg max-w-[260px] text-right ${
+                            syncNotice.type === 'success'
+                                ? 'bg-emerald-950/70 border-emerald-500/40 text-emerald-200'
+                                : 'bg-rose-950/80 border-rose-500/50 text-rose-200'
+                        }`}
+                    >
+                        {syncNotice.text}
+                    </div>
+                )}
+            </div>
 
             {/* === HEADER CONDICIONAL === */}
             {!selectedZone ? (
