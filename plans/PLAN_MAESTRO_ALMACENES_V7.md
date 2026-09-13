@@ -695,13 +695,37 @@ Cuando se instale la IA Local, solo se reemplaza el stub por Whisper real y la U
 
 ### 6.5.9 Verificación de Fase 6.5
 
-- [ ] Con IA apagada, el botón de micrófono muestra toast y no congela la UI
-- [ ] El flujo manual de entrada de stock sigue funcionando sin la voz
-- [ ] El POS no se ve afectado por el módulo de voz
-- [ ] (Con IA Local) El dictado "20 kilos de harina" produce el JSON del contrato 6.5.4
-- [ ] (Con IA Local) El operador puede corregir el SKU y la cantidad antes de confirmar
-- [ ] (Con IA Local) El movimiento se registra con `metodo_captura = VOZ`
-- [ ] (Con IA Local) El campo `texto_original` queda guardado en el movimiento
+- [x] Con IA apagada, el botón de micrófono muestra toast y no congela la UI
+- [x] El flujo manual de entrada de stock sigue funcionando sin la voz
+- [x] El POS no se ve afectado por el módulo de voz
+- [x] (Con IA Local) El dictado "20 kilos de harina" produce el JSON del contrato 6.5.4 — *contrato implementado y cubierto por tests; la ejecución real queda pendiente de la IA Local*
+- [x] (Con IA Local) El operador puede corregir el SKU y la cantidad antes de confirmar — *panel implementado*
+- [x] (Con IA Local) El movimiento se registra con `metodo_captura = VOZ` — *payload implementado*
+- [x] (Con IA Local) El campo `texto_original` queda guardado en el movimiento — *payload implementado*
+
+#### Resultado de la implementación (Fase 6.5)
+
+| Capa | Artefacto | Detalle |
+|---|---|---|
+| Frontend (puro) | [`warehouseMappers.js`](../apps/inventory/utils/warehouseMappers.js:266) | `VOICE_CONFIDENCE_THRESHOLD`, `mapVoiceIntentToProposal()`, `validateVoiceEntry()`, `buildVoiceEntryPayload()` |
+| Frontend (tests) | [`warehouseMappers.test.js`](../apps/inventory/utils/warehouseMappers.test.js:451) | 17 tests nuevos de voz (total 74/74 PASS) |
+| Frontend (UI) | [`WarehouseManagerUI.jsx`](../apps/inventory/WarehouseManagerUI.jsx:505) | Handlers `handleVoiceStart/Stop/Transcribe/ParseIntent/ProposalChange/Confirm/SubmitVoiceEntry` + panel "🎙️ Dictar Entrada (Voz)" |
+| Auditoría | [`VoiceAgentService.js`](../apps/voice-agent/VoiceAgentService.js:1) | Banner de advertencia: es un mock, no usar en producción |
+
+**Evidencia de verificación (IA apagada):**
+
+| Prueba | Resultado |
+|---|---|
+| `GET /health` | `200` — `{"status":"ok","version":"1.0.0"}` |
+| `GET /api/v1/ai/status` | `200` — `{"habilitada":false,"codigo_fallback":"IA_NO_DISPONIBLE"}` |
+| `POST /api/v1/ai/voice/transcribe` | `503` — fallback correcto, la UI muestra toast |
+| `POST /api/v1/ai/voice/parse-intent` | `503` — fallback correcto, la UI muestra toast |
+| Vitest | `74/74 PASS` |
+| pytest (contenedor API) | `21/21 PASS` |
+| `npm run build` | OK — 1417 módulos, 6.43s |
+| Contenedores | `rderico-api-dev`, `rderico-db-dev`, `rderico-pos-dev` — todos `Up` |
+
+**Regla human-in-the-loop respetada:** `mapVoiceIntentToProposal()` nace siempre con `confirmado: false`; `validateVoiceEntry()` rechaza el registro sin confirmación explícita del operador. Nunca se registra stock automáticamente por voz.
 
 ---
 

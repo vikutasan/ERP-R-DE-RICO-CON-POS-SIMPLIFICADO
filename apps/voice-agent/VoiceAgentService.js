@@ -1,9 +1,36 @@
 /**
  * R de Rico - Agente de Voz (Gemini Live Integration)
- * 
- * Este módulo permite al socio administrador interactuar con el ERP 
+ *
+ * ⚠️⚠️⚠️ ADVERTENCIA CRÍTICA — ESTE MÓDULO ES UN MOCK, NO UNA IMPLEMENTACIÓN REAL ⚠️⚠️⚠️
+ *
+ * v7 (Fase 6.5.1): Auditoría ejecutada. Este archivo NO debe usarse en producción
+ * ni tomarse como referencia de comportamiento. Hallazgos:
+ *
+ *   1. NO captura audio. `processQuery(voiceInput)` recibe TEXTO ya transcrito;
+ *      no hay integración con micrófono ni con MediaRecorder.
+ *   2. NO consulta la base de datos. Todos los métodos devuelven datos
+ *      HARDCODEADOS (p. ej. "margen del 34%", "Harina Extra Fina 15kg").
+ *      Esto VIOLA la regla SaaS de no hardcodear datos de negocio.
+ *   3. NO tiene NLU real. Es una cadena de `if (input.includes(...))`, no
+ *      comprensión de lenguaje natural.
+ *   4. Devuelve INFORMACIÓN FALSA al usuario (cifras inventadas presentadas
+ *      como reales), lo cual es peor que no responder.
+ *
+ * RUTA CORRECTA (v7): la captura de inventario por voz se implementa en el
+ * módulo de almacenes usando los endpoints reales del AI Gateway:
+ *   - POST /api/v1/ai/voice/transcribe   (audio → texto; Whisper local)
+ *   - POST /api/v1/ai/voice/parse-intent (texto → JSON estructurado; LLM local)
+ * con confirmación human-in-the-loop y `metodo_captura = VOZ`.
+ * Ver `plans/PLAN_MAESTRO_ALMACENES_V7.md` secciones 6.5.1 a 6.5.9.
+ *
+ * Este archivo se conserva únicamente como referencia histórica de la
+ * estructura de intenciones. NO importar desde código nuevo.
+ *
+ * ---
+ * Descripción original (obsoleta):
+ * Este módulo permite al socio administrador interactuar con el ERP
  * mediante lenguaje natural y voz.
- * 
+ *
  * Funciones clave:
  * 1. Consultas de Margen de Utilidad en tiempo real.
  * 2. Estatus de producción (Próximas tandas).

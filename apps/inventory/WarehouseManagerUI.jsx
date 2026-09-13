@@ -17,6 +17,10 @@ import {
     mapVisionDetectionsToProposals,
     validateVisionSnapshot,
     buildVisionSnapshotPayload,
+    // v7 (Fase 6.5): captura de inventario por voz (human-in-the-loop).
+    mapVoiceIntentToProposal,
+    validateVoiceEntry,
+    buildVoiceEntryPayload,
 } from './utils/warehouseMappers';
 // v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
 import {
@@ -192,6 +196,15 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     const [visionScanning, setVisionScanning] = useState(false);
     const [visionPreview, setVisionPreview] = useState(null);
     const visionFileRef = useRef(null);
+    // v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop)
+    const [voiceTargetWH, setVoiceTargetWH] = useState('');
+    const [voiceRecording, setVoiceRecording] = useState(false);
+    const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+    const [voiceTranscript, setVoiceTranscript] = useState('');
+    const [voiceProposal, setVoiceProposal] = useState(null);
+    const [voiceAvailable, setVoiceAvailable] = useState(true);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
     // Mermas
     const [mermaForm, setMermaForm] = useState({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
     // Traspasos
@@ -486,6 +499,179 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
             });
             resetVisionScanner();
             setVisionTargetWH('');
+        } finally { setLoadingOp(false); }
+    };
+
+    // --- v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop) ---
+    // Regla de oro (spec línea 664): la IA PROPONE, el operador CONFIRMA.
+    // Nunca se registra stock automáticamente por voz. Si la IA local no está
+    // instalada, el flujo manual sigue funcionando (spec línea 692).
+
+    const resetVoiceCapture = () => {
+        setVoiceProposal(null);
+        setVoiceTranscript('');
+        setVoiceRecording(false);
+        setVoiceTranscribing(false);
+        audioChunksRef.current = [];
+    };
+
+    /**
+     * Fase 6.5.2: inicia la grabación con MediaRecorder.
+     * Fase 6.5.3: si el navegador no soporta audio o el permiso falla, se
+     * degrada al flujo manual sin romper la UI.
+     */
+    const handleVoiceStart = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            setVoiceAvailable(false);
+            showOpMessage('🎙️ Dictado por voz no disponible en este dispositivo. Capture manualmente.', 'error');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioChunksRef.current = [];
+            const recorder = new MediaRecorder(stream);
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+            };
+            recorder.onstop = async () => {
+                stream.getTracks().forEach((t) => t.stop());
+                const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+                await handleVoiceTranscribe(blob);
+            };
+            mediaRecorderRef.current = recorder;
+            recorder.start();
+            setVoiceRecording(true);
+            setVoiceProposal(null);
+            setVoiceTranscript('');
+        } catch (err) {
+            logger.error('Error al iniciar grabación de voz:', err);
+            setVoiceAvailable(false);
+            showOpMessage('🎙️ No se pudo acceder al micrófono. Capture manualmente.', 'error');
+        }
+    };
+
+    const handleVoiceStop = () => {
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+            recorder.stop();
+        }
+        setVoiceRecording(false);
+    };
+
+    /**
+     * Fase 6.5.3: transcribe el audio y luego pide la intención estructurada.
+     * Fallback 503 IA_NO_DISPONIBLE => toast informativo, sin congelar la UI.
+     */
+    const handleVoiceTranscribe = async (blob) => {
+        setVoiceTranscribing(true);
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+            const res = await axios.post(`${API_BASE}/api/v1/ai/voice/transcribe`, {
+                audio_base64: base64,
+                idioma: 'es',
+                formato: blob.type || 'audio/webm',
+            });
+            const texto = (res.data?.texto || '').trim();
+            if (!texto) {
+                showOpMessage('🎙️ No se entendió el dictado. Intenta de nuevo o captura manualmente.', 'error');
+                return;
+            }
+            setVoiceTranscript(texto);
+            await handleVoiceParseIntent(texto);
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status === 503) {
+                setVoiceAvailable(false);
+                showOpMessage('🎙️ Dictado por voz no disponible (IA local apagada). Capture manualmente.', 'error');
+            } else {
+                logger.error('Error al transcribir voz:', err);
+                showOpMessage('🎙️ No se pudo procesar el audio. Capture manualmente.', 'error');
+            }
+        } finally {
+            setVoiceTranscribing(false);
+        }
+    };
+
+    /**
+     * Fase 6.5.5: convierte el texto en una intención estructurada y la mapea a
+     * una propuesta editable. La confianza baja marca la línea para revisión.
+     */
+    const handleVoiceParseIntent = async (texto) => {
+        try {
+            const res = await axios.post(`${API_BASE}/api/v1/ai/voice/parse-intent`, {
+                texto,
+                almacen_id: voiceTargetWH || null,
+                skus_disponibles: (insumos || []).map((i) => i.id),
+            });
+            const propuesta = mapVoiceIntentToProposal(res.data, insumos);
+            setVoiceProposal(propuesta);
+            if (!propuesta.sku_resuelto) {
+                showOpMessage('🎙️ La IA no reconoció el insumo. Selecciónalo manualmente.', 'error');
+            } else if (propuesta.revisar) {
+                showOpMessage('🎙️ Confianza baja: revisa la cantidad y el insumo antes de confirmar.', 'error');
+            } else {
+                showOpMessage('🎙️ Dictado interpretado. Confirma los datos antes de registrar.');
+            }
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status === 503) {
+                setVoiceAvailable(false);
+                showOpMessage('🎙️ Interpretación por voz no disponible (IA local apagada). Capture manualmente.', 'error');
+            } else {
+                logger.error('Error al interpretar la intención de voz:', err);
+                showOpMessage('🎙️ No se pudo interpretar el dictado. Capture manualmente.', 'error');
+            }
+        }
+    };
+
+    // Fase 6.5.4: el operador edita SKU, cantidad y unidad antes de confirmar.
+    const handleVoiceProposalChange = (field, value) => {
+        setVoiceProposal((prev) => {
+            if (!prev) return prev;
+            if (field === 'item_id') {
+                const match = (insumos || []).find((i) => i.id === value);
+                return {
+                    ...prev,
+                    item_id: value,
+                    nombre: match ? match.nombre : value,
+                    unidad: match?.unidad_base || prev.unidad,
+                    sku_resuelto: Boolean(match),
+                };
+            }
+            return { ...prev, [field]: value };
+        });
+    };
+
+    const handleVoiceConfirm = () => {
+        setVoiceProposal((prev) => (prev ? { ...prev, confirmado: !prev.confirmado } : prev));
+    };
+
+    /**
+     * Fase 6.5.6: registra el movimiento con metodo_captura = VOZ y conserva
+     * texto_original para trazabilidad. Solo si el operador confirmó.
+     */
+    const handleSubmitVoiceEntry = async () => {
+        const { ok, error } = validateVoiceEntry(voiceTargetWH, voiceProposal);
+        if (!ok) {
+            showOpMessage(error, 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            const payload = buildVoiceEntryPayload(voiceProposal, usuarioId);
+            await ejecutarOEncolar({
+                ruta: `/${voiceTargetWH}/stock`,
+                body: payload,
+                label: `Entrada por voz (${voiceProposal.nombre})`,
+                exitoMsg: `Entrada por voz registrada: ${voiceProposal.cantidad} ${voiceProposal.unidad} de ${voiceProposal.nombre}`,
+            });
+            resetVoiceCapture();
+            setVoiceTargetWH('');
         } finally { setLoadingOp(false); }
     };
 
@@ -1457,6 +1643,146 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                         className="text-slate-400 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
                                     >
                                         Descartar todo
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* v7 (Fase 6.5): Captura de Inventario por Voz (human-in-the-loop) */}
+                    <div className="mt-6 bg-slate-900/50 border border-violet-500/25 rounded-[32px] p-8">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-violet-300 to-violet-500 bg-clip-text text-transparent">🎙️ Dictar Entrada (Voz)</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">La IA propone · tú confirmas antes de registrar</p>
+                        <p className="text-[10px] text-slate-500 mb-6">
+                            Requiere la IA local instalada. Si no está disponible, usa la captura manual de arriba.
+                        </p>
+
+                        {!voiceAvailable && (
+                            <div className="mb-6 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4">
+                                <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">
+                                    ⚠️ Dictado por voz no disponible (IA local apagada). El flujo manual sigue funcionando.
+                                </p>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Almacén destino</label>
+                                <select
+                                    value={voiceTargetWH}
+                                    onChange={(e) => setVoiceTargetWH(e.target.value)}
+                                    className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-bold text-white outline-none focus:border-violet-400"
+                                >
+                                    <option value="">— Selecciona almacén —</option>
+                                    {warehouses.map((wh) => (
+                                        <option key={wh.id} value={wh.id}>{wh.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex items-end">
+                                <button
+                                    onClick={voiceRecording ? handleVoiceStop : handleVoiceStart}
+                                    disabled={voiceTranscribing || !voiceAvailable}
+                                    className={`w-full px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed ${
+                                        voiceRecording
+                                            ? 'bg-red-600 text-white hover:bg-red-500 shadow-red-600/20 animate-pulse'
+                                            : 'bg-violet-600 text-white hover:bg-violet-500 hover:scale-105 active:scale-95 shadow-violet-600/20'
+                                    }`}
+                                >
+                                    {voiceTranscribing
+                                        ? '⏳ Procesando audio...'
+                                        : voiceRecording
+                                            ? '⏹ Detener y procesar'
+                                            : '🎙️ Grabar dictado'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {voiceTranscript && (
+                            <div className="mb-6 bg-slate-950/60 border border-slate-500/20 rounded-2xl p-4">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Texto reconocido</p>
+                                <p className="text-sm text-slate-200 italic">"{voiceTranscript}"</p>
+                            </div>
+                        )}
+
+                        {voiceProposal && (
+                            <div className={`border rounded-2xl p-6 ${voiceProposal.revisar ? 'bg-amber-500/10 border-amber-500/40' : 'bg-slate-950/60 border-violet-500/25'}`}>
+                                <div className="flex items-center justify-between mb-4">
+                                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                                        Propuesta de la IA — revisa y confirma
+                                    </p>
+                                    <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
+                                        voiceProposal.revisar ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'
+                                    }`}>
+                                        Confianza {Math.round((voiceProposal.confianza || 0) * 100)}%
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Insumo</label>
+                                        <select
+                                            value={voiceProposal.item_id}
+                                            onChange={(e) => handleVoiceProposalChange('item_id', e.target.value)}
+                                            className={`w-full bg-slate-900/80 border p-3 rounded-xl text-sm font-bold text-white outline-none ${
+                                                voiceProposal.sku_resuelto ? 'border-slate-500/30 focus:border-violet-400' : 'border-amber-500/60'
+                                            }`}
+                                        >
+                                            {!voiceProposal.sku_resuelto && (
+                                                <option value={voiceProposal.item_id}>⚠️ {voiceProposal.item_id || 'Sin reconocer'}</option>
+                                            )}
+                                            {(insumos || []).map((i) => (
+                                                <option key={i.id} value={i.id}>{i.nombre}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Cantidad</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={voiceProposal.cantidad}
+                                            onChange={(e) => handleVoiceProposalChange('cantidad', e.target.value)}
+                                            className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-mono text-center text-white outline-none focus:border-violet-400"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-2">Unidad</label>
+                                        <input
+                                            type="text"
+                                            value={voiceProposal.unidad}
+                                            onChange={(e) => handleVoiceProposalChange('unidad', e.target.value)}
+                                            className="w-full bg-slate-900/80 border border-slate-500/30 p-3 rounded-xl text-sm font-bold text-center text-white outline-none focus:border-violet-400"
+                                        />
+                                    </div>
+                                </div>
+
+                                <label className="flex items-center gap-3 cursor-pointer mb-4">
+                                    <input
+                                        type="checkbox"
+                                        checked={voiceProposal.confirmado}
+                                        onChange={handleVoiceConfirm}
+                                        className="w-5 h-5 accent-violet-500"
+                                    />
+                                    <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                                        Confirmo que estos datos son correctos
+                                    </span>
+                                </label>
+
+                                <div className="flex items-center gap-4">
+                                    <button
+                                        onClick={handleSubmitVoiceEntry}
+                                        disabled={loadingOp || !voiceProposal.confirmado}
+                                        className="bg-violet-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-violet-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-violet-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {loadingOp ? '⏳ Procesando...' : '✅ Registrar Entrada por Voz'}
+                                    </button>
+                                    <button
+                                        onClick={resetVoiceCapture}
+                                        className="text-slate-400 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                                    >
+                                        Descartar dictado
                                     </button>
                                 </div>
                             </div>

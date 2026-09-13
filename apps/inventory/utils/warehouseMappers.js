@@ -262,3 +262,106 @@ export const buildVisionSnapshotPayload = (proposals, usuarioId, meta = {}) => (
     imagen_ref: meta.imagen_ref || null,
     modelo: meta.modelo || null,
 });
+
+// ============================================================================
+// v7 (Fase 6.5): Captura de Inventario por Voz — human-in-the-loop
+// ============================================================================
+
+/**
+ * Umbral de confianza por debajo del cual la propuesta se marca para revision
+ * visual (resaltado amarillo) y el operador DEBE revisar antes de confirmar.
+ * La IA propone; el humano confirma (spec linea 664).
+ */
+export const VOICE_CONFIDENCE_THRESHOLD = 0.7;
+
+/**
+ * Convierte la intencion estructurada devuelta por
+ * POST /api/v1/ai/voice/parse-intent en una propuesta editable para el operador.
+ *
+ * Contrato de entrada (apps/api/modules/ai/schemas.py VoiceParseIntentResponse):
+ *   { intencion, sku, cantidad, unidad, confianza, texto_original, requiere_confirmacion }
+ *
+ * Reglas:
+ *  - Nace SIEMPRE con `confirmado: false` (human-in-the-loop).
+ *  - Si el SKU no se resuelve contra el catalogo, `sku_resuelto: false` y la UI
+ *    muestra un selector para que el operador lo elija manualmente.
+ *  - Si `confianza < VOICE_CONFIDENCE_THRESHOLD`, `revisar: true` (resaltado).
+ *
+ * @param {object} intent
+ * @param {Array<{id: string, nombre: string, unidad_base?: string}>} insumos
+ * @returns {object}
+ */
+export const mapVoiceIntentToProposal = (intent, insumos = []) => {
+    const catalogo = Array.isArray(insumos) ? insumos : [];
+    const data = intent || {};
+    const skuRaw = data.sku ?? '';
+    const match = catalogo.find(
+        (i) =>
+            i.id === skuRaw ||
+            (i.nombre || '').toLowerCase() === String(skuRaw).toLowerCase()
+    );
+    const confianza = Number(data.confianza ?? 0);
+    const intencion = String(data.intencion || '').toUpperCase();
+
+    return {
+        intencion: ['ENTRADA', 'MERMA', 'CONTEO'].includes(intencion) ? intencion : 'ENTRADA',
+        item_id: match ? match.id : skuRaw,
+        item_type: 'INSUMO',
+        nombre: match ? match.nombre : skuRaw,
+        unidad: data.unidad || match?.unidad_base || 'PZA',
+        cantidad: Number(data.cantidad ?? 0),
+        confianza,
+        texto_original: data.texto_original || '',
+        sku_resuelto: Boolean(match),
+        revisar: confianza < VOICE_CONFIDENCE_THRESHOLD,
+        // Regla human-in-the-loop: nada entra confirmado por defecto.
+        confirmado: false,
+    };
+};
+
+/**
+ * Valida que exista almacen destino, SKU resuelto y cantidad > 0 antes de
+ * registrar el movimiento por voz.
+ * @param {string} targetWH
+ * @param {object} proposal
+ * @returns {{ok: boolean, error: string|null}}
+ */
+export const validateVoiceEntry = (targetWH, proposal) => {
+    if (!targetWH) {
+        return { ok: false, error: 'Selecciona un almacén destino para la entrada por voz' };
+    }
+    if (!proposal) {
+        return { ok: false, error: 'No hay dictado que registrar' };
+    }
+    if (!proposal.sku_resuelto || !proposal.item_id) {
+        return { ok: false, error: 'Selecciona el insumo correcto: la IA no pudo resolver el SKU dictado' };
+    }
+    if (!(Number(proposal.cantidad) > 0)) {
+        return { ok: false, error: 'Indica una cantidad mayor a cero' };
+    }
+    if (!proposal.confirmado) {
+        return { ok: false, error: 'Confirma el dictado antes de registrar (la IA solo propone)' };
+    }
+    return { ok: true, error: null };
+};
+
+/**
+ * Construye el payload de entrada por voz. Incluye `texto_original` para
+ * trazabilidad (spec linea 6.5.6) y `metodo_captura: 'VOZ'`.
+ * @param {object} proposal
+ * @param {string} usuarioId
+ * @returns {object}
+ */
+export const buildVoiceEntryPayload = (proposal, usuarioId) => {
+    const p = proposal || {};
+    return {
+        item_id: p.item_id,
+        item_type: p.item_type || 'INSUMO',
+        cantidad: parseFloat(p.cantidad),
+        unidad: p.unidad || 'PZA',
+        usuario_id: usuarioId,
+        metodo_captura: 'VOZ',
+        confianza: p.confianza ?? null,
+        texto_original: p.texto_original || null,
+    };
+};

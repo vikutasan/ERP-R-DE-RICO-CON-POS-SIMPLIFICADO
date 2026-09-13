@@ -24,6 +24,10 @@ import {
     mapVisionDetectionsToProposals,
     validateVisionSnapshot,
     buildVisionSnapshotPayload,
+    VOICE_CONFIDENCE_THRESHOLD,
+    mapVoiceIntentToProposal,
+    validateVoiceEntry,
+    buildVoiceEntryPayload,
 } from './warehouseMappers.js';
 
 // ---------------------------------------------------------------------------
@@ -445,5 +449,177 @@ describe('Vision: payload de entrada por vision', () => {
         expect(payload.imagen_ref).toBeNull();
         expect(payload.modelo).toBeNull();
         expect(payload.items).toEqual([]);
+    });
+});
+
+// ============================================================================
+// v7 (Fase 6.5): Captura de Inventario por Voz — human-in-the-loop
+// ============================================================================
+describe('Voz: mapeo de intencion a propuesta', () => {
+    const insumos = [
+        { id: 'INS-HARINA', nombre: 'Harina', unidad_base: 'KG' },
+        { id: 'INS-AZUCAR', nombre: 'Azucar', unidad_base: 'KG' },
+    ];
+
+    it('resuelve el insumo por SKU exacto', () => {
+        const p = mapVoiceIntentToProposal(
+            {
+                intencion: 'ENTRADA',
+                sku: 'INS-HARINA',
+                cantidad: 5,
+                unidad: 'KG',
+                confianza: 0.95,
+                texto_original: 'entrada de cinco kilos de harina',
+            },
+            insumos
+        );
+        expect(p.item_id).toBe('INS-HARINA');
+        expect(p.nombre).toBe('Harina');
+        expect(p.cantidad).toBe(5);
+        expect(p.sku_resuelto).toBe(true);
+        expect(p.revisar).toBe(false);
+    });
+
+    it('resuelve el insumo por nombre (case-insensitive)', () => {
+        const p = mapVoiceIntentToProposal(
+            { intencion: 'ENTRADA', sku: 'azucar', cantidad: 2, confianza: 0.9 },
+            insumos
+        );
+        expect(p.item_id).toBe('INS-AZUCAR');
+        expect(p.sku_resuelto).toBe(true);
+    });
+
+    it('marca sku_resuelto=false si el SKU no existe en el catalogo', () => {
+        const p = mapVoiceIntentToProposal(
+            { intencion: 'ENTRADA', sku: 'NO-EXISTE', cantidad: 1, confianza: 0.9 },
+            insumos
+        );
+        expect(p.sku_resuelto).toBe(false);
+        expect(p.item_id).toBe('NO-EXISTE');
+    });
+
+    it('marca revisar=true cuando la confianza es menor al umbral', () => {
+        const p = mapVoiceIntentToProposal(
+            { intencion: 'ENTRADA', sku: 'INS-HARINA', cantidad: 1, confianza: 0.4 },
+            insumos
+        );
+        expect(p.confianza).toBe(0.4);
+        expect(p.revisar).toBe(true);
+        expect(VOICE_CONFIDENCE_THRESHOLD).toBe(0.7);
+    });
+
+    it('nunca marca la propuesta como confirmada por defecto (human-in-the-loop)', () => {
+        const p = mapVoiceIntentToProposal(
+            { intencion: 'ENTRADA', sku: 'INS-HARINA', cantidad: 5, confianza: 0.99 },
+            insumos
+        );
+        expect(p.confirmado).toBe(false);
+    });
+
+    it('normaliza una intencion desconocida a ENTRADA', () => {
+        const p = mapVoiceIntentToProposal(
+            { intencion: 'INVENTAR', sku: 'INS-HARINA', cantidad: 1, confianza: 0.9 },
+            insumos
+        );
+        expect(p.intencion).toBe('ENTRADA');
+    });
+
+    it('conserva el texto_original para trazabilidad', () => {
+        const p = mapVoiceIntentToProposal(
+            {
+                intencion: 'MERMA',
+                sku: 'INS-HARINA',
+                cantidad: 1,
+                confianza: 0.8,
+                texto_original: 'merma de un kilo de harina',
+            },
+            insumos
+        );
+        expect(p.intencion).toBe('MERMA');
+        expect(p.texto_original).toBe('merma de un kilo de harina');
+    });
+
+    it('no crashea con entradas nulas', () => {
+        const p = mapVoiceIntentToProposal(null, null);
+        expect(p.confirmado).toBe(false);
+        expect(p.cantidad).toBe(0);
+        expect(p.sku_resuelto).toBe(false);
+    });
+});
+
+describe('Voz: validacion de entrada dictada', () => {
+    const base = {
+        item_id: 'INS-HARINA',
+        cantidad: 5,
+        sku_resuelto: true,
+        confirmado: true,
+    };
+
+    it('exige almacen destino', () => {
+        const r = validateVoiceEntry('', base);
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/almacén destino/i);
+    });
+
+    it('exige que el SKU este resuelto', () => {
+        const r = validateVoiceEntry('alm_1', { ...base, sku_resuelto: false });
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/insumo correcto/i);
+    });
+
+    it('exige cantidad mayor a cero', () => {
+        const r = validateVoiceEntry('alm_1', { ...base, cantidad: 0 });
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/cantidad/i);
+    });
+
+    it('exige confirmacion explicita del operador', () => {
+        const r = validateVoiceEntry('alm_1', { ...base, confirmado: false });
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/confirma/i);
+    });
+
+    it('acepta una propuesta completa y confirmada', () => {
+        expect(validateVoiceEntry('alm_1', base).ok).toBe(true);
+    });
+
+    it('no crashea con propuesta nula', () => {
+        expect(validateVoiceEntry('alm_1', null).ok).toBe(false);
+    });
+});
+
+describe('Voz: payload de entrada por voz', () => {
+    it('incluye metodo_captura VOZ y el texto_original', () => {
+        const payload = buildVoiceEntryPayload(
+            {
+                item_id: 'INS-HARINA',
+                item_type: 'INSUMO',
+                cantidad: '5',
+                unidad: 'KG',
+                confianza: 0.93,
+                texto_original: 'entrada de cinco kilos de harina',
+            },
+            'USR-1'
+        );
+        expect(payload.item_id).toBe('INS-HARINA');
+        expect(payload.cantidad).toBe(5);
+        expect(payload.unidad).toBe('KG');
+        expect(payload.usuario_id).toBe('USR-1');
+        expect(payload.metodo_captura).toBe('VOZ');
+        expect(payload.texto_original).toBe('entrada de cinco kilos de harina');
+    });
+
+    it('usa valores por defecto seguros cuando faltan campos', () => {
+        const payload = buildVoiceEntryPayload({ item_id: 'X', cantidad: 1 }, 'USR-2');
+        expect(payload.item_type).toBe('INSUMO');
+        expect(payload.unidad).toBe('PZA');
+        expect(payload.confianza).toBeNull();
+        expect(payload.texto_original).toBeNull();
+    });
+
+    it('no crashea con propuesta nula', () => {
+        const payload = buildVoiceEntryPayload(null, 'USR-3');
+        expect(payload.metodo_captura).toBe('VOZ');
+        expect(payload.usuario_id).toBe('USR-3');
     });
 });
