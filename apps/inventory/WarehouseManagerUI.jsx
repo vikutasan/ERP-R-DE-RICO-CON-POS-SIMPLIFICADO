@@ -2238,7 +2238,11 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             1) contexto (Categoria/Subcategoria) 2) identidad (Nombre)
                             3) representacion visual (Icono/Foto) 4) parametro (Capacidad)
                             5) pautas de acomodo (Infografia). */}
-                        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-1">
+                        {/* v10 (fix): `custom-scrollbar` para que la barra use el
+                            pulgar naranja translucido del proyecto en lugar del
+                            gris claro por defecto del navegador, que contrastaba
+                            de forma agresiva contra el modal oscuro. */}
+                        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                             {/* v9 (Fase 9.2): Categoría y Subcategoría son INFORMATIVAS.
                                 El operador ya las eligió al navegar (zona -> pestaña de
                                 subcategoría); el modal no debe volver a preguntarlas ni
@@ -2397,7 +2401,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             {editingWHData.name || 'Almacén sin nombre'} • Cómo debe acomodarse el producto
                         </p>
 
-                        <div className="space-y-6 max-h-[55vh] overflow-y-auto pr-1">
+                        {/* v10 (fix): mismo `custom-scrollbar` que el editor para
+                            mantener coherencia visual en el modal anidado. */}
+                        <div className="space-y-6 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
                             {/* Imagen de la infografia (planograma) */}
                             <div>
                                 <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Imagen de la Infografía</label>
