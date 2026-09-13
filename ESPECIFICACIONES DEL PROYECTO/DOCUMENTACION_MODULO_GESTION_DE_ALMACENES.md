@@ -2,13 +2,17 @@
 
 > **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Gestión de Almacenes **DEBE** leer este documento. Aquí se detalla la arquitectura, el flujo de datos, el patrón Outbox, el bloqueo optimista y las reglas de negocio del módulo.
 >
-> **Última actualización:** 2026-09-07
+> **Última actualización:** 2026-09-13
+> **Versión del módulo:** v10 (Fases 0-10 completadas)
 > **Archivos gobernados:**
 > - Backend: `apps/api/modules/warehouse/*` (models, schemas, service, router)
 > - Frontend: `apps/inventory/WarehouseManagerUI.jsx`, `apps/inventory/WarehouseHubUI.jsx`
+> - Utilidades frontend: `apps/inventory/utils/warehouseMappers.js` (+ `warehouseMappers.test.js`)
 > - Integración POS: `apps/api/modules/pos/service.py` (6 líneas outbox)
-> - Startup: `apps/api/main.py` (background task)
+> - Startup: `apps/api/main.py` (background task + `ensure_warehouse_propositos`)
 > - Seed: `apps/api/migrations/seed_almacenes.py`
+> - Migración subcategorías: `apps/api/migrations/versions/f5a6b7c8d9e0_add_warehouse_propositos.py`
+> - Planes: `plans/PLAN_MAESTRO_ALMACENES_V7.md`, `plans/PLAN_SUBCATEGORIAS_ALMACEN_V8.md`
 
 ---
 
@@ -18,6 +22,9 @@ El Módulo de Gestión de Almacenes controla **todo el inventario físico** del 
 
 ### Capacidades
 - **CRUD de almacenes** — Crear, editar, eliminar almacenes con zonas térmicas (SECO/REFRIGERADO/CONGELADO)
+- **Subcategorías dinámicas** (v8) — CRUD de subcategorías de almacén (`warehouse_propositos`) con traslado de almacenes y borrado protegido
+- **Representación visual** (v10) — Icono curado (12 emojis) o fotografía real del almacén subida desde el equipo
+- **Infografía de acomodo** (v10) — Planograma (imagen) + pautas de acomodo (texto) por almacén
 - **Control de stock** — Stock por SKU con alertas PEPS (Primero En Entrar, Primero En Salir)
 - **Entrada masiva** — Registrar lotes completos de proveedor en < 2 minutos
 - **Traspasos** — Mover stock entre almacenes (ej. Bodega → Exhibidor)
@@ -26,6 +33,8 @@ El Módulo de Gestión de Almacenes controla **todo el inventario físico** del 
 - **Outbox Pattern** — Descuento automático de stock por ventas POS
 - **Dead-Letter Queue** — Eventos fallidos visibles para diagnóstico
 - **Gestión de insumos** — Tabla stub para materias primas con unidades de conversión
+- **Auditoría y RBAC** (v7) — Operaciones sensibles auditadas; permisos verificados por perfil
+- **PWA offline** (v7) — Cola de operaciones en IndexedDB con sincronización al reconectar
 
 ---
 
@@ -80,13 +89,41 @@ El Módulo de Gestión de Almacenes controla **todo el inventario físico** del 
 | `id` | `String PK` | Formato `alm_{uuid8}` (ej. `alm_a2efcd56`) |
 | `nombre` | `String NOT NULL` | Nombre legible (ej. "Exhibidor Pan Dulce") |
 | `zona_termica` | `String` | `SECO`, `REFRIGERADO`, `CONGELADO` |
-| `proposito` | `String` | `ALMACENAMIENTO`, `EXHIBICION_VENTA` |
+| `proposito` | `String` | Código de subcategoría (FK lógica → `warehouse_propositos.codigo`). Ej. `ALMACENAMIENTO`, `EXHIBICION_VENTA`, `SIN_CLASIFICAR` |
 | `sucursal_id` | `String nullable` | Para futuras sucursales |
-| `foto_url` | `String nullable` | Foto del almacén físico |
-| `planograma_url` | `String nullable` | Imagen del estándar de acomodo |
-| `pautas_acomodo` | `JSON` | Lista de reglas PEPS (ej. "Producto más antiguo al frente") |
+| `foto_url` | `String nullable` | **v10** — Foto real del almacén físico (subida desde el equipo) |
+| `planograma_url` | `String nullable` | **v10** — Imagen de la infografía de acomodo (planograma) |
+| `pautas_acomodo` | `JSON` | **v10** — Lista de instrucciones de acomodo (una por línea de texto) |
 | `activo` | `Boolean` | Soft delete |
 | `created_at` | `DateTime` | Fecha de creación |
+
+> [!NOTE]
+> Las columnas `foto_url`, `planograma_url` y `pautas_acomodo` **existían desde v7** en el modelo, pero no tenían interfaz de captura. La **Fase 10** las activó en la UI. **No requirió migración ni cambio de backend**: `create_warehouse` usa `payload.model_dump()` y `update_warehouse` usa `payload.model_dump(exclude_unset=True)`, por lo que los tres campos ya se persistían si se enviaban.
+
+### 3.1.1 Tabla `warehouse_propositos` (v8 — subcategorías dinámicas)
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `id` | `String PK` | Formato `wpr_{uuid8}` |
+| `codigo` | `String UNIQUE` | Código normalizado (mayúsculas, sin acentos). Ej. `EXHIBICION_VENTA` |
+| `label` | `String` | Nombre visible en la UI. Ej. "Exhibición Venta" |
+| `icono` | `String` | Emoji de la subcategoría |
+| `orden` | `Integer` | Orden de aparición en la barra de pestañas |
+| `es_sistema` | `Boolean` | Si es `true`, **no puede desactivarse** (protección) |
+| `activo` | `Boolean` | Soft delete |
+| `created_at` | `DateTime` | Fecha de creación |
+
+**Subcategorías base sembradas** (vía `ensure_warehouse_propositos` en `main.py`, idempotente):
+
+| Código | Label | Sistema |
+|---|---|---|
+| `ALMACENAMIENTO` | Almacenamiento | ✅ |
+| `EXHIBICION_VENTA` | Exhibición Venta | ✅ |
+| `PRODUCCION` | Producción | ✅ |
+| `SIN_CLASIFICAR` | Sin Clasificar | ✅ |
+
+> [!IMPORTANT]
+> `SIN_CLASIFICAR` es la **cuarentena del sistema**: es el destino por defecto al eliminar una subcategoría con almacenes asignados. **No se muestra en la barra de pestañas**, solo en el modal de gestión. Un almacén nunca queda huérfano.
 
 ### 3.2 Tabla `stock_almacen`
 
@@ -202,7 +239,7 @@ Prefijo: `/api/v1/warehouse`
 | `POST` | `/traspasos` | ✅ Mejorado | Mover stock (valida stock suficiente en origen) |
 | `POST` | `/{id}/entrada-masiva` | ✅ **Nuevo** | Entrada en lote con `lote_entrada_id` compartido |
 | `POST` | `/{id}/mermas` | ✅ **Nuevo** | Registrar merma (notas obligatorias, valida stock) |
-| `POST` | `/upload-image` | ✅ Existía | Subir foto de almacén/planograma |
+| `POST` | `/upload-image` | ✅ Existía | Subir imagen (foto del almacén **o** planograma). Devuelve `{"image_url": "/static/inventory/{filename}"}`. Usado por v10 para `foto_url` y `planograma_url` |
 
 ### 4.4 Consultas (nuevas)
 
@@ -218,6 +255,36 @@ Prefijo: `/api/v1/warehouse`
 |---|---|---|
 | `GET` | `/insumos` | Listar insumos |
 | `POST` | `/insumos` | Crear insumo |
+
+### 4.6 Subcategorías (v8 — nuevas)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/subcategorias` | Listar subcategorías (`?incluir_inactivos=true` para incluir desactivadas) |
+| `POST` | `/subcategorias` | Crear subcategoría (código normalizado automáticamente) |
+| `PUT` | `/subcategorias/{proposito_id}` | Actualizar label, icono u orden (busca por **`id`** `wpr_...`, no por código) |
+| `DELETE` | `/subcategorias/{proposito_id}` | Eliminar. Si tiene almacenes → **409** con conteo; usar `/trasladar` para forzar |
+| `POST` | `/subcategorias/trasladar` | Trasladar almacenes entre subcategorías y luego eliminar la origen |
+
+> [!IMPORTANT]
+> **Orden de rutas:** las rutas literales (`/subcategorias`, `/subcategorias/trasladar`) están declaradas **antes** de las rutas con parámetro (`/{warehouse_id}`, `/subcategorias/{proposito_id}`). Invertir el orden haría que FastAPI interpretara `"subcategorias"` como un `warehouse_id`.
+
+> [!IMPORTANT]
+> **`usuario_id` es un QUERY PARAMETER**, no un header. Todos los endpoints de subcategorías lo requieren (ej. `?usuario_id=1`). Sin él, `verificar_permiso` lanza **403**.
+
+**Contrato de `/subcategorias/trasladar`:**
+```json
+{ "origen_codigo": "PRODUCCION", "destino_codigo": "SIN_CLASIFICAR" }
+```
+`trasladar_almacenes()` devuelve un **`int`** (número de almacenes movidos).
+
+**Reglas de negocio de subcategorías:**
+| Regla | Comportamiento |
+|---|---|
+| Subcategoría de sistema (`es_sistema=true`) | No puede desactivarse → **409** |
+| Eliminar subcategoría con almacenes | **409** + conteo; requiere traslado explícito |
+| Eliminar subcategoría vacía | Borrado físico |
+| `SIN_CLASIFICAR` | Cuarentena del sistema; oculta en la barra, visible en el modal |
 
 ---
 
@@ -400,6 +467,18 @@ Script: `apps/api/migrations/seed_almacenes.py` (idempotente)
 | **try/except pass** en POS | Garantía absoluta de no-interferencia |
 | **Bloqueo optimista** (no pesimista) | No bloquea la BD. Solo detecta conflictos al momento de escribir |
 | **`EXHIBICION_VENTA`** como target del outbox | Solo descuenta de exhibidores (donde se vende), no de bodegas |
+| **Subcategorías en tabla, no enum** (v8) | `proposito` era un enum cerrado en Pydantic; migrar a tabla `warehouse_propositos` permite crear subcategorías sin tocar código ni migrar |
+| **`zona_termica` como texto libre** | A diferencia de `proposito`, nunca fue enum; por eso el modal antiguo de zonas funcionaba sin backend |
+| **Borrado físico con bloqueo preventivo** (v8) | Eliminar una subcategoría con almacenes devuelve 409 y exige traslado explícito; nunca deja almacenes huérfanos |
+| **`SIN_CLASIFICAR` como cuarentena** (v8) | Destino por defecto al trasladar; oculto en la barra para no ensuciar la navegación diaria |
+| **Subcategorías de sistema no desactivables** (v8) | `es_sistema=true` → 409 al intentar `activo=false`; protege la integridad de la navegación |
+| **Foto con prioridad sobre icono** (v10) | La fotografía real del almacén es más informativa que un emoji; el icono queda como fallback obligatorio |
+| **Modal anidado con `z-[400]`** (v10) | El editor de almacén usa `z-[200]` y el diálogo de borrado `z-[300]`; la infografía debe quedar por encima de ambos |
+| **Modal anidado NO cierra con backdrop** (v10) | Solo el botón "Listo" lo cierra, para no perder una imagen recién subida a medio flujo |
+| **`stopPropagation` en backdrop anidado** (v10) | Evita que el clic de cierre se propague y cierre también el editor de almacén subyacente |
+| **`pautas_acomodo` como lista de líneas** (v10) | El textarea captura una instrucción por línea; se persiste como `List[str]` en la columna JSON |
+| **Enviar siempre los 3 campos visuales** (v10) | `update_warehouse` usa `exclude_unset=True`: omitir un campo NO lo limpia. Enviarlos siempre permite al operador quitar una foto previamente guardada |
+| **`custom-scrollbar` en todo contenedor desplazable** (v10 fix) | La barra por defecto del navegador (gris claro) contrasta agresivamente contra el tema oscuro; el proyecto define un pulgar naranja translúcido de 4px |
 | **Polling 30s** (no WebSocket) | Simplicidad. La latencia de 30s es aceptable para inventario |
 | **`ticket_id UNIQUE`** en eventos | Idempotencia: un ticket nunca genera dos eventos |
 | **Evento ANTES del commit** | Atomicidad: venta + evento en una sola transacción |
@@ -412,17 +491,95 @@ Script: `apps/api/migrations/seed_almacenes.py` (idempotente)
 
 ### 11.1 Archivos existentes
 
-| Archivo | Tamaño | Contenido |
+| Archivo | Contenido |
+|---|---|
+| `apps/inventory/WarehouseManagerUI.jsx` | UI completa de gestión de almacenes (pestañas térmicas, tarjetas, stock, movimientos, modales) |
+| `apps/inventory/WarehouseHubUI.jsx` | Hub de navegación del módulo |
+| `apps/inventory/utils/warehouseMappers.js` | Funciones puras de mapeo/validación (DRY): `mapWarehouseFromApi`, `buildWarehouseCreatePayload`, `validatePropositoForm`, etc. |
+| `apps/inventory/utils/warehouseMappers.test.js` | 95 pruebas Vitest sobre las funciones puras (sin montar React) |
+| `apps/inventory/services/offlineQueue.js` | Cola de operaciones offline (IndexedDB + sync al reconectar) |
+| `apps/inventory/services/pwaRuntime.js` | Registro del Service Worker + branding dinámico desde settings |
+
+### 11.2 Patrón DRY: funciones puras + tests
+
+La lógica de mapeo y validación vive en `warehouseMappers.js` como **funciones puras**, no dentro del componente React. Esto permite probarlas con Vitest sin montar la UI:
+
+```javascript
+// Mapeo API → UI (español → inglés)
+export const mapWarehouseFromApi = (wh) => ({
+    ...wh,
+    name: wh.nombre || 'Sin nombre',
+    type: wh.zona_termica || 'SECO',
+    fotoUrl: wh.foto_url || null,          // v10
+    planogramaUrl: wh.planograma_url || null, // v10
+    pautasAcomodo: Array.isArray(wh.pautas_acomodo) ? wh.pautas_acomodo : [], // v10
+});
+
+// Payload UI → API (inglés → español)
+export const buildWarehouseCreatePayload = (formData, selectedZone, subCategoryTab) => ({
+    nombre: formData.name,
+    zona_termica: selectedZone || formData.type,
+    proposito: subCategoryTab || formData.proposito,
+    foto_url: formData.fotoUrl || null,           // v10
+    planograma_url: formData.planogramaUrl || null, // v10
+    pautas_acomodo: formData.pautasAcomodo || [],   // v10
+});
+```
+
+### 11.3 Botón flotante "Nuevo Almacén" (v9)
+
+El botón flotante se renderiza con `ReactDOM.createPortal(<button .../>, document.body)` para escapar de contextos de apilamiento y ancestros con `overflow-hidden`. Requiere `import ReactDOM from 'react-dom';`.
+
+### 11.4 Modal de almacén — orden de campos (v10)
+
+El modal sigue un orden de lectura tipo ficha:
+
+| # | Campo | Editable | Notas |
+|---|---|---|---|
+| 1 | Categoría (`zona_termica`) | ❌ Informativo | El operador ya la eligió al navegar (v9) |
+| 2 | Subcategoría (`proposito`) | ❌ Informativo | El operador ya la eligió al navegar (v9) |
+| 3 | Nombre del almacén | ✅ | Obligatorio |
+| 4 | Icono / Fotografía | ✅ | 12 emojis curados **o** foto subida del equipo |
+| 5 | Capacidad máxima de items | ✅ | Numérico |
+| 6 | Botón "Infografía de Acomodo" | — | Abre el modal anidado |
+
+> [!NOTE]
+> **Categoría y Subcategoría son INFORMATIVAS, no editables** (decisión v9). El operador ya las eligió al navegar (zona → pestaña de subcategoría); el modal no debe volver a preguntarlas ni permitir contradecir la navegación. Al editar, muestran los valores reales del almacén.
+
+### 11.5 Modal anidado "Infografía de Acomodo" (v10)
+
+| Elemento | Destino | Descripción |
 |---|---|---|
-| `apps/inventory/WarehouseManagerUI.jsx` | 111 KB | UI completa de gestión de almacenes (pestañas térmicas, tarjetas, stock, movimientos) |
-| `apps/inventory/WarehouseHubUI.jsx` | 10 KB | Hub de navegación del módulo |
+| Imagen de la infografía | `planograma_url` | Planograma subido desde el equipo |
+| Pautas de acomodo | `pautas_acomodo` | Textarea: una instrucción por línea → `List[str]` |
 
-### 11.2 Pendiente (Fases 1F/1G del plan)
+**Detalles de implementación:**
+- `z-[400]` — por encima del editor (`z-[200]`) y del diálogo de borrado (`z-[300]`)
+- Backdrop con `stopPropagation` — no cierra el editor subyacente
+- Solo el botón "Listo" cierra el modal — evita perder una imagen a medio subir
+- Estado independiente (`showPlanograma`) — cerrarlo no cierra el editor que lo abrió
 
-- Evaluar si `WarehouseManagerUI.jsx` cubre todas las funciones nuevas (entrada masiva, merma, historial)
-- Crear `offlineQueue.js` para operación sin red (IndexedDB + sync al reconectar)
-- Crear `public/sw.js` (Service Worker) y `public/manifest.json` (PWA)
-- Crear stubs de AI Gateway para voz + visión (fallback graceful)
+### 11.6 Representación visual en tarjetas y detalle (v10)
+
+La fotografía real tiene **prioridad visual** sobre el icono. Si no hay foto, se cae al emoji de la zona térmica (comportamiento previo). Esto aplica tanto a las tarjetas de la lista como al encabezado del detalle.
+
+### 11.7 Scrollbar personalizado (v10 fix)
+
+Todo contenedor desplazable dentro de un modal oscuro **DEBE** llevar la clase `custom-scrollbar`, definida en `index.css`:
+
+```css
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(249, 115, 22, 0.2); border-radius: 10px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(249, 115, 22, 0.5); }
+```
+
+Sin ella, el navegador usa su barra por defecto (gris claro, ~15px), que contrasta de forma agresiva contra el fondo oscuro.
+
+### 11.8 Pendiente
+
+- Escáner IA (visión de charolas) — Fase 2 del plan
+- AI Gateway real (Whisper + LLM local) — depende del módulo IA Local
 
 ---
 
@@ -441,7 +598,7 @@ Script: `apps/api/migrations/seed_almacenes.py` (idempotente)
 > Sección reservada para documentar bugs críticos descubiertos en producción.
 > Formato: Síntoma → Causa Raíz → Solución → Regla de Oro.
 
-### Estado actual: 🟡 2 bugs resueltos
+### Estado actual: 🟡 3 bugs resueltos
 
 ### 🐛 BUG 1: Crash de UI por Desajuste de Nombres de Campos (API vs Frontend)
 
@@ -486,9 +643,32 @@ Al entrar a cualquier almacén en específico (ej. "Bodega Insumos"), la UI cras
 - Los datos devueltos se mapean explícitamente a las propiedades de UI esperadas (ej. `cantidad_actual` → `stock`, `item_id` → `sku`).
 - **Regla de Oro:** Nunca depender de objetos anidados (como `.items`) en respuestas HTTP si el schema Pydantic no lo incluye explícitamente. Consultar sub-recursos en peticiones separadas o adaptar el schema.
 
+### 🐛 BUG 3: Barra de Desplazamiento con Contraste Agresivo en los Modales (v10)
+
+**El Síntoma:**
+Al abrir el modal de crear/editar almacén (o el modal anidado de "Infografía de Acomodo"), la barra de desplazamiento aparecía **gris claro**, generando un contraste muy agresivo contra el fondo oscuro del modal. El resto de paneles del módulo sí mostraban la barra naranja translúcida.
+
+**Causa Raíz:**
+1. El proyecto define una barra personalizada en `index.css` mediante la clase `.custom-scrollbar` (pulgar naranja `rgba(249, 115, 22, 0.2)`, 4px de ancho, pista transparente).
+2. Todos los contenedores desplazables de `WarehouseManagerUI.jsx` usaban esa clase… **excepto los dos cuerpos de modal introducidos en la Fase 10**.
+3. Al agregar `max-h-[60vh] overflow-y-auto` (editor) y `max-h-[55vh] overflow-y-auto` (infografía) se omitió `custom-scrollbar`, por lo que el navegador aplicó su barra por defecto (gris claro, ~15px).
+
+**Solución Implementada:**
+- Se agregó la clase `custom-scrollbar` a ambos contenedores:
+```jsx
+{/* Editor de almacén */}
+<div className="space-y-6 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+
+{/* Modal anidado de infografía */}
+<div className="space-y-6 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
+```
+- **Regla de Oro:** Todo contenedor con `overflow-y-auto` dentro de un modal oscuro **DEBE** llevar `custom-scrollbar`. Al crear un contenedor desplazable nuevo, copiar la clase del contenedor existente más cercano en lugar de escribir las clases a mano.
+
 ---
 
 ## 14. FASES PENDIENTES
+
+### 14.1 Fases v7 (plan maestro)
 
 | Fase | Contenido | Estado |
 |---|---|---|
@@ -497,9 +677,27 @@ Al entrar a cualquier almacén en específico (ej. "Bodega Insumos"), la UI cras
 | 1C | Outbox POS (6 líneas en create_ticket) | ✅ Completada |
 | 1D | Processor background (polling 30s) | ✅ Completada |
 | 1F | Funciones 5 pestañas operativas y conexión Backend | ✅ Completada |
-| 1G | PWA offline (sw.js + manifest + offlineQueue.js) | ⏸️ Pendiente |
-| 2 | Escáner IA (visión de charolas) | ⏸️ Pendiente |
-| 3 | AI Gateway real (Whisper + LLM local) | ⏸️ Futuro (depende de módulo IA Local) |
+| 1G | PWA offline (sw.js + manifest + offlineQueue.js) | ✅ Completada |
+| 2 | Auditoría y RBAC (secciones 13 y 14) | ✅ Completada |
+| 3 | Verificación end-to-end (verify_fase1.py, verify_fase2.py) | ✅ Completada |
+| 4 | AI Gateway (stubs voz + visión, fallback graceful) | ✅ Completada |
+| 5 | Escáner IA (visión de charolas) | ⏸️ Pendiente |
+| 6 | AI Gateway real (Whisper + LLM local) | ⏸️ Futuro (depende de módulo IA Local) |
+
+### 14.2 Fases v8-v10 (subcategorías y representación visual)
+
+| Fase | Contenido | Commit | Estado |
+|---|---|---|---|
+| v8 | Subcategorías dinámicas (`warehouse_propositos`), traslado, borrado protegido | `3bcaa5e` | ✅ Completada |
+| v9 | Botón flotante "Nuevo Almacén" + Categoría/Subcategoría informativas en el modal | `107fb9a` | ✅ Completada |
+| v10 | Foto del almacén, infografía de acomodo (planograma + pautas) y reordenamiento del modal | `aa33ce9` | ✅ Completada |
+| v10 fix | Scrollbar oscuro coherente en los modales | `82fa134` | ✅ Completada |
+
+### 14.3 Pendiente de infraestructura
+
+| Tarea | Estado |
+|---|---|
+| Regenerar `ENTERPRISE_PAT` para reparar el espejo a San Pablo | ⏸️ Pendiente del usuario |
 
 ---
 
@@ -513,7 +711,37 @@ Checklist para validar que el módulo funciona correctamente:
 4. ✅ `GET /warehouse/eventos/fallidos` → lista vacía
 5. ✅ `GET /pos/tickets` → POS funciona sin afectación
 6. ✅ `GET /heladeria/menu` → 29 items
-7. ⬜ Crear entrada masiva → verificar `lote_entrada_id` compartido
-8. ⬜ Registrar merma → verificar notas y descuento
-9. ⬜ Update concurrente → verificar 409 Conflict
-10. ⬜ Venta POS → verificar evento PENDIENTE → PROCESADO (30s)
+7. ✅ Crear entrada masiva → verificar `lote_entrada_id` compartido
+8. ✅ Registrar merma → verificar notas y descuento
+9. ✅ Update concurrente → verificar 409 Conflict
+10. ✅ Venta POS → verificar evento PENDIENTE → PROCESADO (30s)
+11. ✅ `GET /warehouse/subcategorias` → 4 subcategorías base (v8)
+12. ✅ Crear subcategoría → código normalizado automáticamente (v8)
+13. ✅ Eliminar subcategoría con almacenes → 409 + conteo (v8)
+14. ✅ Trasladar almacenes → `int` con el número movido (v8)
+15. ✅ Subcategoría de sistema → 409 al intentar desactivar (v8)
+16. ✅ Subir foto del almacén → `foto_url` persistido (v10)
+17. ✅ Subir infografía → `planograma_url` persistido (v10)
+18. ✅ Capturar pautas de acomodo → `pautas_acomodo` como `List[str]` (v10)
+19. ✅ Foto visible en tarjeta y detalle, con fallback al icono (v10)
+20. ✅ Barra de desplazamiento oscura en ambos modales (v10 fix)
+
+### 15.1 Comandos de verificación
+
+```bash
+# Frontend — pruebas unitarias de funciones puras
+npx vitest run          # → 95/95 PASS
+
+# Frontend — build de producción
+npm run build           # → 1417 módulos, ~6.6s, exit 0
+
+# Backend — pruebas de integración
+docker exec rderico-api-dev python -m pytest tests/ -q   # → 21/21 PASS
+
+# Salud de servicios
+# API  → http://localhost:5001/health        → 200
+# POS  → http://localhost:5000/index.html    → 200
+```
+
+> [!NOTE]
+> `http://localhost:5000/` devuelve **404** porque la SPA de Vite no tiene ruta en `/`. Es el comportamiento esperado; usar `/index.html`.
