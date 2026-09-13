@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import axios from 'axios';
 import REAL_PRODUCTS from '../../importar_productos_AQUI.json';
 import { PROVIDERS_MASTER } from './PurchaseManagerUI';
@@ -798,6 +799,21 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         return whInventories[whId] || [];
     };
 
+    // v9: la categoria (zona_termica) y la subcategoria (proposito) NO se
+    // eligen en el modal: ya fueron elegidas por el operador al navegar
+    // (zona -> pestana de subcategoria). El modal solo las muestra como
+    // contexto informativo de solo lectura. Ver Fase 9.2.
+    const handleOpenCreateWH = () => {
+        setEditingWHData({
+            name: '',
+            type: selectedZone || 'SECO',
+            icon: '📦',
+            capacity: 100,
+            proposito: subCategoryTab,
+        });
+        setShowWHEditor(true);
+    };
+
     const handleSaveWH = async (formData) => {
         try {
             if (formData.id && !formData.id.startsWith('wh_')) {
@@ -1015,12 +1031,33 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     // v8 (Fase 8.6): la barra se alimenta de la BD. `propositosParaBarra`
     // excluye la cuarentena SIN_CLASIFICAR (decisión vinculante §10.2).
     const subCategoriasBarra = propositosParaBarra(propositos);
-    const ZONE_META = { 
-        SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' }, 
-        REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' }, 
-        CONGELADO: { icon: '❄️', accent: 'text-cyan-200', label: 'CONGELADOS', badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40' } 
+    const ZONE_META = {
+        SECO: { icon: '📦', accent: 'text-amber-300', label: 'SECOS', badge: 'bg-amber-400/20 text-amber-200 border-amber-400/40' },
+        REFRIGERADO: { icon: '🧊', accent: 'text-blue-300', label: 'REFRIGERADOS', badge: 'bg-blue-400/20 text-blue-200 border-blue-400/40' },
+        CONGELADO: { icon: '❄️', accent: 'text-cyan-200', label: 'CONGELADOS', badge: 'bg-cyan-400/20 text-cyan-100 border-cyan-300/40' }
     };
     const zoneMeta = ZONE_META[selectedZone] || ZONE_META.SECO;
+
+    // v9 (Fase 9.2): contexto informativo del modal de almacén.
+    // Al CREAR se refleja la navegación (zona + pestaña de subcategoría).
+    // Al EDITAR se reflejan los valores reales del almacén, no la navegación.
+    const categoriaInfo = (() => {
+        const codigo = editingWHData?.id
+            ? (editingWHData.zona_termica || editingWHData.type)
+            : (selectedZone || editingWHData?.type);
+        const meta = ZONE_META[codigo] || ZONE_META.SECO;
+        return { icon: meta.icon, label: meta.label };
+    })();
+    const subcategoriaInfo = (() => {
+        const codigo = editingWHData?.id
+            ? editingWHData.proposito
+            : (subCategoryTab || editingWHData?.proposito);
+        const found = propositos.find(p => p.codigo === codigo);
+        return {
+            icon: found?.icon || '📦',
+            label: found?.label || codigo || 'SIN CLASIFICAR',
+        };
+    })();
 
     return (
         <div className="w-full min-h-screen text-white p-8 font-sans" style={INOX_CONTAINER_STYLE}>
@@ -1264,20 +1301,6 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
             {/* Header y Filtros */}
             {!selectedWH ? (
                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <header className="mb-12 flex justify-between items-end">
-                        <div className="flex gap-4 flex-1 justify-end max-w-[70%]">
-                            <button
-                                onClick={() => {
-                                    setEditingWHData({ name: '', type: selectedZone || 'SECO', icon: '📦', capacity: 100, proposito: subCategoryTab });
-                                    setShowWHEditor(true);
-                                }}
-                                className="bg-slate-600 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-slate-600/20 whitespace-nowrap text-white"
-                            >
-                                + Nuevo Almacén
-                            </button>
-                        </div>
-                    </header>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                         {subCatWarehouses.map(wh => {
                             const fillPercent = (wh.current / wh.capacity) * 100;
@@ -1457,6 +1480,22 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                         </table>
                     </div>
                 </div>
+            )}
+
+            {/* v9 (Fase 9.1): botón flotante de creación de almacén.
+                Se monta vía Portal en document.body para que el `fixed` no
+                quede atrapado por el contexto de apilamiento ni por el
+                `overflow-hidden` de los contenedores ancestros (mismo patrón
+                ya probado en ProductCatalogUI). Solo visible en la vista de
+                lista: al entrar al detalle de un almacén desaparece. */}
+            {!selectedWH && ReactDOM.createPortal(
+                <button
+                    onClick={handleOpenCreateWH}
+                    className="fixed bottom-10 right-10 z-[1000] bg-slate-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5),0_0_20px_rgba(100,116,139,0.3)] border border-slate-400/20"
+                >
+                    + Nuevo Almacén
+                </button>,
+                document.body
             )}
                 </>
             )}
@@ -2123,32 +2162,40 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                 />
                             </div>
 
+                            {/* v9 (Fase 9.2): Categoría y Subcategoría son INFORMATIVAS.
+                                El operador ya las eligió al navegar (zona -> pestaña de
+                                subcategoría); el modal no debe volver a preguntarlas ni
+                                permitir contradecir la navegación. Al editar se muestran
+                                los valores reales del almacén. */}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Subcategoría</label>
-                                    <select
-                                        value={editingWHData.proposito || CODIGO_CUARENTENA}
-                                        onChange={(e) => setEditingWHData({...editingWHData, proposito: e.target.value})}
-                                        className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-black text-[10px] uppercase outline-none focus:border-indigo-500 appearance-none"
-                                    >
-                                        {sortPropositos(propositos).map(p => (
-                                            <option key={p.codigo} value={p.codigo}>{p.icon} {p.label}</option>
-                                        ))}
-                                    </select>
+                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Categoría</label>
+                                    <div className="w-full bg-black/40 border border-gray-800/60 p-4 rounded-2xl font-black text-[10px] uppercase text-gray-400 flex items-center gap-2">
+                                        <span className="text-base">{categoriaInfo.icon}</span>
+                                        {categoriaInfo.label}
+                                    </div>
                                 </div>
                                 <div>
-                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Icono</label>
-                                    <div className="flex gap-2">
-                                        {['📦', '🥛', '🪜', '🧊', '🧹', '🥖', '⚡'].map(icon => (
-                                            <button 
-                                                key={icon}
-                                                onClick={() => setEditingWHData({...editingWHData, icon})}
-                                                className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${editingWHData.icon === icon ? 'bg-indigo-600 scale-110 shadow-lg' : 'bg-black/40 border border-gray-800 hover:border-indigo-500'}`}
-                                            >
-                                                {icon}
-                                            </button>
-                                        ))}
+                                    <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Subcategoría</label>
+                                    <div className="w-full bg-black/40 border border-gray-800/60 p-4 rounded-2xl font-black text-[10px] uppercase text-gray-400 flex items-center gap-2">
+                                        <span className="text-base">{subcategoriaInfo.icon}</span>
+                                        {subcategoriaInfo.label}
                                     </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Icono</label>
+                                <div className="flex gap-2">
+                                    {['📦', '🥛', '🪜', '🧊', '🧹', '🥖', '⚡'].map(icon => (
+                                        <button
+                                            key={icon}
+                                            onClick={() => setEditingWHData({...editingWHData, icon})}
+                                            className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${editingWHData.icon === icon ? 'bg-indigo-600 scale-110 shadow-lg' : 'bg-black/40 border border-gray-800 hover:border-indigo-500'}`}
+                                        >
+                                            {icon}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
 

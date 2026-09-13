@@ -291,6 +291,41 @@ describe('Payload de creacion de almacen', () => {
         expect(payload.zona_termica).toBe('SECO');
         expect(payload.proposito).toBe('EXHIBICION_VENTA');
     });
+
+    // v9 (Fase 9.3): la categoria y la subcategoria provienen de la NAVEGACION
+    // (zona -> pestana de subcategoria), no de campos editables del modal.
+    // Estos casos blindan ese contrato: si alguien vuelve a introducir un
+    // selector editable en el modal, el payload dejaria de reflejar la
+    // navegacion y estas pruebas fallarian.
+    it('v9: refleja la navegacion cuando el modal no trae type ni proposito', () => {
+        const payload = buildWarehouseCreatePayload(
+            { name: 'CAMARA 1', icon: '🧊', capacity: 50 },
+            'CONGELADO',
+            'ALMACENAMIENTO',
+        );
+        expect(payload.zona_termica).toBe('CONGELADO');
+        expect(payload.proposito).toBe('ALMACENAMIENTO');
+    });
+
+    it('v9: la subcategoria de navegacion se conserva aunque sea la cuarentena', () => {
+        const payload = buildWarehouseCreatePayload(
+            { name: 'SIN ASIGNAR' },
+            'SECO',
+            'SIN_CLASIFICAR',
+        );
+        expect(payload.zona_termica).toBe('SECO');
+        expect(payload.proposito).toBe('SIN_CLASIFICAR');
+    });
+
+    it('v9: el type explicito del formulario gana sobre selectedZone', () => {
+        const payload = buildWarehouseCreatePayload(
+            { name: 'X', type: 'REFRIGERADO' },
+            'SECO',
+            'ALMACENAMIENTO',
+        );
+        expect(payload.zona_termica).toBe('REFRIGERADO');
+        expect(payload.proposito).toBe('ALMACENAMIENTO');
+    });
 });
 
 // ---------------------------------------------------------------------------
