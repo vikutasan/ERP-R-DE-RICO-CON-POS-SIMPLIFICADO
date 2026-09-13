@@ -190,3 +190,75 @@ export const calcularValorLinea = (item) => {
     const costo = Number(item?.costPerPresentation ?? 0);
     return stock * costo;
 };
+
+// ============================================================================
+// v7 (Fase 6.3): Escaner IA de Vision — human-in-the-loop
+// ============================================================================
+
+/**
+ * Convierte las detecciones crudas del motor de vision (POS ORB) en propuestas
+ * editables para el operador. La IA solo PROPONE; el humano confirma.
+ *
+ * @param {Array<{label: string, qty: number, confidence: number}>} detections
+ * @param {Array<{id: string, nombre: string, unidad_base?: string}>} insumos
+ * @returns {Array<{item_id: string, item_type: string, nombre: string, unidad: string, cantidad: number, confianza: number, confirmado: boolean}>}
+ */
+export const mapVisionDetectionsToProposals = (detections, insumos = []) => {
+    const catalogo = Array.isArray(insumos) ? insumos : [];
+    return (Array.isArray(detections) ? detections : []).map((det) => {
+        const label = det?.label ?? '';
+        const match = catalogo.find(
+            (i) => i.id === label || (i.nombre || '').toLowerCase() === String(label).toLowerCase()
+        );
+        return {
+            item_id: match ? match.id : label,
+            item_type: 'INSUMO',
+            nombre: match ? match.nombre : label,
+            unidad: match?.unidad_base || 'PZA',
+            cantidad: Number(det?.qty ?? 0),
+            confianza: Number(det?.confidence ?? 0),
+            // Regla human-in-the-loop: nada entra confirmado por defecto.
+            confirmado: false,
+        };
+    });
+};
+
+/**
+ * Valida que el operador haya confirmado al menos una propuesta con cantidad > 0.
+ * @param {string} targetWH
+ * @param {Array<{cantidad: number|string, confirmado: boolean}>} proposals
+ * @returns {{ok: boolean, error: string|null}}
+ */
+export const validateVisionSnapshot = (targetWH, proposals) => {
+    if (!targetWH) {
+        return { ok: false, error: 'Selecciona un almacén destino para la entrada por visión' };
+    }
+    const confirmadas = (proposals || []).filter((p) => p.confirmado && Number(p.cantidad) > 0);
+    if (confirmadas.length === 0) {
+        return { ok: false, error: 'Confirma al menos una cantidad antes de registrar (la IA solo propone)' };
+    }
+    return { ok: true, error: null };
+};
+
+/**
+ * Construye el payload de entrada por vision. Solo incluye las propuestas que el
+ * operador confirmo explicitamente (human-in-the-loop).
+ * @param {Array<object>} proposals
+ * @param {string} usuarioId
+ * @param {{imagen_ref?: string, modelo?: string}} meta
+ * @returns {object}
+ */
+export const buildVisionSnapshotPayload = (proposals, usuarioId, meta = {}) => ({
+    items: (proposals || [])
+        .filter((p) => p.confirmado && Number(p.cantidad) > 0)
+        .map((p) => ({
+            item_id: p.item_id,
+            item_type: p.item_type || 'INSUMO',
+            cantidad: parseFloat(p.cantidad),
+            confianza: p.confianza ?? null,
+            notas: p.notas || null,
+        })),
+    usuario_id: usuarioId,
+    imagen_ref: meta.imagen_ref || null,
+    modelo: meta.modelo || null,
+});

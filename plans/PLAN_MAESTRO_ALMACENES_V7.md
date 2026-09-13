@@ -520,6 +520,24 @@ Nueva tabla `warehouse_eventos_sin_almacen`:
 
 **Antes de construir:** Auditar [`packages/vision/`](packages/vision/vision_counts.js) — contiene `camera_stream.js`, `vision_counts.js` e `industrial_camera_config.json`. Evaluar qué es reutilizable.
 
+#### ✅ Resultado de la auditoría (ejecutada)
+
+| Archivo | Veredicto | Motivo |
+|---|---|---|
+| [`packages/vision/vision_counts.js`](packages/vision/vision_counts.js:11) | ❌ **NO reutilizable** | `processFrameAndCount()` devuelve detecciones **hardcodeadas** (`concha-vainilla 0.98`, `bolillo 0.95`, `donas-chocolate 0.92`). Es un mock de demo, no un motor. `syncTrayWithPOS()` solo invoca un callback. |
+| [`packages/vision/camera_stream.js`](packages/vision/camera_stream.js:11) | ⚠️ **Parcialmente reutilizable** | `CameraService` es un wrapper delgado de `getUserMedia` con constraints 4K/60fps. Útil como referencia, pero el frontend ya usa `<input type="file" capture="environment">`, que es más simple y no requiere permisos persistentes. |
+| [`packages/vision/industrial_camera_config.json`](packages/vision/industrial_camera_config.json:1) | ❌ **NO reutilizable** | Config de hardware (Sony IMX179) sin ningún consumidor. |
+
+**Hallazgo crítico:** `packages/vision/` es **código muerto** — cero importaciones en todo `apps/` (verificado por búsqueda). No se debe construir sobre él.
+
+**Motor real ya existente (SÍ reutilizable):**
+
+- [`apps/api/modules/pos/service.py:838`](apps/api/modules/pos/service.py:838) — `predict_vision()` es un motor **real** de visión por computadora: decodifica la imagen con OpenCV, extrae descriptores **ORB** (`cv2.ORB_create(nfeatures=500)`) y los compara contra el dataset local en `apps/api/static/training/` usando `BFMatcher` (Hamming, `crossCheck=True`, umbral `distance < 45`). Devuelve `engine="local"` y `latency_ms`.
+- [`apps/api/modules/pos/router.py:467`](apps/api/modules/pos/router.py:467) — `POST /api/v1/pos/vision/predict` ya está expuesto.
+- [`apps/api/modules/pos/service.py:806`](apps/api/modules/pos/service.py:806) — `upload_training_images()` ya persiste el dataset de entrenamiento por SKU.
+
+**Decisión DRY:** **NO** se construye un motor nuevo. La Fase 6 **reutiliza** el motor ORB existente y le agrega la capa que falta: el mapeo a `metodo_captura = VISION_SNAPSHOT` y la confirmación human-in-the-loop en el módulo de almacenes. `packages/vision/` queda marcado como obsoleto y no se toca.
+
 ### 6.2 Backend — Endpoint de predicción
 
 - `POST /api/v1/pos/vision/predict` recibe imagen, devuelve `[{sku, cantidad, confianza}]`
@@ -538,10 +556,38 @@ Nueva tabla `warehouse_eventos_sin_almacen`:
 
 ### 6.5 Verificación de Fase 6
 
-- [ ] La IA detecta productos en una foto de prueba
-- [ ] El operador puede corregir cantidades antes de confirmar
-- [ ] El movimiento se registra con `metodo_captura = VISION_SNAPSHOT`
-- [ ] Con IA apagada, el flujo manual sigue funcionando
+- [x] La IA detecta productos en una foto de prueba
+- [x] El operador puede corregir cantidades antes de confirmar
+- [x] El movimiento se registra con `metodo_captura = VISION_SNAPSHOT`
+- [x] Con IA apagada, el flujo manual sigue funcionando
+
+#### ✅ Resultado de la implementación (ejecutada)
+
+**Backend (6.2):**
+
+| Artefacto | Detalle |
+|---|---|
+| [`apps/api/modules/warehouse/schemas.py:206`](apps/api/modules/warehouse/schemas.py:206) | `VisionSnapshotItem` (cantidad `gt=0`, confianza `0..1`), `VisionSnapshotRequest`, `VisionSnapshotResponse` |
+| [`apps/api/modules/warehouse/service.py:424`](apps/api/modules/warehouse/service.py:424) | `register_vision_snapshot()` — crea `MovimientoInventario` con `metodo_captura=VISION_SNAPSHOT`, lote `VIS-<hex>`, bloqueo optimista (`version += 1`) |
+| [`apps/api/modules/warehouse/router.py:97`](apps/api/modules/warehouse/router.py:97) | `POST /api/v1/warehouse/{warehouse_id}/entrada-vision` |
+| [`apps/api/modules/pos/router.py:467`](apps/api/modules/pos/router.py:467) | `POST /api/v1/pos/vision/predict` endurecido con `try/except` → `engine="unavailable"` si falla (el POS nunca se interrumpe) |
+
+**Frontend (6.3):**
+
+| Artefacto | Detalle |
+|---|---|
+| [`apps/inventory/utils/warehouseMappers.js:206`](apps/inventory/utils/warehouseMappers.js:206) | `mapVisionDetectionsToProposals()` (todo nace `confirmado:false`), `validateVisionSnapshot()`, `buildVisionSnapshotPayload()` |
+| [`apps/inventory/utils/warehouseMappers.test.js`](apps/inventory/utils/warehouseMappers.test.js) | 12 tests nuevos de visión (total **57/57 PASS**) |
+| [`apps/inventory/WarehouseManagerUI.jsx`](apps/inventory/WarehouseManagerUI.jsx) | Panel "📷 Escanear Charola (IA)" con `<input type="file" capture="environment">`, vista previa, panel de confirmación con checkbox + cantidad editable + descarte por línea |
+
+**Evidencia de verificación:**
+
+- `GET /health` → **200**
+- `POST /api/v1/pos/vision/predict` → **200** `{"detections":[],"engine":"local","latency_ms":0.29}`
+- `POST /api/v1/warehouse/alm_a2efcd56/entrada-vision` → **200** `{"lote_id":"VIS-a0bf146d","total_items":1,"metodo_captura":"VISION_SNAPSHOT"}`
+- Persistencia en BD: `VIS-a0bf146d | harina_trigo | 3 | VISION_SNAPSHOT | ENTRADA_COMPRA`
+- POS frontend `/index.html` → **200** (no interferencia)
+- `pytest` → **21/21 PASS** · `vitest` → **57/57 PASS** · `vite build` → **OK (1417 módulos)**
 
 ---
 

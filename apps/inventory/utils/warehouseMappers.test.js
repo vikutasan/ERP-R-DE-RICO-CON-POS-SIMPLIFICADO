@@ -21,6 +21,9 @@ import {
     validateTraspaso,
     calcularAlertaPEPS,
     calcularValorLinea,
+    mapVisionDetectionsToProposals,
+    validateVisionSnapshot,
+    buildVisionSnapshotPayload,
 } from './warehouseMappers.js';
 
 // ---------------------------------------------------------------------------
@@ -325,5 +328,122 @@ describe('Calculo de valor de linea', () => {
     it('devuelve 0 con datos faltantes', () => {
         expect(calcularValorLinea({})).toBe(0);
         expect(calcularValorLinea(null)).toBe(0);
+    });
+});
+
+// ============================================================================
+// v7 (Fase 6.3): Escaner IA de Vision — human-in-the-loop
+// ============================================================================
+describe('Vision: mapeo de detecciones a propuestas', () => {
+    const insumos = [
+        { id: 'INS-HARINA', nombre: 'Harina', unidad_base: 'KG' },
+        { id: 'INS-AZUCAR', nombre: 'Azucar', unidad_base: 'KG' },
+    ];
+
+    it('resuelve el insumo por id (label == id)', () => {
+        const props = mapVisionDetectionsToProposals(
+            [{ label: 'INS-HARINA', qty: 3, confidence: 0.98 }],
+            insumos
+        );
+        expect(props).toHaveLength(1);
+        expect(props[0].item_id).toBe('INS-HARINA');
+        expect(props[0].nombre).toBe('Harina');
+        expect(props[0].unidad).toBe('KG');
+        expect(props[0].cantidad).toBe(3);
+        expect(props[0].confianza).toBe(0.98);
+    });
+
+    it('resuelve el insumo por nombre (case-insensitive)', () => {
+        const props = mapVisionDetectionsToProposals(
+            [{ label: 'azucar', qty: 2, confidence: 0.9 }],
+            insumos
+        );
+        expect(props[0].item_id).toBe('INS-AZUCAR');
+        expect(props[0].nombre).toBe('Azucar');
+    });
+
+    it('deja el label crudo si no hay match en el catalogo', () => {
+        const props = mapVisionDetectionsToProposals(
+            [{ label: 'DESCONOCIDO', qty: 1, confidence: 0.5 }],
+            insumos
+        );
+        expect(props[0].item_id).toBe('DESCONOCIDO');
+        expect(props[0].unidad).toBe('PZA');
+    });
+
+    it('nunca marca una propuesta como confirmada por defecto (human-in-the-loop)', () => {
+        const props = mapVisionDetectionsToProposals(
+            [{ label: 'INS-HARINA', qty: 3, confidence: 0.98 }],
+            insumos
+        );
+        expect(props[0].confirmado).toBe(false);
+    });
+
+    it('no crashea con entradas nulas', () => {
+        expect(mapVisionDetectionsToProposals(null, null)).toEqual([]);
+        expect(mapVisionDetectionsToProposals(undefined, insumos)).toEqual([]);
+    });
+});
+
+describe('Vision: validacion de entrada confirmada', () => {
+    it('exige almacen destino', () => {
+        const r = validateVisionSnapshot('', [{ cantidad: 1, confirmado: true }]);
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/almacén destino/i);
+    });
+
+    it('exige al menos una propuesta confirmada con cantidad > 0', () => {
+        const r = validateVisionSnapshot('alm_1', [
+            { cantidad: 3, confirmado: false },
+            { cantidad: 0, confirmado: true },
+        ]);
+        expect(r.ok).toBe(false);
+        expect(r.error).toMatch(/confirma/i);
+    });
+
+    it('acepta cuando hay una confirmada valida', () => {
+        const r = validateVisionSnapshot('alm_1', [
+            { cantidad: 3, confirmado: true },
+            { cantidad: 5, confirmado: false },
+        ]);
+        expect(r.ok).toBe(true);
+    });
+
+    it('no crashea con propuestas nulas', () => {
+        expect(validateVisionSnapshot('alm_1', null).ok).toBe(false);
+    });
+});
+
+describe('Vision: payload de entrada por vision', () => {
+    it('solo incluye las propuestas confirmadas con cantidad > 0', () => {
+        const payload = buildVisionSnapshotPayload(
+            [
+                { item_id: 'A', item_type: 'INSUMO', cantidad: 3, confianza: 0.9, confirmado: true },
+                { item_id: 'B', item_type: 'INSUMO', cantidad: 5, confianza: 0.8, confirmado: false },
+                { item_id: 'C', item_type: 'INSUMO', cantidad: 0, confianza: 0.7, confirmado: true },
+            ],
+            'USR-1'
+        );
+        expect(payload.items).toHaveLength(1);
+        expect(payload.items[0].item_id).toBe('A');
+        expect(payload.items[0].cantidad).toBe(3);
+        expect(payload.usuario_id).toBe('USR-1');
+    });
+
+    it('propaga la metadata de trazabilidad (imagen_ref y modelo)', () => {
+        const payload = buildVisionSnapshotPayload(
+            [{ item_id: 'A', cantidad: 1, confirmado: true }],
+            'USR-1',
+            { imagen_ref: 'sha256:abc', modelo: 'local-orb' }
+        );
+        expect(payload.imagen_ref).toBe('sha256:abc');
+        expect(payload.modelo).toBe('local-orb');
+    });
+
+    it('usa null como metadata por defecto', () => {
+        const payload = buildVisionSnapshotPayload([], 'USR-1');
+        expect(payload.imagen_ref).toBeNull();
+        expect(payload.modelo).toBeNull();
+        expect(payload.items).toEqual([]);
     });
 });

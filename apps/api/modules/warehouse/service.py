@@ -420,6 +420,76 @@ class WarehouseService:
         await db.commit()
         return {"lote_id": lote_id, "total_items": len(resultados), "items": resultados}
 
+    # --- Escaner IA de Vision (Fase 6.2) ---
+    async def register_vision_snapshot(self, db: AsyncSession, wh_id: str, payload: schemas.VisionSnapshotRequest):
+        """v7 (Fase 6.2): registra una entrada a partir de una foto de charola.
+
+        Regla human-in-the-loop: la IA solo PROPONE cantidades. Este metodo
+        recibe unicamente los items que el operador ya confirmo o corrigio.
+        Nunca se registra stock automaticamente sin confirmacion humana.
+
+        El movimiento queda con metodo_captura = VISION_SNAPSHOT para que la
+        auditoria distinga una entrada asistida por IA de una entrada manual.
+        """
+        import uuid as _uuid
+        lote_id = f"VIS-{_uuid.uuid4().hex[:8]}"
+        resultados = []
+
+        for item in payload.items:
+            mov = models.MovimientoInventario(
+                almacen_origen_id=None,  # Entrada externa (produccion/compra)
+                almacen_destino_id=wh_id,
+                item_id=item.item_id,
+                item_type=item.item_type.value,
+                cantidad=item.cantidad,
+                tipo_movimiento=schemas.TipoMovimiento.ENTRADA_COMPRA.value,
+                metodo_captura=schemas.MetodoCaptura.VISION_SNAPSHOT.value,
+                usuario_id=payload.usuario_id,
+                notas=item.notas,
+                lote_entrada_id=lote_id
+            )
+            db.add(mov)
+
+            # Actualizar stock con bloqueo optimista (mismo patron que entrada masiva)
+            result = await db.execute(
+                select(models.StockAlmacen).where(
+                    models.StockAlmacen.almacen_id == wh_id,
+                    models.StockAlmacen.item_id == item.item_id
+                )
+            )
+            stock = result.scalar_one_or_none()
+            if not stock:
+                stock = models.StockAlmacen(
+                    almacen_id=wh_id,
+                    item_id=item.item_id,
+                    item_type=item.item_type.value,
+                    cantidad_actual=item.cantidad,
+                    version=1  # v7 (D9): stock nuevo nace en version 1
+                )
+                db.add(stock)
+            else:
+                stock.cantidad_actual += item.cantidad
+                stock.version += 1  # v7 (D9): ya existia, se mantiene el incremento
+
+            resultados.append({
+                "item_id": item.item_id,
+                "cantidad": item.cantidad,
+                "confianza": item.confianza,
+                "status": "OK",
+            })
+
+        await db.commit()
+        logger.info(
+            "Entrada por vision registrada: lote=%s almacen=%s items=%d modelo=%s",
+            lote_id, wh_id, len(resultados), payload.modelo or "n/d",
+        )
+        return {
+            "lote_id": lote_id,
+            "total_items": len(resultados),
+            "metodo_captura": schemas.MetodoCaptura.VISION_SNAPSHOT.value,
+            "items": resultados,
+        }
+
     # --- Mermas ---
     async def register_merma(self, db: AsyncSession, wh_id: str, payload: schemas.MermaRequest):
         # v7 (Fase 2.2): RBAC. Solo perfiles con 'almacenes.merma' pueden mermar.

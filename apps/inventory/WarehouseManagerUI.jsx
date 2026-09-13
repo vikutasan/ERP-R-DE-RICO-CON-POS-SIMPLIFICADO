@@ -13,6 +13,10 @@ import {
     buildBulkEntryPayload,
     validateMerma,
     validateTraspaso,
+    // v7 (Fase 6.3): escáner IA de visión (human-in-the-loop).
+    mapVisionDetectionsToProposals,
+    validateVisionSnapshot,
+    buildVisionSnapshotPayload,
 } from './utils/warehouseMappers';
 // v7 (Fase 4): capa PWA offline del módulo de almacenes. Aislada del POS.
 import {
@@ -182,6 +186,12 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     const [bulkEntryItems, setBulkEntryItems] = useState([]);
     const [bulkTargetWH, setBulkTargetWH] = useState('');
     const [bulkInsumoSearch, setBulkInsumoSearch] = useState('');
+    // v7 (Fase 6.3): Escáner IA de Visión (human-in-the-loop)
+    const [visionTargetWH, setVisionTargetWH] = useState('');
+    const [visionProposals, setVisionProposals] = useState([]);
+    const [visionScanning, setVisionScanning] = useState(false);
+    const [visionPreview, setVisionPreview] = useState(null);
+    const visionFileRef = useRef(null);
     // Mermas
     const [mermaForm, setMermaForm] = useState({ almacen_id: '', item_id: '', item_type: 'INSUMO', cantidad: '', notas: '' });
     // Traspasos
@@ -360,6 +370,123 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     const removeBulkItem = (index) => {
         setBulkEntryItems(bulkEntryItems.filter((_, i) => i !== index));
+    };
+
+    // --- v7 (Fase 6.3): Escáner IA de Visión (human-in-the-loop) ---
+    // Regla de oro (spec línea 537): la IA PROPONE, el operador CONFIRMA.
+    // Nunca se registra stock automáticamente sin confirmación humana.
+
+    /**
+     * Abre la cámara trasera del dispositivo (o el selector de archivos en
+     * escritorio) mediante un <input type="file" capture="environment">.
+     */
+    const handleVisionCapture = () => {
+        if (visionFileRef.current) visionFileRef.current.click();
+    };
+
+    /**
+     * Lee la imagen elegida como DataURL, la guarda para la vista previa y
+     * dispara el análisis contra el motor ORB existente del POS.
+     */
+    const handleVisionFileChange = async (e) => {
+        const file = e.target.files?.[0];
+        // Permite volver a elegir el mismo archivo dos veces seguidas.
+        e.target.value = '';
+        if (!file) return;
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+        setVisionPreview(dataUrl);
+        await handleVisionAnalyze(dataUrl);
+    };
+
+    /**
+     * Envía la imagen al endpoint de detección. Si el motor no está
+     * disponible (IA apagada) el backend responde engine="unavailable" y
+     * aquí solo se avisa al operador: el flujo manual sigue intacto.
+     */
+    const handleVisionAnalyze = async (dataUrl) => {
+        setVisionScanning(true);
+        try {
+            const base64 = String(dataUrl).split(',')[1] || '';
+            const res = await axios.post(`${API_BASE}/api/v1/pos/vision/predict`, {
+                image: base64,
+                terminal_id: 'ALMACEN',
+            });
+            const data = res.data || {};
+            if (data.engine === 'unavailable' || !data.detections?.length) {
+                setVisionProposals([]);
+                showOpMessage('🤖 La IA no detectó productos. Captura manualmente o reintenta.', 'error');
+                return;
+            }
+            // La IA solo propone: todo llega con confirmado=false.
+            setVisionProposals(mapVisionDetectionsToProposals(data.detections, insumos));
+            showOpMessage(`🤖 IA propuso ${data.detections.length} línea(s). Confirma las cantidades.`);
+        } catch (err) {
+            logger.error('Error en análisis de visión:', err);
+            setVisionProposals([]);
+            showOpMessage('❌ No se pudo analizar la imagen. Usa la captura manual.', 'error');
+        } finally {
+            setVisionScanning(false);
+        }
+    };
+
+    /** Alterna la confirmación humana de una propuesta detectada. */
+    const handleVisionConfirm = (index) => {
+        const updated = [...visionProposals];
+        updated[index] = { ...updated[index], confirmado: !updated[index].confirmado };
+        setVisionProposals(updated);
+    };
+
+    /** Permite corregir la cantidad propuesta por la IA antes de confirmar. */
+    const handleVisionQtyChange = (index, value) => {
+        const updated = [...visionProposals];
+        updated[index] = { ...updated[index], cantidad: value };
+        setVisionProposals(updated);
+    };
+
+    /** Descarta una propuesta que el operador no reconoce. */
+    const handleVisionDiscard = (index) => {
+        setVisionProposals(visionProposals.filter((_, i) => i !== index));
+    };
+
+    /** Limpia por completo el estado del escáner de visión. */
+    const resetVisionScanner = () => {
+        setVisionProposals([]);
+        setVisionPreview(null);
+        setVisionScanning(false);
+    };
+
+    /**
+     * Registra la entrada SOLO con las líneas confirmadas explícitamente por
+     * el operador. La validación y el armado del payload viven en el módulo
+     * puro cubierto por Vitest.
+     */
+    const handleSubmitVisionEntry = async () => {
+        const { ok, error } = validateVisionSnapshot(visionTargetWH, visionProposals);
+        if (!ok) {
+            showOpMessage(error, 'error');
+            return;
+        }
+        setLoadingOp(true);
+        try {
+            const confirmadas = visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0);
+            const payload = buildVisionSnapshotPayload(visionProposals, usuarioId, {
+                imagen_ref: visionPreview ? 'captura_charola' : null,
+                modelo: 'orb-local',
+            });
+            await ejecutarOEncolar({
+                ruta: `/${visionTargetWH}/entrada-vision`,
+                body: payload,
+                label: `Entrada por visión (${confirmadas.length} items)`,
+                exitoMsg: `Entrada por visión registrada: ${confirmadas.length} items confirmados`,
+            });
+            resetVisionScanner();
+            setVisionTargetWH('');
+        } finally { setLoadingOp(false); }
     };
 
     // Helpers de movimiento
@@ -1220,6 +1347,120 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                         >
                             {loadingOp ? '⏳ Procesando...' : `📥 Registrar Entrada (${bulkEntryItems.length} items)`}
                         </button>
+                    </div>
+
+                    {/* ===== v7 (Fase 6.3): ESCÁNER IA DE VISIÓN ===== */}
+                    <div className="mt-6 bg-slate-900/50 border border-cyan-500/25 rounded-[32px] p-8">
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-1 bg-gradient-to-r from-cyan-300 to-cyan-500 bg-clip-text text-transparent">📷 Escanear Charola (IA)</h2>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">La IA propone cantidades · tú confirmas antes de registrar</p>
+                        <p className="text-[10px] font-bold text-cyan-300/80 uppercase tracking-widest mb-8">🔒 Regla human-in-the-loop: nunca se registra stock sin tu confirmación</p>
+
+                        {/* Input oculto: cámara trasera en móvil, selector en escritorio */}
+                        <input
+                            ref={visionFileRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={handleVisionFileChange}
+                            className="hidden"
+                        />
+
+                        {/* Selector de almacén destino */}
+                        <div className="mb-6">
+                            <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Almacén Destino</label>
+                            <select
+                                value={visionTargetWH}
+                                onChange={(e) => setVisionTargetWH(e.target.value)}
+                                className="w-full max-w-md bg-slate-800/80 border border-slate-500/30 p-4 rounded-2xl font-bold text-sm outline-none focus:border-cyan-400 appearance-none text-white"
+                            >
+                                <option value="">Selecciona un almacén...</option>
+                                {warehouses.map(wh => (
+                                    <option key={wh.id} value={wh.id}>{wh.icon} {wh.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Botón de captura */}
+                        <button
+                            onClick={handleVisionCapture}
+                            disabled={visionScanning}
+                            className="bg-cyan-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-cyan-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {visionScanning ? '⏳ Analizando imagen...' : '📷 Escanear Charola'}
+                        </button>
+
+                        {/* Vista previa de la captura */}
+                        {visionPreview && (
+                            <div className="mt-6">
+                                <label className="text-[9px] font-black uppercase text-slate-400 mb-2 block tracking-widest">Vista Previa</label>
+                                <img
+                                    src={visionPreview}
+                                    alt="Captura de charola"
+                                    className="max-w-xs rounded-2xl border border-cyan-500/30 shadow-lg"
+                                />
+                            </div>
+                        )}
+
+                        {/* Panel de confirmación human-in-the-loop */}
+                        {visionProposals.length > 0 && (
+                            <div className="mt-8">
+                                <label className="text-[9px] font-black uppercase text-cyan-300 mb-3 block tracking-widest">
+                                    Propuestas de la IA ({visionProposals.filter(p => p.confirmado).length}/{visionProposals.length} confirmadas)
+                                </label>
+                                <div className="space-y-3">
+                                    {visionProposals.map((p, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`flex items-center gap-4 border rounded-xl p-4 transition-colors ${p.confirmado ? 'bg-cyan-900/30 border-cyan-400/50' : 'bg-slate-800/60 border-slate-600/30'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={!!p.confirmado}
+                                                onChange={() => handleVisionConfirm(idx)}
+                                                className="w-5 h-5 accent-cyan-500 cursor-pointer"
+                                                title="Confirmar esta línea"
+                                            />
+                                            <div className="flex-1">
+                                                <span className="text-sm font-bold text-white block">{p.nombre}</span>
+                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                    Confianza IA: {Math.round((p.confianza || 0) * 100)}%
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                value={p.cantidad}
+                                                onChange={(e) => handleVisionQtyChange(idx, e.target.value)}
+                                                className="w-28 bg-slate-900/80 border border-slate-500/30 p-2 rounded-lg text-sm font-mono text-center outline-none focus:border-cyan-400 text-white"
+                                            />
+                                            <span className="text-[9px] font-black text-slate-400 uppercase w-12">{p.unidad}</span>
+                                            <button
+                                                onClick={() => handleVisionDiscard(idx)}
+                                                className="text-red-400 hover:text-red-300 text-lg"
+                                                title="Descartar propuesta"
+                                            >✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex items-center gap-4 mt-6">
+                                    <button
+                                        onClick={handleSubmitVisionEntry}
+                                        disabled={loadingOp || visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0).length === 0}
+                                        className="bg-cyan-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-cyan-500 hover:scale-105 active:scale-95 transition-all shadow-lg shadow-cyan-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {loadingOp ? '⏳ Procesando...' : `✅ Registrar Confirmadas (${visionProposals.filter(p => p.confirmado && Number(p.cantidad) > 0).length})`}
+                                    </button>
+                                    <button
+                                        onClick={resetVisionScanner}
+                                        className="text-slate-400 hover:text-white px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-colors"
+                                    >
+                                        Descartar todo
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

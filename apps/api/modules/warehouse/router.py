@@ -91,6 +91,18 @@ async def bulk_entry(warehouse_id: str, payload: schemas.EntradaMasivaRequest, d
     """Entrada en lote con lote_entrada_id compartido."""
     return await warehouse_svc.register_bulk_entry(db, warehouse_id, payload)
 
+# v7 (Fase 6.2): entrada asistida por vision. El frontend captura la foto, la IA
+# propone cantidades y el operador las confirma/edita. Solo entonces se llama
+# aqui. El movimiento queda con metodo_captura = VISION_SNAPSHOT.
+@router.post("/{warehouse_id}/entrada-vision", response_model=schemas.VisionSnapshotResponse)
+async def vision_snapshot_entry(
+    warehouse_id: str,
+    payload: schemas.VisionSnapshotRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Registra una entrada confirmada por el operador tras deteccion por IA."""
+    return await warehouse_svc.register_vision_snapshot(db, warehouse_id, payload)
+
 @router.post("/{warehouse_id}/mermas", response_model=schemas.MovimientoInventarioResponse)
 async def register_merma(warehouse_id: str, payload: schemas.MermaRequest, db: AsyncSession = Depends(get_db)):
     """Registrar merma auditable (notas obligatorias)."""
