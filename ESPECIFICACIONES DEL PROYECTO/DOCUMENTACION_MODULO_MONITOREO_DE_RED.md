@@ -5,14 +5,17 @@
 > del sistema de vigilancia de red. Cualquier cambio que rompa las **Reglas de Oro**
 > (sección 9) se considera una regresión crítica.
 
-**Última actualización:** 13/Septiembre/2026 (v12 — endurecimiento de zona horaria y veracidad de estado)
+**Última actualización:** 13/Septiembre/2026 (v13 — clasificadores puros + tests, `CONFIG.API_BASE_URL`, offset TZ configurable)
 **Archivos gobernados:**
 - [`apps/network/NetworkMonitorUI.jsx`](../../apps/network/NetworkMonitorUI.jsx) — Dashboard (componente React)
+- [`apps/network/utils/networkClassifiers.js`](../../apps/network/utils/networkClassifiers.js) — Clasificadores puros (v13)
+- [`apps/network/utils/networkClassifiers.test.js`](../../apps/network/utils/networkClassifiers.test.js) — Tests vitest (v13)
 - [`apps/pos/services/networkMonitor.js`](../../apps/pos/services/networkMonitor.js) — Monitor de conectividad (servicio puro)
 - [`apps/pos/hooks/useNetworkHealth.js`](../../apps/pos/hooks/useNetworkHealth.js) — Hook de latencia + reporte de incidentes
 - [`apps/api/modules/network/models.py`](../../apps/api/modules/network/models.py) — Modelo `NetworkIncident`
 - [`apps/api/modules/network/schemas.py`](../../apps/api/modules/network/schemas.py) — Contratos Pydantic
 - [`apps/api/modules/network/router.py`](../../apps/api/modules/network/router.py) — Endpoints REST
+- [`apps/api/tests/test_network_tz.py`](../../apps/api/tests/test_network_tz.py) — Tests pytest del offset TZ (v13)
 
 ---
 
@@ -524,6 +527,83 @@ npx vitest run         # Tests unitarios
 
 - **`ENTERPRISE_PAT`:** regenerar el token para reparar el espejo a San Pablo
   (`.github/workflows/mirror.yml`). Requiere acción del administrador de GitHub.
-- **Tests dedicados:** el módulo de red aún no tiene tests unitarios propios
-  (a diferencia de Almacenes y POS). Candidato: extraer la lógica de clasificación
-  de severidad a una función pura testeable.
+
+> **v13 (Fase 13.1–13.3):** las tres áreas de mejora detectadas en la auditoría
+> del módulo fueron reparadas. Ver sección 14.
+
+---
+
+## 14. REPARACIÓN v13 (Áreas de Mejora Cerradas)
+
+La auditoría del módulo identificó tres áreas de mejora. Las tres fueron
+reparadas en tres fases independientes, cada una con su propio commit y
+verificación completa, **sin interrumpir al POS** (protocolo de no-interferencia:
+no se tocó `RetailVisionPOS.jsx`, `useTerminalLocking.js`, `useBeforeUnload.js`
+ni `POSService.js`; el contrato público de `useNetworkHealth` no cambió).
+
+### 14.1 Fase 13.1 — Clasificadores puros + tests (commit `f4c9da9`)
+
+**Problema:** la lógica de clasificación de estado de terminal y de severidad de
+desconexión vivía inline dentro de `NetworkMonitorUI.jsx`, sin tests. Un cambio
+accidental podía romper el dashboard sin que nada lo detectara.
+
+**Solución:** se extrajo a [`networkClassifiers.js`](apps/network/utils/networkClassifiers.js:1)
+(función pura, sin React, sin DOM, sin fetch):
+
+| Función | Responsabilidad |
+|---|---|
+| `classifyTerminalStatus(info, nowMs, ttlMinutes)` | Estado de terminal (online/cash_open/stale/idle) |
+| `normalizeUtcString(value)` | Agrega `Z` si falta zona (parche defensivo UTC) |
+| `classifyDisconnectSeverity(evt, allEvents, idx, windowMs)` | normal vs sospechosa |
+| `classifyEvents(events, windowMs)` | Aplica severidad a toda la lista |
+| `summarizeSuspiciousIncidents(events)` | Conteo de sospechosas por terminal |
+
+**Tests:** [`networkClassifiers.test.js`](apps/network/utils/networkClassifiers.test.js:1)
+— 21 tests. Vitest pasó de 120 a **141**.
+
+**Regla de Oro:** toda lógica de clasificación del módulo de red debe vivir en
+`networkClassifiers.js` y tener test. PROHIBIDO volver a escribirla inline en el JSX.
+
+### 14.2 Fase 13.2 — `CONFIG.API_BASE_URL` (commit `df73bd8`)
+
+**Problema:** `NetworkMonitorUI.jsx` construía la URL del API a mano
+(`window.location.hostname + ':5001'`), el patrón exacto del **Incidente 16.6**
+(falso banner "SIN CONEXIÓN" cuando se accede por dominio en producción).
+
+**Solución:** `const API_BASE = CONFIG.API_BASE_URL;` importando
+[`config.js`](apps/pos/config.js:16). `CONFIG.API_BASE_URL` ya resuelve
+`http://${hostname}:5001/api/v1` en local/IP y `https://api.${dominio}/api/v1`
+en producción.
+
+**Regla de Oro:** `CONFIG.API_BASE_URL` es la ÚNICA fuente de verdad de la URL
+del API. PROHIBIDO reconstruirla con `window.location.hostname`.
+
+### 14.3 Fase 13.3 — Offset de zona horaria configurable (commit `31a9139`)
+
+**Problema:** `tz_offset_hours = 6` estaba hardcodeado en dos lugares de
+[`router.py`](apps/api/modules/network/router.py:1). Si el negocio cambiara de
+zona horaria o de horario de verano, el filtrado de incidentes por fecha se
+desfasaba silenciosamente.
+
+**Solución:**
+- Nuevo setting `network_tz_offset_hours` (default `6`) en
+  [`settings/service.py`](apps/api/modules/settings/service.py:24) `seed_settings`.
+- Helper `_get_tz_offset(db)` en `router.py` que lee el setting con **fallback
+  robusto a 6** si no existe o el valor es basura (no rompe si la BD aún no
+  tiene la fila sembrada).
+- Ambos usos de `tz_offset_hours = 6` reemplazados por `await _get_tz_offset(db)`.
+
+**Tests:** [`test_network_tz.py`](apps/api/tests/test_network_tz.py:1) — 6 tests.
+Pytest pasó de 33 a **39**.
+
+**Regla de Oro:** ningún offset de zona horaria se hardcodea. Se lee del setting
+con fallback explícito.
+
+### 14.4 Verificación final v13
+
+| Verificación | Antes | Después |
+|---|---|---|
+| `npx vitest run` | 120 | **141** |
+| `npm run build` | 1418 módulos | **1419 módulos** |
+| `docker exec rderico-api-dev python -m pytest -q` | 33 | **39** |
+| POS (`RetailVisionPOS.jsx`) | — | **sin cambios** |
