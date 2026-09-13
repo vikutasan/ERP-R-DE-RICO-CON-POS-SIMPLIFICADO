@@ -48,6 +48,13 @@ class Ticket(Base):
 
     terminal_id = Column(String, nullable=True, index=True)  # Campo directo — elimina dependencia de session para obtener terminal
 
+    # --- Separación de canal (migración add_heladeria_support.py) ---
+    # NULL / 'PANADERIA' = POS Panadería (IA). 'HELADERIA' = POS de Heladería.
+    # Se declara aquí para que el ORM pueda escribir el canal de forma ATÓMICA
+    # en el INSERT de reserva (antes se hacía con un PUT posterior no atómico).
+    channel = Column(String, nullable=True, default="PANADERIA", index=True)
+    customer_group_name = Column(String, nullable=True)
+
     session_id = Column(Integer, ForeignKey("terminal_sessions.id"))
     cash_session_id = Column(Integer, ForeignKey("cash_sessions.id"), nullable=True)
     

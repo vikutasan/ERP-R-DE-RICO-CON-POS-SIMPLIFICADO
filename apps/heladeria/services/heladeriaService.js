@@ -94,6 +94,10 @@ class HeladeriaService {
     // ═══════════════════════════════════════════════════
 
     async createHeladeriaTicket(sessionId, terminalId, capturedById = null) {
+        // v14 (Opcion 2): el canal viaja en la MISMA petición de reserva, así el
+        // ticket nace con channel='HELADERIA' de forma ATÓMICA. Se eliminó el PUT
+        // posterior (cuyo res.ok no se verificaba) que dejaba tickets huérfanos
+        // con channel=NULL visibles en el POS de Panadería.
         return withRetries(async () => {
             const res = await fetch(`${CONFIG.API_BASE_URL}/pos/tickets/reserve`, {
                 method: 'POST',
@@ -101,26 +105,14 @@ class HeladeriaService {
                 body: JSON.stringify({
                     terminal_id: terminalId,
                     captured_by_id: capturedById,
+                    channel: 'HELADERIA',
                 }),
             });
             if (!res.ok) {
                 const err = await res.json();
                 throw new Error(err.detail || 'Error reservando ticket de heladería');
             }
-            const ticket = await res.json();
-            
-            // Marcar como heladería via update
-            await fetch(`${CONFIG.API_BASE_URL}/pos/tickets/${ticket.account_num}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...ticket,
-                    channel: 'HELADERIA',
-                    items: ticket.items || [],
-                }),
-            });
-            
-            return ticket;
+            return await res.json();
         }, { label: 'createHeladeriaTicket' });
     }
 

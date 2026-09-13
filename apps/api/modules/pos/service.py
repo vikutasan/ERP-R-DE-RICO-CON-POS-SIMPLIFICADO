@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import delete, text
+from sqlalchemy import delete, text, func
 from fastapi import HTTPException
 from . import models, schemas
 from modules.catalog.models import Product
@@ -609,12 +609,19 @@ class POSService:
             return None
         return self._populate_flat_fields(ticket)
 
-    async def reserve_ticket(self, db: AsyncSession, terminal_id: str, captured_by_id: int = None):
+    async def reserve_ticket(self, db: AsyncSession, terminal_id: str, captured_by_id: int = None, channel: str = None):
         """Reserva un ticket vacío o genera uno nuevo con ID correlativo.
         v4.8: Reciclaje restringido a tickets <5min para evitar colisiones de folio.
-        Ahora acepta captured_by_id para trazabilidad desde el primer instante."""
+        Ahora acepta captured_by_id para trazabilidad desde el primer instante.
+
+        v14 (Opcion 2): acepta `channel` para crear el ticket con el canal correcto
+        en el MISMO INSERT (atómico). Si es None se usa 'PANADERIA' (default del
+        modelo), preservando el comportamiento del POS IA que no envía el campo.
+        El reciclaje SOLO reutiliza tickets del MISMO canal, para que un ticket de
+        Heladería nunca sea reciclado por el POS de Panadería (y viceversa)."""
         import logging
         logger = logging.getLogger("pos.reserve")
+        canal = channel or "PANADERIA"
 
         session = await self.get_active_session(db, terminal_id)
         if not session:
@@ -623,27 +630,30 @@ class POSService:
         # 0. Garbage Collection de tickets huérfanos (throttled a 1x por minuto)
         await self._cleanup_stale_empty_tickets(db, terminal_id)
 
-        # 1. Intentar reciclar un ticket vacío RECIENTE (max 5 min) del mismo terminal
-        recycled = await self._find_empty_ticket(db, terminal_id)
+        # 1. Intentar reciclar un ticket vacío RECIENTE (max 5 min) del mismo terminal Y MISMO CANAL
+        recycled = await self._find_empty_ticket(db, terminal_id, canal)
         if recycled:
-            logger.info(f"♻️ RECICLAJE: {terminal_id} reutiliza folio {recycled.account_num} (creado {recycled.created_at})")
+            logger.info(f"♻️ RECICLAJE: {terminal_id} reutiliza folio {recycled.account_num} (canal={canal}, creado {recycled.created_at})")
             # Asignar capturista desde el momento de la reserva
             if captured_by_id and not recycled.captured_by_id:
                 recycled.captured_by_id = captured_by_id
                 await db.flush()
             return await self._get_full_ticket(db, recycled.id)
 
-        # 2. Generar ticket nuevo con folio automático
-        new_ticket = await self._generate_consecutive_ticket(db, session.id, terminal_id, captured_by_id)
-        logger.info(f"🆕 FOLIO NUEVO: {terminal_id} → {new_ticket.account_num}")
+        # 2. Generar ticket nuevo con folio automático (canal atómico en el INSERT)
+        new_ticket = await self._generate_consecutive_ticket(db, session.id, terminal_id, captured_by_id, canal)
+        logger.info(f"🆕 FOLIO NUEVO: {terminal_id} → {new_ticket.account_num} (canal={canal})")
         return await self._get_full_ticket(db, new_ticket.id)
 
-    async def _find_empty_ticket(self, db: AsyncSession, terminal_id: str):
+    async def _find_empty_ticket(self, db: AsyncSession, terminal_id: str, channel: str = "PANADERIA"):
         """
-        Busca un ticket abierto sin items ni monto para el MISMO TERMINAL.
+        Busca un ticket abierto sin items ni monto para el MISMO TERMINAL y CANAL.
         v4.8: SOLO recicla tickets creados hace menos de 5 MINUTOS.
         Tickets viejos son ignorados para evitar colisiones con folios ya pagados.
         Usa FOR UPDATE SKIP LOCKED para evitar que dos terminales reciclen el mismo ticket.
+        v14 (Opcion 2): el filtro por canal evita que un ticket de Heladería sea
+        reciclado por el POS de Panadería (y viceversa). Los tickets legacy con
+        channel NULL se tratan como 'PANADERIA' (COALESCE).
         """
         cutoff = datetime.now() - timedelta(minutes=5)
         result = await db.execute(
@@ -653,6 +663,7 @@ class POSService:
             .where(models.Ticket.status == "DRAFT")
             .where(models.Ticket.total == 0.0)
             .where(models.Ticket.created_at >= cutoff)
+            .where(func.coalesce(models.Ticket.channel, "PANADERIA") == channel)
             .with_for_update(skip_locked=True)
             .limit(5)
         )
@@ -767,11 +778,14 @@ class POSService:
             print(f"⚠️ Error creando secuencia (puede que ya exista): {e}")
             await db.rollback()
 
-    async def _generate_consecutive_ticket(self, db: AsyncSession, session_id: int, terminal_id: str = None, captured_by_id: int = None):
+    async def _generate_consecutive_ticket(self, db: AsyncSession, session_id: int, terminal_id: str = None, captured_by_id: int = None, channel: str = "PANADERIA"):
         """
         Crea un ticket nuevo con folio atómico usando SECUENCIA de PostgreSQL.
         Garantía: NUNCA dos terminales obtendrán el mismo folio, sin importar la concurrencia.
         Ahora incluye terminal_id directo y captured_by_id desde la creación.
+        v14 (Opcion 2): `channel` se escribe en el MISMO INSERT (atómico), de modo
+        que el ticket NUNCA existe con channel=NULL. Esto elimina la ventana en la
+        que un ticket de Heladería aparecía en el POS de Panadería.
         """
         await self._ensure_folio_sequence(db)
         
@@ -786,6 +800,7 @@ class POSService:
                     session_id=session_id,
                     terminal_id=terminal_id,
                     captured_by_id=captured_by_id,
+                    channel=channel or "PANADERIA",
                     total=0,
                     status="DRAFT"
                 )

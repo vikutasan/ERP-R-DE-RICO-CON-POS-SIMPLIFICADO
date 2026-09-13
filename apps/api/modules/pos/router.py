@@ -33,9 +33,12 @@ async def get_active_session(terminal_id: str, db: AsyncSession = Depends(get_db
 
 @router.post("/tickets/reserve", response_model=schemas.TicketResponse)
 async def reserve_ticket(req: schemas.ReserveTicketRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    result = await pos_service.reserve_ticket(db, req.terminal_id, req.captured_by_id)
+    # v14 (Opcion 2): `channel` opcional → el ticket nace con el canal correcto
+    # en el MISMO INSERT. El POS IA no envía el campo y recibe 'PANADERIA'.
+    result = await pos_service.reserve_ticket(db, req.terminal_id, req.captured_by_id, req.channel)
     audit_pos_write(request, "POST /tickets/reserve", {
         "terminal_id": req.terminal_id, "captured_by_id": req.captured_by_id,
+        "channel": req.channel,
         "account_num": result.account_num
     }, 200)
     return result

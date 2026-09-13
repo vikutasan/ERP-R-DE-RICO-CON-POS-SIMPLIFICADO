@@ -203,35 +203,49 @@ Build OK + ~168/168 tests.
 
 ---
 
-## 🎯 FASE 14.4 — Pre-comanda + cierre del flujo no atómico + test de contrato
+## 🎯 FASE 14.4 — Pre-comanda con canal ATÓMICO (Opción 2 aprobada) + test de contrato
 
-**🎯 Objetivo:** Enviar la pre-comanda al backend **garantizando** que el ticket quede con `channel='HELADERIA'` (o se compense si falla), y permitir cancelarla antes de que el KDS la tome.
+**🎯 Objetivo:** Enviar la pre-comanda al backend **garantizando de forma atómica** que el ticket nazca con `channel='HELADERIA'`, y permitir cancelarla antes de que el KDS la tome.
 
-**📍 Evidencia:** [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96) hace **DOS requests secuenciales**: (1) `POST /pos/tickets/reserve` (reserva folio) y (2) `PUT /pos/tickets/{account_num}` (setea `channel='HELADERIA'`). **El segundo request NO verifica `res.ok`.** El endpoint `reserve` **NO acepta `channel`** (confirmado en [`pos/router.py:34`](apps/api/modules/pos/router.py:34): solo recibe `terminal_id` y `captured_by_id`), por eso el canal se setea aparte. [`heladeriaService.addItemToTicket()`](apps/heladeria/services/heladeriaService.js:127) agrega items.
+> **✅ DECISIÓN DEL USUARIO (cerrada):** se implementa la **Opción 2 — canal atómico en el backend**. Se descarta la Opción 1 (compensación en frontend) porque deja una ventana de inconsistencia y depende de un endpoint de cancelación que **no existe**. La Opción 2 es **aditiva y `NULL`-able**, por lo que **NO viola la Restricción A** (el POS IA intocable es el frontend [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29); el endpoint `POST /pos/tickets/reserve` no es el POS IA).
 
-> **🔴 DEFECTO A CERRAR EN ESTA FASE:** si el `PUT` del canal falla (red, timeout, 500), el ticket queda con `channel=NULL` → **aparece en el POS de Panadería**, violando el criterio de aceptación. Esta fase DEBE cerrar ese hueco.
+**📍 Evidencia (estado ANTES de esta fase):** [`heladeriaService.createHeladeriaTicket()`](apps/heladeria/services/heladeriaService.js:96) hacía **DOS requests secuenciales**: (1) `POST /pos/tickets/reserve` (reserva folio) y (2) `PUT /pos/tickets/{account_num}` (setea `channel='HELADERIA'`). **El segundo request NO verificaba `res.ok`.** El endpoint `reserve` **NO aceptaba `channel`** ([`pos/router.py:34`](apps/api/modules/pos/router.py:34): solo `terminal_id` y `captured_by_id`).
 
-**🔧 Cambios:**
+> **🔴 DEFECTO CERRADO POR ESTA FASE:** si el `PUT` del canal fallaba (red, timeout, 500), el ticket quedaba con `channel=NULL` → **aparecía en el POS de Panadería**. Con la Opción 2 el `PUT` **desaparece**: el canal se escribe en el **mismo `INSERT`** de la reserva, así que el ticket **NUNCA existe con `channel=NULL`**.
 
-1. **Corregir `heladeriaService.createHeladeriaTicket()`** (archivo de Heladería, NO del POS):
-   - Verificar `res.ok` del `PUT` del canal. Si falla → **lanzar error** (no silenciarlo).
-   - **Compensación:** si el `PUT` falla tras reservar el folio, **cancelar/liberar el ticket huérfano** para que NO quede con `channel=NULL` en el POS de Panadería. Si no existe endpoint de cancelación, **reintentar el `PUT` del canal** con `withRetries` antes de rendirse y, si aun así falla, registrar el `account_num` en un log de "huérfanos" para limpieza manual.
-   - **Decisión de diseño a confirmar con el usuario:** la alternativa más limpia es hacer el canal **atómico en el backend** (añadir `channel` opcional a `ReserveTicketRequest`). Eso toca `apps/api/modules/pos/`, lo cual **NO** viola la Restricción A (el POS IA es el frontend `RetailVisionPOS.jsx`; el endpoint es aditivo y `NULL`-able). **Se documenta como opción preferida si el usuario la aprueba.**
-2. Crear `apps/heladeria/hooks/usePreComanda.js`:
-   - `enviarPreComanda(state)` → llama `createHeladeriaTicket` + `addItemToTicket`, y **solo reporta éxito si el canal quedó confirmado**.
-   - `cancelarPreComanda(accountNum)` → **⚠️ VERIFICAR PRIMERO** que exista un endpoint de cancelación en [`pos/router.py`](apps/api/modules/pos/router.py:1). Los endpoints actuales son `reserve`, `create`, `items/add`, `items/update`, `items/remove`, `emergency-save`. **Si NO existe `cancel`, esta función se implementa como "marcar el ticket como cancelado vía `items/remove` de todos los items" o se pospone.** No asumir un endpoint inexistente.
+**🔧 Cambios (5 archivos, 4 backend + 1 frontend):**
+
+1. **[`apps/api/modules/pos/models.py`](apps/api/modules/pos/models.py:49)** — declarar las columnas que ya existen en la BD (migración [`add_heladeria_support.py`](apps/api/migrations/add_heladeria_support.py:51)) pero que el ORM **no conocía**:
+   ```python
+   channel = Column(String, nullable=True, default="PANADERIA", index=True)
+   customer_group_name = Column(String, nullable=True)
+   ```
+   Sin esto, el ORM no puede escribir `channel` en el `INSERT` (era la causa raíz de que se usara un `PUT` aparte).
+2. **[`apps/api/modules/pos/schemas.py`](apps/api/modules/pos/schemas.py:109)** — añadir `channel: Optional[str] = None` a `ReserveTicketRequest`. **Aditivo y opcional:** el POS IA no lo envía y recibe `'PANADERIA'` (comportamiento intacto).
+3. **[`apps/api/modules/pos/service.py`](apps/api/modules/pos/service.py:612)** — propagar el canal:
+   - `reserve_ticket(..., channel=None)` → `canal = channel or "PANADERIA"`.
+   - `_generate_consecutive_ticket(..., channel)` → escribe `channel=canal` **dentro del `models.Ticket(...)`** (INSERT atómico).
+   - `_find_empty_ticket(..., channel)` → filtra por `func.coalesce(Ticket.channel, "PANADERIA") == channel`, para que un ticket de Heladería **nunca** sea reciclado por el POS de Panadería (y viceversa). Los tickets legacy con `channel NULL` se tratan como `PANADERIA`.
+   - Añadir `func` al import de SQLAlchemy (`from sqlalchemy import delete, text, func`).
+4. **[`apps/api/modules/pos/router.py`](apps/api/modules/pos/router.py:34)** — pasar `req.channel` a `pos_service.reserve_ticket(...)` e incluirlo en el payload de auditoría.
+5. **[`apps/heladeria/services/heladeriaService.js`](apps/heladeria/services/heladeriaService.js:96)** — `createHeladeriaTicket()` envía `channel: 'HELADERIA'` en el body del `reserve` y **elimina por completo el segundo `PUT`**. Un solo request, atómico.
+
+6. Crear `apps/heladeria/hooks/usePreComanda.js`:
+   - `enviarPreComanda(state)` → llama `createHeladeriaTicket` + `addItemToTicket`. **El canal ya viene garantizado por el backend**, así que el éxito del `reserve` implica canal correcto.
+   - `cancelarPreComanda(accountNum)` → **⚠️ NO existe endpoint `cancel`** en [`pos/router.py`](apps/api/modules/pos/router.py:1) (endpoints reales: `reserve`, `create`, `items/add`, `items/update`, `items/remove`, `emergency-save`). Se implementa como **`items/remove` de todos los items** (deja el ticket vacío, que el GC reclama) **o se pospone**. No asumir un endpoint inexistente.
    - **Cola offline REAL:** si el backend está caído, llamar `heladeriaOfflineStore.enqueueOperation()` (hoy **NO** se llama desde `heladeriaService`). Sin esto, la pre-comanda se pierde.
    - **NO** genera folios localmente — los recibe del backend.
-3. Crear `apps/heladeria/utils/tiendaContract.test.js` — **test de contrato** que verifica que el payload de `buildPreComandaPayload` coincide con lo que el backend espera: campos `channel: 'HELADERIA'`, `component_type` correcto por paso (usando `STEP_TO_COMPONENT_TYPE`), `station`, etc.
-4. Actualizar [`TiendaInteractivaUI.jsx`](apps/heladeria/sections/TiendaInteractivaUI.jsx:7) para montar `TiendaConfigurator` y eliminar la animación `float infinite` del placeholder.
+7. Crear `apps/heladeria/utils/tiendaContract.test.js` — **test de contrato** que verifica que el payload de `buildPreComandaPayload` coincide con lo que el backend espera: `channel: 'HELADERIA'` en el `reserve`, `component_type` correcto por paso (usando `STEP_TO_COMPONENT_TYPE`), `station`, etc.
+8. Actualizar [`TiendaInteractivaUI.jsx`](apps/heladeria/sections/TiendaInteractivaUI.jsx:7) para montar `TiendaConfigurator` y eliminar la animación `float infinite` del placeholder.
 
 **✅ Verificación:**
 ```bash
 npx vitest run && npm run build
+docker exec rderico-api-dev python -m pytest -q
 ```
-~168/168 tests + build OK. **Prueba manual obligatoria:** simular fallo del `PUT` del canal y verificar que NO queda ningún ticket con `channel=NULL` creado por la Tienda.
+~168/168 vitest + build OK + 39/39 pytest. **Prueba manual obligatoria:** crear una pre-comanda desde la Tienda y verificar en PostgreSQL que el ticket nace con `channel='HELADERIA'` **en el mismo `INSERT`** (ya no hay ventana de `NULL`).
 
-**⚠️ Riesgo POS:** 🟡 **MEDIO.** Se usan endpoints del POS (`/pos/tickets/reserve`, `/pos/tickets/items/add`) pero **sin modificarlos** (salvo que el usuario apruebe el cambio aditivo en `ReserveTicketRequest`). El campo `channel: 'HELADERIA'` separa los tickets (NULL = PANADERÍA). **Verificar en PostgreSQL que NO existen tickets con `channel=NULL` creados por la Tienda** (consulta: `SELECT * FROM tickets WHERE channel IS NULL AND created_at > <inicio_prueba>`).
+**⚠️ Riesgo POS:** 🟡 **MEDIO-BAJO.** Se modifica `apps/api/modules/pos/` de forma **aditiva y `NULL`-able** (no viola la Restricción A). El POS IA no envía `channel` → recibe `'PANADERIA'` (default), comportamiento **idéntico** al actual. **Verificar en PostgreSQL que NO existen tickets con `channel=NULL` creados por la Tienda** (`SELECT * FROM tickets WHERE channel IS NULL AND created_at > <inicio_prueba>`). **Regresión obligatoria:** abrir el POS IA de Panadería y confirmar que reserva folio con normalidad.
 
 ---
 
@@ -261,7 +275,7 @@ npx vitest run && npm run build
 | 1 | 14.1 | `feat(heladeria): tiendaConfigurator.js puro + 15 tests` | 🟢 Nulo | 🟢 Bajo |
 | 2 | 14.2 | `feat(heladeria): TiendaConfigurator UI doble columna` | 🟢 Bajo | 🟡 Medio |
 | 3 | 14.3 | `feat(heladeria): switch Kiosco/Caja (contrato replicado)` | 🟡 Medio-Bajo | 🟡 Medio |
-| 4 | 14.4 | `feat(heladeria): pre-comanda + cierre flujo canal no atómico + test contrato` | 🟡 Medio | 🟡 Medio |
+| 4 | 14.4 | `feat(heladeria): canal atómico en reserve (Opcion 2) + pre-comanda + test contrato` | 🟡 Medio-Bajo | 🟡 Medio |
 | 5 | 14.5 | `docs(heladeria): actualizar doc maestra V14` | 🟢 Nulo | 🟢 Bajo |
 
 **Regla:** un commit por fase. Si una fase falla la verificación, NO se avanza a la siguiente.
@@ -276,11 +290,13 @@ npx vitest run && npm run build
 - [ ] `npx vitest run` → **~168/168** (baseline ~153 de V17 + 15 nuevos).
 - [ ] `npm run build` → compila sin errores (~1424 módulos).
 - [ ] La Tienda Interactiva arma un helado completo y genera una pre-comanda `PENDING`.
-- [ ] **El ticket generado tiene `channel = 'HELADERIA'` Y el flujo lo GARANTIZA:** si el `PUT` del canal falla, el ticket huérfano se compensa (cancelado/liberado) y **NO queda ningún ticket con `channel=NULL`** creado por la Tienda. *(Criterio reformulado: el código actual NO garantiza esto; la Fase 14.4 lo corrige.)*
+- [ ] **El ticket generado tiene `channel = 'HELADERIA'` de forma ATÓMICA:** el canal viaja en el **mismo `INSERT`** de `POST /pos/tickets/reserve` (Opción 2). **NO existe un segundo `PUT`** y por tanto **NO hay ventana** en la que el ticket tenga `channel=NULL`. Verificación en PostgreSQL: `SELECT count(*) FROM tickets WHERE channel IS NULL AND created_at > <inicio_prueba> AND terminal_id LIKE 'H%';` → **0**.
+- [ ] **Regresión del POS IA (Panadería):** el POS IA **no envía** `channel` y sigue reservando folio con normalidad (`channel='PANADERIA'` por default). El cambio es aditivo y `NULL`-able → **NO viola la Restricción A**.
+- [ ] **Aislamiento de canal en el reciclaje:** `_find_empty_ticket` filtra por canal, así un ticket de Heladería **nunca** es reciclado por el POS de Panadería (y viceversa).
 - [ ] `buildPreComandaPayload` emite el `component_type` correcto por paso (mapeo `STEP_TO_COMPONENT_TYPE` verificado por el test de contrato).
 - [ ] `toggleFlavor` respeta el `max_scoops` del recipiente seleccionado (leído del menú, no constante global).
 - [ ] El switch Kiosco/Caja funciona sin tocar `terminal_locks` del POS.
-- [ ] NO se modificó ningún archivo de `apps/pos/` (verificar con `git diff --stat`) — **salvo** que el usuario apruebe el cambio aditivo en `ReserveTicketRequest`.
+- [ ] Se modificó `apps/api/modules/pos/` de forma **aditiva y `NULL`-able** (Opción 2 aprobada por el usuario): `models.py` (declarar `channel`), `schemas.py` (`channel` opcional), `service.py` (propagar + filtrar por canal), `router.py` (pasar `channel`). **NO se tocó** ningún archivo del frontend del POS (`apps/pos/*.jsx`) — verificar con `git diff --stat`.
 - [ ] NO hay animaciones CSS infinitas en la sección.
 - [ ] El POS de Panadería sigue operando si la Tienda Interactiva falla (Barrera 2).
 
@@ -292,8 +308,9 @@ npx vitest run && npm run build
 2. **Reversión total:** `git revert` de los 5 commits en orden inverso (14.5 → 14.1).
 3. **Reversión de emergencia (POS afectado):** restaurar `TiendaInteractivaUI.jsx` al placeholder original (el archivo está aislado; el POS no lo importa).
 4. **Reversión de estado externo:** este plan **NO** crea claves en `system_settings` ni volúmenes Docker. Los tickets con `channel='HELADERIA'` son **datos de negocio reales** y NO se borran al revertir el código.
-5. **⚠️ Limpieza de tickets huérfanos:** si durante la ejecución se generaron tickets con `channel=NULL` por el fallo del `PUT` (defecto #1), **deben identificarse y limpiarse** antes de dar la reversión por completa. Consulta: `SELECT id, account_num, created_at FROM tickets WHERE channel IS NULL AND created_at > <inicio_ejecucion> AND terminal_id LIKE 'H%';`. Estos tickets contaminan el POS de Panadería.
-6. **Verificación post-reversión:** `npx vitest run` → ~153/153 (baseline de V17), `npm run build` → ~1421 módulos.
+5. **⚠️ Limpieza de tickets huérfanos (solo si existieran de ANTES de la Opción 2):** con la Opción 2 el `PUT` ya no existe, así que la Fase 14.4 **no puede generar** tickets con `channel=NULL`. Si se detectan tickets huérfanos de ejecuciones previas, identificarlos y limpiarlos: `SELECT id, account_num, created_at FROM tickets WHERE channel IS NULL AND created_at > <inicio_ejecucion> AND terminal_id LIKE 'H%';`. Estos tickets contaminan el POS de Panadería.
+6. **⚠️ Reversión del cambio aditivo en backend:** si se revierte la Fase 14.4, el frontend de Heladería volvería a hacer el `PUT` no atómico. **Revertir SIEMPRE el commit de la Fase 14.4 completo** (backend + frontend juntos) para no dejar el frontend enviando `channel` a un endpoint que ya no lo acepta (Pydantic lo ignoraría silenciosamente, degradando al flujo no atómico).
+7. **Verificación post-reversión:** `npx vitest run` → ~153/153 (baseline de V17), `npm run build` → ~1421 módulos, `docker exec rderico-api-dev python -m pytest -q` → 39/39.
 
 ---
 
@@ -315,8 +332,8 @@ npx vitest run && npm run build
 5. **¿Qué pasa si el backend está caído?** *(corregido — antes afirmaba una cola offline que NO existe)*
    `heladeriaService` usa `withRetries` (reintenta **en el lugar**) y `heladeriaOfflineStore.js` **cachea el menú** (eso sí funciona). **PERO** `heladeriaService` **NO importa** `heladeriaOfflineStore` y **NO llama** `enqueueOperation`: hoy la pre-comanda **NO se encola**; si el backend está caído más allá de los reintentos, **se pierde**. La Fase 14.4 debe conectar la cola real (`enqueueOperation`) para que esta nota sea cierta. El configurador NUNCA bloquea su render esperando red (eso sí es cierto).
 
-6. **¿Por qué el flujo de `channel` es un riesgo?** *(nuevo — defecto #1)*
-   Porque `createHeladeriaTicket()` hace **2 requests no atómicos**: reserva el folio y luego setea el canal con un `PUT` **cuyo `res.ok` no verifica**. Si ese `PUT` falla, el ticket queda con `channel=NULL` y aparece en el POS de Panadería. La Fase 14.4 cierra este hueco con verificación + compensación. La alternativa preferida (si el usuario la aprueba) es hacer el canal atómico añadiendo `channel` a `ReserveTicketRequest` — cambio aditivo y `NULL`-able que NO viola la Restricción A.
+6. **¿Por qué el flujo de `channel` era un riesgo y cómo se cerró?** *(defecto #1 — RESUELTO con la Opción 2)*
+   `createHeladeriaTicket()` hacía **2 requests no atómicos**: reservaba el folio y luego seteaba el canal con un `PUT` **cuyo `res.ok` no verificaba**. Si ese `PUT` fallaba, el ticket quedaba con `channel=NULL` y aparecía en el POS de Panadería. **Solución aprobada por el usuario (Opción 2):** el canal se escribe **atómicamente en el `INSERT`** de la reserva. Se añadió `channel` opcional a `ReserveTicketRequest` y se declaró la columna `channel` en el modelo ORM (que existía en la BD pero no en SQLAlchemy). El `PUT` **desaparece**. Es un cambio **aditivo y `NULL`-able** → **NO viola la Restricción A** (el POS IA intocable es el frontend `RetailVisionPOS.jsx`, no el endpoint). Se descartó la Opción 1 (compensación en frontend) porque dejaba una ventana de inconsistencia y dependía de un endpoint de cancelación **inexistente**.
 
 ---
 
@@ -325,8 +342,8 @@ npx vitest run && npm run build
 - [ ] El usuario aprueba el alcance (configurador doble columna + pre-comanda + switch Kiosco/Caja).
 - [ ] El usuario aprueba el orden de ejecución (FASE 0 → 14.1 → 14.5).
 - [ ] El usuario confirma que la **FASE 0** (saneamiento de `heladeriaTerminals.js`) se ejecuta ANTES de la Fase 14.3.
-- [ ] El usuario confirma que NO se **modificará** ningún archivo de `apps/pos/` (se permite importar `CONFIG` y `withRetries`), **salvo** que apruebe el cambio aditivo en `ReserveTicketRequest` para hacer el canal atómico.
+- [ ] El usuario confirma que **NO se modificará** ningún archivo del **frontend** del POS (`apps/pos/*.jsx`); se permite importar `CONFIG` y `withRetries`. **✅ APROBADO:** se modifica `apps/api/modules/pos/` (backend) de forma **aditiva y `NULL`-able** para hacer el canal atómico (Opción 2).
 - [ ] El usuario confirma la estrategia de caja: **replicar el contrato**, no importar `GestorDeCaja.jsx`.
 - [ ] El usuario confirma el baseline de tests (**~153/153 → ~168/168**, V17 corre antes).
-- [ ] El usuario decide cómo cerrar el **defecto #1** (flujo de canal no atómico): compensación en frontend **o** `channel` atómico en `ReserveTicketRequest`.
+- [x] **✅ DECIDIDO POR EL USUARIO:** el **defecto #1** (flujo de canal no atómico) se cierra con la **Opción 2 — `channel` atómico en `ReserveTicketRequest`** (backend). Se descarta la compensación en frontend.
 - [ ] El usuario aprueba el commit por fase.

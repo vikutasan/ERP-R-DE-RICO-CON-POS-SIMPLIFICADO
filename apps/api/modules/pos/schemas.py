@@ -107,9 +107,17 @@ class TerminalSessionCreate(TerminalSessionBase):
     pass
 
 class ReserveTicketRequest(BaseModel):
-    """Schema para reservar ticket — incluye capturista desde el primer instante."""
+    """Schema para reservar ticket — incluye capturista desde el primer instante.
+
+    v14 (Opcion 2): `channel` es OPCIONAL y aditivo. Permite crear el ticket con
+    el canal correcto en el MISMO INSERT (atómico), eliminando el PUT posterior
+    que dejaba tickets huérfanos con channel=NULL visibles en el POS de Panadería.
+    Si se omite, el backend aplica el default 'PANADERIA' (comportamiento intacto
+    para el POS IA, que no envía este campo).
+    """
     terminal_id: str
     captured_by_id: Optional[int] = None
+    channel: Optional[str] = None
 
 class TerminalSessionResponse(TerminalSessionBase):
     id: int
