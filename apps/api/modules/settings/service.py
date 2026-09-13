@@ -99,6 +99,16 @@ async def seed_settings(db: AsyncSession):
             "description": "Configuración de terminales POS (JSON array con id, name, icon).",
             "category": "pos",
             "input_type": "json"
+        },
+        # V17 (Fase 17.0): configuración de presentación del Display de Precios de
+        # Heladería. Entrada ADITIVA: el bucle de abajo solo inserta si la clave no
+        # existe, por lo que no altera ninguna clave que lea el POS de Panadería.
+        {
+            "key": "heladeria_display_precios_config",
+            "value": '{"groups":[],"columns":3,"theme":"LIGHT","showImages":true,"showUnavailable":true}',
+            "description": "Configuración de presentación del Display de Precios de Heladería (V17).",
+            "category": "heladeria",
+            "input_type": "json"
         }
     ]
     
