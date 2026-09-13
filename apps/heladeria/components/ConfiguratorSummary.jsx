@@ -85,6 +85,7 @@ export function ConfiguratorSummary({
     onRemoveTopping,
     onRemoveExtra,
     onClear,
+    submitLabel = 'Agregar a la pre-comanda',
 }) {
     const sabores = state?.sabores || [];
     const toppings = state?.toppings || [];
@@ -252,7 +253,7 @@ export function ConfiguratorSummary({
                         textTransform: 'uppercase',
                     }}
                 >
-                    {submitting ? 'Enviando…' : 'Agregar a la pre-comanda'}
+                    {submitting ? 'Enviando…' : submitLabel}
                 </button>
 
                 <button

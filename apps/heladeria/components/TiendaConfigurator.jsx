@@ -14,6 +14,7 @@
  */
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useHeladeriaMenu } from '../hooks/useHeladeriaMenu';
+import { useTiendaCajaMode, TIENDA_MODES } from '../hooks/useTiendaCajaMode';
 import { FlavorGrid } from './FlavorGrid';
 import { ConfiguratorSummary } from './ConfiguratorSummary';
 import {
@@ -96,7 +97,7 @@ const Grid = ({ children }) => (
     </div>
 );
 
-export function TiendaConfigurator({ onBack, onPreComandaReady }) {
+export function TiendaConfigurator({ onBack, onPreComandaReady, onCajaHabilitada, onCajaDeshabilitada }) {
     const { menu, loading, error, refresh } = useHeladeriaMenu();
     const [state, setState] = useState(DEFAULT_CONFIGURATOR_STATE);
     const [submitting, setSubmitting] = useState(false);
@@ -104,6 +105,10 @@ export function TiendaConfigurator({ onBack, onPreComandaReady }) {
     const [isNarrow, setIsNarrow] = useState(
         typeof window !== 'undefined' ? window.innerWidth < 768 : false,
     );
+
+    // Fase 14.3: switch Kiosco/Caja. Replica el contrato de GestorDeCaja
+    // (onCajaHabilitada / onCajaDeshabilitada) SIN importarlo. NO toca terminal_locks.
+    const caja = useTiendaCajaMode({ onCajaHabilitada, onCajaDeshabilitada });
 
     // Detección de ancho (listener, NO timer). Se limpia al desmontar.
     useEffect(() => {
@@ -168,16 +173,24 @@ export function TiendaConfigurator({ onBack, onPreComandaReady }) {
                 await onPreComandaReady({
                     ...payload.item,
                     label: buildItemLabel(state),
+                    // Fase 14.3: el modo viaja con la pre-comanda para que el
+                    // consumidor decida si va directo al KDS (Kiosco) o pasa a cobro (Caja).
+                    mode: caja.mode,
                 });
             }
-            setFeedback({ tipo: 'ok', texto: 'Pre-comanda enviada a cocina' });
+            setFeedback({
+                tipo: 'ok',
+                texto: caja.isCajaEnabled
+                    ? 'Pre-comanda lista para cobro en Caja'
+                    : 'Pre-comanda enviada a cocina',
+            });
             setState(DEFAULT_CONFIGURATOR_STATE);
         } catch (err) {
             setFeedback({ tipo: 'error', texto: err?.message || 'No se pudo enviar la pre-comanda' });
         } finally {
             setSubmitting(false);
         }
-    }, [state, menu, onPreComandaReady]);
+    }, [state, menu, onPreComandaReady, caja.mode, caja.isCajaEnabled]);
 
     // ─── Render de la columna izquierda según el paso ───
     const renderPaso = () => {
@@ -508,6 +521,37 @@ export function TiendaConfigurator({ onBack, onPreComandaReady }) {
                 }}>
                     Tienda Interactiva
                 </h1>
+
+                {/* Fase 14.3: switch Kiosco/Caja (contrato replicado de GestorDeCaja).
+                    Indicador ESTÁTICO: sin animaciones infinitas (Incidente 16.1). */}
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{
+                        fontSize: '10px',
+                        fontWeight: '800',
+                        letterSpacing: '1px',
+                        textTransform: 'uppercase',
+                        color: caja.isCajaEnabled ? '#4ade80' : '#9ca3af',
+                    }}>
+                        {caja.isCajaEnabled ? 'Modo Caja' : 'Modo Kiosco'}
+                    </span>
+                    <button
+                        onClick={() => caja.toggleCaja()}
+                        style={{
+                            padding: '9px 16px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            fontWeight: '800',
+                            fontSize: '12px',
+                            background: caja.isCajaEnabled
+                                ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                                : 'rgba(255,255,255,0.06)',
+                            color: caja.isCajaEnabled ? '#0a0a0a' : '#e5e7eb',
+                            border: caja.isCajaEnabled ? 'none' : '1px solid rgba(255,255,255,0.12)',
+                        }}
+                    >
+                        {caja.isCajaEnabled ? 'Volver a Kiosco' : 'Habilitar como Caja'}
+                    </button>
+                </div>
             </div>
 
             {/* Feedback */}
@@ -549,6 +593,7 @@ export function TiendaConfigurator({ onBack, onPreComandaReady }) {
                     onRemoveTopping={handleToggleTopping}
                     onRemoveExtra={handleToggleExtra}
                     onClear={handleClear}
+                    submitLabel={caja.isCajaEnabled ? 'Enviar a Caja' : 'Agregar a la pre-comanda'}
                 />
             </div>
         </div>
