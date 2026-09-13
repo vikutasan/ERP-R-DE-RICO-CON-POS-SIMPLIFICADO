@@ -165,7 +165,6 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     const [warehouseTypes, setWarehouseTypes] = useState(INITIAL_TYPES);
     const [selectedWH, setSelectedWH] = useState(null);
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('ALL');
     const [activeTab, setActiveTab] = useState('existencias');
     const [selectedZone, setSelectedZone] = useState(null); // null = landing, 'SECO'|'REFRIGERADO'|'CONGELADO' = suite
@@ -685,13 +684,6 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         MERMA: { label: 'Merma', color: 'text-orange-400', bg: 'bg-orange-500/15', icon: '⚠️' },
         AJUSTE_INVENTARIO: { label: 'Ajuste', color: 'text-gray-400', bg: 'bg-gray-500/15', icon: '🔧' },
     };
-
-    const filteredWH = warehouses.filter(wh => {
-        const matchesSearch = (wh.name || '').toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesType = filterType === 'ALL' || wh.type === filterType;
-        const matchesZone = !selectedZone || (wh.zona_termica || wh.type) === selectedZone;
-        return matchesSearch && matchesType && matchesZone;
-    });
 
     const handleAddType = () => {
         if (!newTypeLabel.trim()) return;
@@ -1238,22 +1230,8 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                         </div>
                     </header>
 
-                    <div className="mb-8 overflow-hidden">
-                        <input 
-                            type="text" 
-                            placeholder="Buscar almacén por nombre..."
-                            className="w-full bg-slate-900/50 border border-slate-500/30 p-6 rounded-[32px] outline-none focus:border-slate-300 font-bold text-lg transition-all text-white placeholder-slate-400"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {subCatWarehouses.filter(wh => {
-                            const matchesSearch = (wh.name || '').toLowerCase().includes(searchTerm.toLowerCase());
-                            const matchesType = filterType === 'ALL' || wh.type === filterType;
-                            return matchesSearch && matchesType;
-                        }).map(wh => {
+                        {subCatWarehouses.filter(wh => filterType === 'ALL' || wh.type === filterType).map(wh => {
                             const typeInfo = warehouseTypes[wh.type] || { label: wh.type, color: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/20' };
                             const fillPercent = (wh.current / wh.capacity) * 100;
                             
