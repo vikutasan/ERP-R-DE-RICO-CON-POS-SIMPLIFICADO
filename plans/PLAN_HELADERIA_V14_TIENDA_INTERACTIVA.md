@@ -4,7 +4,7 @@
 **Autor:** Roo (Ingeniería Senior)
 **Estado:** 📋 Propuesto — Pendiente de aprobación
 **Alcance:** Sección 1 del Hub de Heladería (`TiendaInteractivaUI.jsx`)
-**Depende de:** Nada (puede ejecutarse de forma independiente)
+**Depende de:** ⚠️ **FASE 0 (Saneamiento de `heladeriaTerminals.js`)** — ver [`PLAN_HELADERIA_MAESTRO.md`](PLAN_HELADERIA_MAESTRO.md). El switch de caja (Fase 14.3) usa los locks de terminal, que hoy están rotos.
 **Bloquea a:** Nada (V15 KDS consume las pre-comandas que este plan genera, pero no es requisito técnico)
 
 ---
@@ -142,6 +142,8 @@ Debe compilar sin errores. Baseline: **1419 módulos**. Nuevo esperado: ~1422.
 
 **📍 Evidencia:** [`GestorDeCaja.jsx`](apps/pos/components/GestorDeCaja.jsx:73) expone `onCajaHabilitada` / `onCajaDeshabilitada`. [`POSHeader.jsx`](apps/pos/components/POSHeader.jsx:140) ya tiene el botón "Habilitar como Caja". [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:525) ya consume el patrón con `setIsCashEnabled`.
 
+> **⚠️ PRERREQUISITO:** esta fase usa los locks de terminal vía [`heladeriaTerminals.js`](apps/heladeria/services/heladeriaTerminals.js:1), que **hoy está roto** (llama a 3 endpoints inexistentes). La **FASE 0** del [`PLAN_HELADERIA_MAESTRO.md`](PLAN_HELADERIA_MAESTRO.md) lo repara. **NO ejecutar esta fase antes de la FASE 0.**
+
 **🔧 Cambios:**
 
 1. Crear `apps/heladeria/hooks/useTiendaCajaMode.js`:
@@ -152,7 +154,7 @@ Debe compilar sin errores. Baseline: **1419 módulos**. Nuevo esperado: ~1422.
 2. Integrar el switch en `TiendaConfigurator.jsx`:
    - Modo Kiosco: el cliente arma y envía la pre-comanda directo al KDS (`PENDING`).
    - Modo Caja: el empleado arma, revisa y cobra (flujo actual del POS de Heladería).
-3. **NO** importar `GestorDeCaja.jsx` directamente (vive en `apps/pos/`). En su lugar, replicar el **contrato de props** (`onCajaHabilitada` / `onCajaDeshabilitada`) para mantener el aislamiento. Documentar esta decisión en NOTAS DE DISEÑO.
+3. **NO** importar `GestorDeCaja.jsx` directamente (vive en `apps/pos/` y es un componente de UI con estado). En su lugar, replicar el **contrato de props** (`onCajaHabilitada` / `onCajaDeshabilitada`) para mantener el aislamiento. **Esta es la estrategia única aprobada** (ver Nota de Diseño #5 del plan maestro). Documentar esta decisión en NOTAS DE DISEÑO.
 
 **✅ Verificación:**
 ```bash
@@ -210,15 +212,18 @@ npx vitest run && npm run build
 
 ## 📊 ORDEN DE EJECUCIÓN Y COMMITS
 
-| # | Fase | Commit sugerido | Riesgo POS |
-|---|---|---|---|
-| 1 | 14.1 | `feat(heladeria): tiendaConfigurator.js puro + 15 tests` | 🟢 Nulo |
-| 2 | 14.2 | `feat(heladeria): TiendaConfigurator UI doble columna` | 🟢 Bajo |
-| 3 | 14.3 | `feat(heladeria): switch Kiosco/Caja (contrato replicado)` | 🟡 Medio-Bajo |
-| 4 | 14.4 | `feat(heladeria): pre-comanda + cancelaciones + test contrato` | 🟡 Medio |
-| 5 | 14.5 | `docs(heladeria): actualizar doc maestra V14` | 🟢 Nulo |
+| # | Fase | Commit sugerido | Riesgo POS | Riesgo Ejecución |
+|---|---|---|---|---|
+| 0 | **FASE 0** (maestro) | `fix(heladeria): reparar heladeriaTerminals.js (3 endpoints rotos)` | 🟢 Nulo | 🟢 Bajo |
+| 1 | 14.1 | `feat(heladeria): tiendaConfigurator.js puro + 15 tests` | 🟢 Nulo | 🟢 Bajo |
+| 2 | 14.2 | `feat(heladeria): TiendaConfigurator UI doble columna` | 🟢 Bajo | 🟡 Medio |
+| 3 | 14.3 | `feat(heladeria): switch Kiosco/Caja (contrato replicado)` | 🟡 Medio-Bajo | 🟡 Medio |
+| 4 | 14.4 | `feat(heladeria): pre-comanda + cancelaciones + test contrato` | 🟡 Medio | 🟡 Medio |
+| 5 | 14.5 | `docs(heladeria): actualizar doc maestra V14` | 🟢 Nulo | 🟢 Bajo |
 
 **Regla:** un commit por fase. Si una fase falla la verificación, NO se avanza a la siguiente.
+
+> **⚠️ La FASE 0 es PRERREQUISITO de la Fase 14.3.** Sin ella, el switch de caja fallará en runtime porque `heladeriaTerminals.js` llama a endpoints inexistentes.
 
 ---
 
@@ -241,14 +246,16 @@ npx vitest run && npm run build
 1. **Reversión por fase:** cada fase es un commit independiente → `git revert <hash>`.
 2. **Reversión total:** `git revert` de los 5 commits en orden inverso (14.5 → 14.1).
 3. **Reversión de emergencia (POS afectado):** restaurar `TiendaInteractivaUI.jsx` al placeholder original (el archivo está aislado; el POS no lo importa).
-4. **Verificación post-reversión:** `npx vitest run` → 141/141, `npm run build` → 1419 módulos.
+4. **Reversión de estado externo:** este plan **NO** crea claves en `system_settings` ni volúmenes Docker. Los tickets con `channel='HELADERIA'` son **datos de negocio reales** y NO se borran al revertir el código.
+5. **Verificación post-reversión:** `npx vitest run` → 141/141, `npm run build` → 1419 módulos.
 
 ---
 
 ## 📝 NOTAS DE DISEÑO
 
 1. **¿Por qué replicar el contrato de `GestorDeCaja` en vez de importarlo?**
-   Porque `GestorDeCaja.jsx` vive en `apps/pos/`. Importarlo desde `apps/heladeria/` crearía un acoplamiento que rompería la Barrera 1. Se replica el contrato de props (`onCajaHabilitada` / `onCajaDeshabilitada`) y se cubre con un test de contrato.
+   Porque `GestorDeCaja.jsx` vive en `apps/pos/` y es un **componente de UI con estado**. Importarlo desde `apps/heladeria/` crearía un acoplamiento de UI que rompería la Barrera 1: un cambio en el POS podría romper la Heladería. Se replica el contrato de props (`onCajaHabilitada` / `onCajaDeshabilitada`) y se cubre con un test de contrato.
+   **Distinción clave:** se **acepta** importar utilidades sin estado (`CONFIG`, `withRetries`), pero se **prohíbe** importar componentes de UI del POS. **Esta es la estrategia única aprobada** (ver Nota de Diseño #5 del plan maestro).
 
 2. **¿Por qué la lógica pura primero?**
    Es el patrón "guardián del contrato" ya validado en Almacenes (V7-V11). Permite testear sin montar React y detecta regresiones de negocio (precios, máximos de sabores) antes de tocar UI.
@@ -267,7 +274,9 @@ npx vitest run && npm run build
 ## ✅ CHECKLIST DE APROBACIÓN
 
 - [ ] El usuario aprueba el alcance (configurador doble columna + pre-comanda + switch Kiosco/Caja).
-- [ ] El usuario aprueba el orden de ejecución (14.1 → 14.5).
-- [ ] El usuario confirma que NO se tocará `apps/pos/`.
+- [ ] El usuario aprueba el orden de ejecución (FASE 0 → 14.1 → 14.5).
+- [ ] El usuario confirma que la **FASE 0** (saneamiento de `heladeriaTerminals.js`) se ejecuta ANTES de la Fase 14.3.
+- [ ] El usuario confirma que NO se **modificará** ningún archivo de `apps/pos/` (se permite importar `CONFIG` y `withRetries`).
+- [ ] El usuario confirma la estrategia de caja: **replicar el contrato**, no importar `GestorDeCaja.jsx`.
 - [ ] El usuario confirma el baseline de tests (141/141 → 156/156).
 - [ ] El usuario aprueba el commit por fase.
