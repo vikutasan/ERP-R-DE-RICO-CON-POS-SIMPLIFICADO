@@ -3,6 +3,17 @@ import axios from 'axios';
 import REAL_PRODUCTS from '../../importar_productos_AQUI.json';
 import { PROVIDERS_MASTER } from './PurchaseManagerUI';
 import { CONFIG } from '../pos/config';
+// v7 (Fase 3.2): mapeadores y validadores puros, cubiertos por Vitest.
+import {
+    resolveUserId,
+    mapWarehousesFromApi,
+    mapStockListFromApi,
+    buildWarehouseCreatePayload,
+    validateBulkEntry,
+    buildBulkEntryPayload,
+    validateMerma,
+    validateTraspaso,
+} from './utils/warehouseMappers';
 
 const API_BASE = CONFIG.API_BASE_URL.replace('/api/v1', '');
 
@@ -65,24 +76,9 @@ const UNIT_OPTIONS = {
     "Volumen": ["LT", "ML", "GAL", "OZ FL", "COPA"]
 };
 
-/**
- * v7 (D4): Resuelve el usuario_id de la sesión activa.
- *
- * Antes se enviaba la cadena literal 'VICTOR' en cada movimiento, lo que
- * rompía la trazabilidad y la auditoría (violación de la regla SaaS: nada
- * hardcodeado). Ahora se deriva del usuario autenticado que el shell de la
- * aplicación inyecta como prop `currentUser`.
- *
- * Fallback: si el shell aún no propaga el usuario (módulo montado sin props),
- * se usa 'SISTEMA' — un valor explícito y auditable, nunca el nombre de una
- * persona real. El backend exige usuario_id no vacío.
- */
-const resolveUserId = (currentUser) => {
-    if (currentUser && currentUser.id !== undefined && currentUser.id !== null) {
-        return String(currentUser.id);
-    }
-    return 'SISTEMA';
-};
+// v7 (Fase 3.2): `resolveUserId` y los mapeadores/validadores puros viven en
+// ./utils/warehouseMappers y están cubiertos por Vitest. Se importan arriba
+// para que los tests validen el código realmente en uso (no código muerto).
 
 export const WarehouseManagerUI = ({ currentUser = null }) => {
     const usuarioId = resolveUserId(currentUser);
@@ -92,16 +88,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     const fetchWarehouses = async () => {
         try {
             const res = await axios.get(`${API_BASE}/api/v1/warehouse`);
-            // Mapear campos API (español) → campos UI (inglés)
-            const mapped = res.data.map(wh => ({
-                ...wh,
-                name: wh.nombre || wh.name || 'Sin nombre',
-                type: wh.zona_termica || wh.type || 'SECO',
-                icon: wh.zona_termica === 'CONGELADO' ? '❄️' : wh.zona_termica === 'REFRIGERADO' ? '🧊' : '📦',
-                capacity: 100,
-                current: 0
-            }));
-            setWarehouses(mapped);
+            // v7 (Fase 3.2): mapeo API (español) → UI (inglés) delegado al
+            // módulo puro cubierto por Vitest.
+            setWarehouses(mapWarehousesFromApi(res.data));
         } catch(e) {
             logger.error('Error fetching warehouses:', e);
         }
@@ -193,26 +182,16 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     };
 
     const handleSubmitBulkEntry = async () => {
-        if (!bulkTargetWH || bulkEntryItems.length === 0) {
-            showOpMessage('Selecciona un almacén destino y agrega al menos un insumo', 'error');
-            return;
-        }
-        const invalidItems = bulkEntryItems.filter(i => !i.cantidad || i.cantidad <= 0);
-        if (invalidItems.length > 0) {
-            showOpMessage('Todos los items deben tener cantidad mayor a 0', 'error');
+        // v7 (Fase 3.2): validación y armado del payload delegados al módulo
+        // puro cubierto por Vitest.
+        const { ok, error } = validateBulkEntry(bulkTargetWH, bulkEntryItems);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
         try {
-            const payload = {
-                items: bulkEntryItems.map(i => ({
-                    item_id: i.item_id,
-                    item_type: i.item_type || 'INSUMO',
-                    cantidad: parseFloat(i.cantidad),
-                    notas: i.notas || null
-                })),
-                usuario_id: usuarioId
-            };
+            const payload = buildBulkEntryPayload(bulkEntryItems, usuarioId);
             await axios.post(`${API_BASE}/api/v1/warehouse/${bulkTargetWH}/entrada-masiva`, payload);
             showOpMessage(`✅ Entrada masiva registrada: ${bulkEntryItems.length} items en lote`);
             setBulkEntryItems([]);
@@ -224,8 +203,10 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     const handleSubmitMerma = async () => {
         const { almacen_id, item_id, item_type, cantidad, notas } = mermaForm;
-        if (!almacen_id || !item_id || !cantidad || !notas) {
-            showOpMessage('Todos los campos son obligatorios (especialmente las notas/motivo)', 'error');
+        // v7 (Fase 3.2): validación delegada al módulo puro cubierto por Vitest.
+        const { ok, error } = validateMerma(mermaForm);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
@@ -242,12 +223,10 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
 
     const handleSubmitTraspaso = async () => {
         const { almacen_origen_id, almacen_destino_id, item_id, item_type, cantidad } = traspasoForm;
-        if (!almacen_origen_id || !almacen_destino_id || !item_id || !cantidad) {
-            showOpMessage('Todos los campos son obligatorios', 'error');
-            return;
-        }
-        if (almacen_origen_id === almacen_destino_id) {
-            showOpMessage('Origen y destino no pueden ser el mismo almacén', 'error');
+        // v7 (Fase 3.2): validación delegada al módulo puro cubierto por Vitest.
+        const { ok, error } = validateTraspaso(traspasoForm);
+        if (!ok) {
+            showOpMessage(error, 'error');
             return;
         }
         setLoadingOp(true);
@@ -348,19 +327,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
         const loadStock = async () => {
             if (selectedWH) {
                 const stockData = await fetchWarehouseStock(selectedWH.id);
-                const mappedStock = stockData.map(item => ({
-                    sku: item.item_id,
-                    name: item.item_name || item.item_id,
-                    category: item.item_type,
-                    stock: item.cantidad_actual,
-                    unit: item.item_unit || 'PZA',
-                    minStock: item.stock_minimo,
-                    alertDays: item.dias_anaquel_alerta || 0,
-                    presentation: '1 ' + (item.item_unit || 'PZA'),
-                    costPerPresentation: item.item_price || 0,
-                    imgUrl: item.item_image_url || null,
-                    provider: 'PROVEEDOR GENERAL' // Default temporal
-                }));
+                // v7 (Fase 3.2): mapeo de stock API (español) → UI (inglés)
+                // delegado al módulo puro cubierto por Vitest.
+                const mappedStock = mapStockListFromApi(stockData);
                 setWhInventories(prev => ({ ...prev, [selectedWH.id]: mappedStock }));
             }
         };
@@ -376,12 +345,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
             if (formData.id && !formData.id.startsWith('wh_')) {
                 await axios.put(`${API_BASE}/api/v1/warehouse/${formData.id}`, formData);
             } else {
-                const payload = {
-                    nombre: formData.name,
-                    zona_termica: formData.type || selectedZone || 'SECO',
-                    proposito: formData.proposito || subCategoryTab || 'EXHIBICION_VENTA',
-                    activo: true
-                };
+                // v7 (Fase 3.2): armado del payload delegado al módulo puro
+                // cubierto por Vitest.
+                const payload = buildWarehouseCreatePayload(formData, selectedZone, subCategoryTab);
                 await axios.post(`${API_BASE}/api/v1/warehouse`, payload);
             }
             fetchWarehouses();
