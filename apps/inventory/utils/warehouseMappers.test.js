@@ -326,6 +326,38 @@ describe('Payload de creacion de almacen', () => {
         expect(payload.zona_termica).toBe('REFRIGERADO');
         expect(payload.proposito).toBe('ALMACENAMIENTO');
     });
+
+    // v10 (Fase 10.4): representacion visual y pautas de acomodo. Las columnas
+    // foto_url, planograma_url y pautas_acomodo ya existian en el modelo desde
+    // v7; v10 las expone en la UI. Se envian SIEMPRE (aunque sean null / []),
+    // porque update_warehouse usa exclude_unset=True: omitirlas impediria al
+    // operador quitar una foto ya guardada.
+    it('v10: envia foto_url, planograma_url y pautas_acomodo cuando existen', () => {
+        const payload = buildWarehouseCreatePayload({
+            name: 'CAMARA 1',
+            fotoUrl: '/static/inventory/alm_abc123.jpg',
+            planogramaUrl: '/static/inventory/alm_def456.png',
+            pautasAcomodo: ['PESADO ABAJO', 'ROTACION PEPS'],
+        });
+        expect(payload.foto_url).toBe('/static/inventory/alm_abc123.jpg');
+        expect(payload.planograma_url).toBe('/static/inventory/alm_def456.png');
+        expect(payload.pautas_acomodo).toEqual(['PESADO ABAJO', 'ROTACION PEPS']);
+    });
+
+    it('v10: normaliza a null y lista vacia cuando no hay representacion visual', () => {
+        const payload = buildWarehouseCreatePayload({ name: 'X' });
+        expect(payload.foto_url).toBeNull();
+        expect(payload.planograma_url).toBeNull();
+        expect(payload.pautas_acomodo).toEqual([]);
+    });
+
+    it('v10: tolera pautasAcomodo corrupto (no-array) sin romper el payload', () => {
+        const payload = buildWarehouseCreatePayload({
+            name: 'X',
+            pautasAcomodo: 'NO ES UN ARRAY',
+        });
+        expect(payload.pautas_acomodo).toEqual([]);
+    });
 });
 
 // ---------------------------------------------------------------------------

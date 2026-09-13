@@ -191,6 +191,9 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
     const [pickerSearch, setPickerSearch] = useState('');
     const [showWHEditor, setShowWHEditor] = useState(false);
     const [editingWHData, setEditingWHData] = useState(null);
+    // v10 (Fase 10.3): modal anidado de infografia de acomodo. Es un estado
+    // aparte para que cerrarlo NO cierre el editor de almacen que lo abrio.
+    const [showPlanograma, setShowPlanograma] = useState(false);
     const [whToDelete, setWhToDelete] = useState(null);
     const [editingItem, setEditingItem] = useState(null); // { whId, productSku, data }
 
@@ -810,8 +813,59 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
             icon: '📦',
             capacity: 100,
             proposito: subCategoryTab,
+            // v10: representacion visual y pautas de acomodo.
+            fotoUrl: null,
+            planogramaUrl: null,
+            pautasAcomodo: [],
         });
         setShowWHEditor(true);
+    };
+
+    // v10 (Fase 10.2): sube la fotografia real del almacen reutilizando el
+    // endpoint /warehouse/upload-image que ya existia. El resultado se guarda
+    // en `fotoUrl` y se persiste como `foto_url` al guardar el almacen.
+    const handleWarehousePhotoUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await axios.post(`${API_BASE}/api/v1/warehouse/upload-image`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setEditingWHData(prev => ({ ...prev, fotoUrl: res.data.image_url }));
+        } catch (err) {
+            logger.error('Error al subir la fotografia del almacen:', err);
+            showOpMessage('Error al subir la fotografia', 'error');
+        }
+    };
+
+    // v10 (Fase 10.3): sube la infografia de acomodo (planograma). Mismo
+    // endpoint, distinto destino: `planograma_url`.
+    const handlePlanogramaUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await axios.post(`${API_BASE}/api/v1/warehouse/upload-image`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setEditingWHData(prev => ({ ...prev, planogramaUrl: res.data.image_url }));
+        } catch (err) {
+            logger.error('Error al subir la infografia de acomodo:', err);
+            showOpMessage('Error al subir la infografia', 'error');
+        }
+    };
+
+    // v10 (Fase 10.3): las pautas de acomodo se capturan como lineas de texto
+    // (una por linea) y se persisten en la columna JSON `pautas_acomodo`.
+    const handlePautasChange = (texto) => {
+        const lineas = texto
+            .split('\n')
+            .map(l => l.trim())
+            .filter(Boolean);
+        setEditingWHData(prev => ({ ...prev, pautasAcomodo: lineas }));
     };
 
     const handleSaveWH = async (formData) => {
@@ -1313,7 +1367,18 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                     className={`group relative bg-slate-900/50 border border-slate-500/25 p-8 rounded-[40px] hover:bg-slate-800/60 transition-all cursor-pointer overflow-hidden`}
                                 >
                                     <div className="flex justify-between items-start mb-6">
-                                        <span className="text-5xl group-hover:scale-110 transition-transform duration-500">{wh.icon}</span>
+                                        {/* v10 (Fase 10.5): la fotografia real tiene prioridad
+                                            visual sobre el icono. Si no hay foto, se cae al
+                                            emoji de la zona termica (comportamiento previo). */}
+                                        {wh.fotoUrl ? (
+                                            <img
+                                                src={wh.fotoUrl}
+                                                alt={wh.name}
+                                                className="w-20 h-20 rounded-2xl object-cover border border-slate-500/25 group-hover:scale-105 transition-transform duration-500"
+                                            />
+                                        ) : (
+                                            <span className="text-5xl group-hover:scale-110 transition-transform duration-500">{wh.icon}</span>
+                                        )}
                                         <span className="text-[8px] font-black uppercase px-3 py-1 rounded-full bg-slate-500/10 text-slate-300 tracking-widest">
                                             {subcatInfo ? `${subcatInfo.icon} ${subcatInfo.label}` : (wh.proposito || 'Sin clasificar')}
                                         </span>
@@ -1357,7 +1422,16 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             </button>
                             <div>
                                 <div className="flex items-center gap-3 mb-1">
-                                    <span className="text-3xl">{selectedWH.icon}</span>
+                                    {/* v10 (Fase 10.5): foto real con fallback al icono. */}
+                                    {selectedWH.fotoUrl ? (
+                                        <img
+                                            src={selectedWH.fotoUrl}
+                                            alt={selectedWH.name}
+                                            className="w-14 h-14 rounded-2xl object-cover border border-slate-500/25"
+                                        />
+                                    ) : (
+                                        <span className="text-3xl">{selectedWH.icon}</span>
+                                    )}
                                     <h2 className="text-2xl font-black uppercase italic tracking-tighter">{selectedWH.name}</h2>
                                     <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded bg-slate-500/10 text-slate-300">
                                         {propositos.find(p => p.codigo === selectedWH.proposito)?.label || selectedWH.proposito || 'Sin clasificar'}
@@ -1367,9 +1441,19 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             </div>
                         </div>
                         <div className="flex gap-4">
-                            <button 
+                            <button
                                 onClick={() => {
-                                    setEditingWHData(selectedWH);
+                                    // v10: normalizamos los campos visuales para que
+                                    // el modal nunca reciba undefined (un almacen
+                                    // creado antes de v10 no tiene estos valores).
+                                    setEditingWHData({
+                                        ...selectedWH,
+                                        fotoUrl: selectedWH.fotoUrl || null,
+                                        planogramaUrl: selectedWH.planogramaUrl || null,
+                                        pautasAcomodo: Array.isArray(selectedWH.pautasAcomodo)
+                                            ? selectedWH.pautasAcomodo
+                                            : [],
+                                    });
                                     setShowWHEditor(true);
                                 }}
                                 className="bg-slate-700 h-14 px-8 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-600 transition-all"
@@ -2150,18 +2234,11 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             {editingWHData.id ? 'Editar Almacén' : 'Nuevo Almacén'}
                         </h3>
                         
-                        <div className="space-y-6">
-                            <div>
-                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Nombre del Almacén</label>
-                                <input 
-                                    type="text" 
-                                    value={editingWHData.name}
-                                    onChange={(e) => setEditingWHData({...editingWHData, name: e.target.value.toUpperCase()})}
-                                    className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500"
-                                    placeholder="EJ: CONGELADOR 4"
-                                />
-                            </div>
-
+                        {/* v10 (Fase 10.1): orden de lectura tipo ficha.
+                            1) contexto (Categoria/Subcategoria) 2) identidad (Nombre)
+                            3) representacion visual (Icono/Foto) 4) parametro (Capacidad)
+                            5) pautas de acomodo (Infografia). */}
+                        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-1">
                             {/* v9 (Fase 9.2): Categoría y Subcategoría son INFORMATIVAS.
                                 El operador ya las eligió al navegar (zona -> pestaña de
                                 subcategoría); el modal no debe volver a preguntarlas ni
@@ -2185,6 +2262,17 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                             </div>
 
                             <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Nombre del Almacén</label>
+                                <input
+                                    type="text"
+                                    value={editingWHData.name}
+                                    onChange={(e) => setEditingWHData({...editingWHData, name: e.target.value.toUpperCase()})}
+                                    className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-bold text-sm outline-none focus:border-indigo-500"
+                                    placeholder="EJ: CONGELADOR 4"
+                                />
+                            </div>
+
+                            <div>
                                 <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Icono</label>
                                 <div className="flex gap-2">
                                     {['📦', '🥛', '🪜', '🧊', '🧹', '🥖', '⚡'].map(icon => (
@@ -2197,16 +2285,76 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                         </button>
                                     ))}
                                 </div>
+                                <p className="text-[8px] font-bold text-gray-600 uppercase tracking-widest mt-2">
+                                    El icono se usa cuando el almacén no tiene fotografía.
+                                </p>
+                            </div>
+
+                            {/* v10 (Fase 10.2): fotografia real del almacen. Opcional.
+                                Cuando existe, tiene prioridad visual sobre el icono en
+                                las tarjetas y en el detalle. */}
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Fotografía del Almacén (Opcional)</label>
+                                {editingWHData.fotoUrl ? (
+                                    <div className="relative rounded-2xl overflow-hidden border border-gray-800">
+                                        <img
+                                            src={editingWHData.fotoUrl}
+                                            alt="Fotografía del almacén"
+                                            className="w-full h-40 object-cover"
+                                        />
+                                        <button
+                                            onClick={() => setEditingWHData({...editingWHData, fotoUrl: null})}
+                                            className="absolute top-3 right-3 bg-red-600/90 hover:bg-red-600 text-white w-9 h-9 rounded-xl text-xs font-black transition-all"
+                                            title="Quitar fotografía"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <label className="w-full bg-black/40 border border-dashed border-gray-700 hover:border-indigo-500 p-6 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-all">
+                                        <span className="text-2xl">📷</span>
+                                        <span className="text-[9px] font-black uppercase text-gray-500 tracking-widest">Subir fotografía del ordenador</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleWarehousePhotoUpload}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                )}
                             </div>
 
                             <div>
                                 <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Capacidad Máxima (Items)</label>
-                                <input 
-                                    type="number" 
+                                <input
+                                    type="number"
                                     value={editingWHData.capacity}
                                     onChange={(e) => setEditingWHData({...editingWHData, capacity: parseInt(e.target.value) || 0})}
                                     className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-mono text-sm outline-none focus:border-indigo-500"
                                 />
+                            </div>
+
+                            {/* v10 (Fase 10.3): acceso al modal de infografia de acomodo.
+                                Se muestra un resumen del estado para que el operador sepa
+                                si ya hay infografia y cuantas pautas hay capturadas. */}
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Infografía de Acomodo</label>
+                                <button
+                                    onClick={() => setShowPlanograma(true)}
+                                    className="w-full bg-black/40 border border-gray-800 hover:border-indigo-500 p-4 rounded-2xl flex items-center justify-between transition-all"
+                                >
+                                    <span className="flex items-center gap-3">
+                                        <span className="text-xl">🗺️</span>
+                                        <span className="text-[10px] font-black uppercase text-gray-300 tracking-widest">
+                                            {editingWHData.planogramaUrl ? 'Infografía cargada' : 'Sin infografía'}
+                                        </span>
+                                    </span>
+                                    <span className="text-[9px] font-black uppercase text-indigo-400 tracking-widest">
+                                        {editingWHData.pautasAcomodo?.length
+                                            ? `${editingWHData.pautasAcomodo.length} pauta(s) • Abrir`
+                                            : 'Abrir'}
+                                    </span>
+                                </button>
                             </div>
                         </div>
 
@@ -2222,6 +2370,89 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                 className="flex-1 py-5 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-indigo-600/20"
                             >
                                 {editingWHData.id ? 'Guardar Cambios' : 'Crear Almacén'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* v10 (Fase 10.3): Modal ANIDADO de Infografía de Acomodo.
+                Decisiones de diseño deliberadas:
+                - z-[400]: por encima del editor (z-[200]) y del dialogo de
+                  eliminacion (z-[300]), para que nunca quede tapado.
+                - El backdrop NO cierra el modal: si el operador esta a media
+                  carga de una imagen, un clic mal dado no debe perder el trabajo.
+                  Solo se cierra con el boton "Listo".
+                - stopPropagation en el backdrop evita que el clic burbujee al
+                  backdrop del editor y lo cierre tambien. */}
+            {showPlanograma && editingWHData && (
+                <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={(e) => e.stopPropagation()} />
+                    <div className="relative w-full max-w-2xl bg-gray-900 border border-indigo-900/30 rounded-[40px] p-10 shadow-2xl overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-indigo-600/50" />
+                        <h3 className="text-2xl font-black uppercase italic tracking-tighter text-indigo-400 mb-2">
+                            Infografía de Acomodo
+                        </h3>
+                        <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest mb-8">
+                            {editingWHData.name || 'Almacén sin nombre'} • Cómo debe acomodarse el producto
+                        </p>
+
+                        <div className="space-y-6 max-h-[55vh] overflow-y-auto pr-1">
+                            {/* Imagen de la infografia (planograma) */}
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Imagen de la Infografía</label>
+                                {editingWHData.planogramaUrl ? (
+                                    <div className="relative rounded-2xl overflow-hidden border border-gray-800">
+                                        <img
+                                            src={editingWHData.planogramaUrl}
+                                            alt="Infografía de acomodo"
+                                            className="w-full max-h-72 object-contain bg-black/60"
+                                        />
+                                        <button
+                                            onClick={() => setEditingWHData({...editingWHData, planogramaUrl: null})}
+                                            className="absolute top-3 right-3 bg-red-600/90 hover:bg-red-600 text-white w-9 h-9 rounded-xl text-xs font-black transition-all"
+                                            title="Quitar infografía"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <label className="w-full bg-black/40 border border-dashed border-gray-700 hover:border-indigo-500 p-8 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-all">
+                                        <span className="text-3xl">🗺️</span>
+                                        <span className="text-[9px] font-black uppercase text-gray-500 tracking-widest">Subir infografía del ordenador</span>
+                                        <span className="text-[8px] font-bold text-gray-700 uppercase tracking-widest">JPG, PNG o WEBP</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handlePlanogramaUpload}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                )}
+                            </div>
+
+                            {/* Pautas de acomodo en texto (columna JSON pautas_acomodo) */}
+                            <div>
+                                <label className="text-[9px] font-black uppercase text-gray-600 mb-2 block tracking-widest">Instrucciones de Acomodo (Una por Línea)</label>
+                                <textarea
+                                    value={(editingWHData.pautasAcomodo || []).join('\n')}
+                                    onChange={(e) => handlePautasChange(e.target.value)}
+                                    rows={5}
+                                    className="w-full bg-black/60 border border-gray-800 p-4 rounded-2xl font-bold text-xs outline-none focus:border-indigo-500 resize-none"
+                                    placeholder={"EJ:\nPRODUCTO PESADO EN LA PARTE INFERIOR\nROTACIÓN PEPS DE IZQUIERDA A DERECHA\nNO APILAR MÁS DE 3 CAJAS"}
+                                />
+                                <p className="text-[8px] font-bold text-gray-600 uppercase tracking-widest mt-2">
+                                    {(editingWHData.pautasAcomodo || []).length} pauta(s) capturada(s)
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4 mt-10">
+                            <button
+                                onClick={() => setShowPlanograma(false)}
+                                className="flex-1 py-5 bg-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-xl shadow-indigo-600/20"
+                            >
+                                Listo
                             </button>
                         </div>
                     </div>

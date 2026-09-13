@@ -43,6 +43,13 @@ export const mapWarehouseFromApi = (wh) => ({
     name: wh.nombre || wh.name || 'Sin nombre',
     type: wh.zona_termica || wh.type || 'SECO',
     icon: iconForZonaTermica(wh.zona_termica),
+    // v10: representacion visual del almacen. `fotoUrl` es la fotografia real
+    // del espacio fisico (opcional) y `planogramaUrl` la infografia de acomodo
+    // (opcional). Ambas columnas ya existian en el modelo desde v7; hasta ahora
+    // la UI no las exponia. `pautasAcomodo` son las instrucciones escritas.
+    fotoUrl: wh.foto_url || null,
+    planogramaUrl: wh.planograma_url || null,
+    pautasAcomodo: Array.isArray(wh.pautas_acomodo) ? wh.pautas_acomodo : [],
     capacity: 100,
     current: 0,
 });
@@ -93,6 +100,13 @@ export const buildWarehouseCreatePayload = (formData, selectedZone = null, subCa
     nombre: formData.name,
     zona_termica: formData.type || selectedZone || 'SECO',
     proposito: formData.proposito || subCategoryTab || 'EXHIBICION_VENTA',
+    // v10: representacion visual y pautas de acomodo. Se envian siempre (aunque
+    // sean null / lista vacia) para que el backend pueda limpiarlos al editar:
+    // si se omitieran, `exclude_unset=True` en update_warehouse los dejaria
+    // intactos y el operador no podria quitar una foto ya guardada.
+    foto_url: formData.fotoUrl || null,
+    planograma_url: formData.planogramaUrl || null,
+    pautas_acomodo: Array.isArray(formData.pautasAcomodo) ? formData.pautasAcomodo : [],
     activo: true,
 });
 
