@@ -603,7 +603,28 @@ Sin ella, el navegador usa su barra por defecto (gris claro, ~15px), que contras
 | `contarEventosSinAlmacen` | Alimenta el badge (nunca devuelve `NaN`) |
 | `agruparEventosSinAlmacenPorSku` | Una fila por SKU, no por intento |
 
-### 11.9 Pendiente
+### 11.9 Lock distribuido del procesador de eventos (v11 — Fase 11.2)
+
+**Deuda reparada:** el procesador del Outbox (`process_warehouse_events`) podía correr en **más de un proceso** a la vez (p. ej. uvicorn con varios workers, o un reinicio en caliente que solape el proceso viejo). Sin exclusión mutua, dos instancias leían los **mismos** eventos `PENDIENTE` y aplicaban el descuento **dos veces** → doble descuento de stock.
+
+**Solución:** un *advisory lock* de PostgreSQL (`pg_try_advisory_lock`). Es un candado cooperativo a nivel de servidor, ligado a la **conexión** que lo adquiere. Si el proceso muere, la conexión se cierra y PostgreSQL libera el candado automáticamente: **no hay candados huérfanos** como ocurriría con una tabla de flags.
+
+| Elemento | Valor / ubicación |
+|---|---|
+| `LOCK_ID_PROCESADOR_EVENTOS` | `0x52444552` = `1380205906` ("RDER" en ASCII) |
+| Adquirir | `_intentar_adquirir_lock(db)` → `SELECT pg_try_advisory_lock(:lock_id)` |
+| Liberar | `_liberar_lock(db)` → `SELECT pg_advisory_unlock(:lock_id)` |
+| Ubicación | [`service.py`](apps/api/modules/warehouse/service.py:1016) |
+
+**Regla crítica de diseño:** adquirir y liberar el lock **en la MISMA conexión**. Por eso el procesador mantiene una sesión dedicada abierta durante todo el ciclo y libera en el bloque `finally`.
+
+**Advertencia documentada (test `test_lock_persiste_si_la_conexion_vuelve_al_pool`):** `AsyncSessionLocal` usa un *pool* de conexiones. Cerrar la sesión **devuelve la conexión al pool sin cerrarla**, por lo que el lock **sigue tomado**. Por eso el `finally` explícito es obligatorio: no basta con cerrar la sesión.
+
+**Comportamiento esperado:** si otra instancia ya tiene el lock, el ciclo se **omite** (no es error) y se reintenta en el siguiente polling (30 s). Se registra un mensaje `debug`.
+
+**Tests (5, en `test_warehouse_fase11.py`):** valor del `LOCK_ID`; una sola instancia adquiere; liberar permite adquirir a otra; liberar un lock no adquirido no falla; el lock persiste si la conexión vuelve al pool.
+
+### 11.10 Pendiente
 
 - Escáner IA (visión de charolas) — Fase 2 del plan
 - AI Gateway real (Whisper + LLM local) — depende del módulo IA Local

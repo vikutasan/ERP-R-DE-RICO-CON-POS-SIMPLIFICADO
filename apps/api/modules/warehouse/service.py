@@ -2,7 +2,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, text
 from fastapi import HTTPException
 from . import models, schemas
 from modules.catalog.models import Product
@@ -1013,6 +1013,52 @@ async def _process_single_event(db: AsyncSession, evento: models.WarehouseEvent)
     evento.estado = "PROCESADO"
 
 
+# v11 (Fase 11.2, Deuda 2): LOCK DISTRIBUIDO DEL PROCESADOR DE EVENTOS.
+# ---------------------------------------------------------------------------
+# El procesador del Outbox puede correr en mas de un proceso (p. ej. uvicorn
+# con varios workers, o un reinicio en caliente que solape el proceso viejo).
+# Sin exclusion mutua, dos instancias leerian los MISMOS eventos PENDIENTE y
+# aplicarian el descuento DOS veces (doble descuento de stock).
+#
+# Solucion: un advisory lock de PostgreSQL. Es un candado cooperativo a nivel
+# de servidor, ligado a la CONEXION que lo adquiere. Si el proceso muere, la
+# conexion se cierra y PostgreSQL libera el candado automaticamente (no hay
+# candados huerfanos como con una tabla de flags).
+#
+# CRITICO: pg_try_advisory_lock y pg_advisory_unlock DEBEN ejecutarse sobre la
+# MISMA conexion. Por eso mantenemos una sesion dedicada abierta durante todo
+# el ciclo de procesamiento y la liberamos en el bloque `finally`.
+#
+# LOCK_ID = 0x52444552 = "RDER" en ASCII (R=0x52, D=0x44, E=0x45, R=0x52).
+# Es un numero arbitrario pero unico dentro de la base de datos rderico.
+LOCK_ID_PROCESADOR_EVENTOS = 0x52444552
+
+
+async def _intentar_adquirir_lock(db: AsyncSession) -> bool:
+    """v11 (Fase 11.2): intenta tomar el advisory lock sin bloquear.
+
+    Devuelve True si ESTA conexion obtuvo el candado, False si otra instancia
+    ya lo tiene. No espera: si no lo consigue, el llamador simplemente omite
+    este ciclo de polling.
+    """
+    result = await db.execute(
+        text("SELECT pg_try_advisory_lock(:lock_id)"),
+        {"lock_id": LOCK_ID_PROCESADOR_EVENTOS},
+    )
+    return bool(result.scalar())
+
+
+async def _liberar_lock(db: AsyncSession) -> None:
+    """v11 (Fase 11.2): libera el advisory lock en la MISMA conexion que lo tomo."""
+    try:
+        await db.execute(
+            text("SELECT pg_advisory_unlock(:lock_id)"),
+            {"lock_id": LOCK_ID_PROCESADOR_EVENTOS},
+        )
+    except Exception:
+        logger.error("No se pudo liberar el advisory lock del procesador", exc_info=True)
+
+
 async def process_warehouse_events():
     """
     Procesador asíncrono del Outbox Pattern.
@@ -1022,6 +1068,11 @@ async def process_warehouse_events():
     v7 (Fase 1.1, D1): cada evento se procesa en su PROPIA transaccion. Un fallo
     en un evento hace rollback explicito SOLO de ese evento (sin descuentos
     parciales) y no afecta a los demas. El POS nunca se bloquea por este proceso.
+
+    v11 (Fase 11.2, Deuda 2): el ciclo completo esta protegido por un advisory
+    lock de PostgreSQL (LOCK_ID_PROCESADOR_EVENTOS). Si otra instancia ya lo
+    tiene, este ciclo se omite y se reintenta en el siguiente polling. Esto
+    garantiza que NUNCA haya doble descuento de stock por concurrencia.
     """
     import asyncio
     from core.database import AsyncSessionLocal
@@ -1030,40 +1081,62 @@ async def process_warehouse_events():
     await asyncio.sleep(10)
 
     while True:
-        try:
-            # Fase 1: leer los IDs de eventos pendientes en una sesion corta y cerrarla,
-            # para no mantener una transaccion abierta mientras se procesan uno a uno.
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(models.WarehouseEvent.id)
-                    .where(models.WarehouseEvent.estado == "PENDIENTE")
-                    .order_by(models.WarehouseEvent.created_at)
-                    .limit(50)
-                )
-                evento_ids = result.scalars().all()
+        # v11 (Fase 11.2): sesion DEDICADA que mantiene el advisory lock durante
+        # todo el ciclo. Debe ser la MISMA conexion para adquirir y liberar.
+        async with AsyncSessionLocal() as lock_db:
+            lock_adquirido = False
+            try:
+                lock_adquirido = await _intentar_adquirir_lock(lock_db)
 
-            # Fase 2: procesar cada evento en su propia transaccion aislada.
-            for evento_id in evento_ids:
-                async with AsyncSessionLocal() as db:
-                    try:
-                        evento = await db.get(models.WarehouseEvent, evento_id)
-                        if not evento or evento.estado != "PENDIENTE":
-                            continue
-
-                        await _process_single_event(db, evento)
-                        await db.commit()
-
-                    except Exception as e:
-                        # Rollback explicito: descarta cualquier descuento parcial
-                        # de ESTE evento. Los demas eventos no se ven afectados.
-                        await db.rollback()
-                        logger.error(
-                            "Evento %s fallo y se revirtio: %s", evento_id, e, exc_info=True
+                if not lock_adquirido:
+                    # Otra instancia esta procesando. No es un error: es el
+                    # comportamiento esperado del lock. Se reintenta al siguiente ciclo.
+                    logger.debug(
+                        "Otra instancia del procesador tiene el advisory lock; "
+                        "se omite este ciclo de polling."
+                    )
+                else:
+                    # Fase 1: leer los IDs de eventos pendientes en una sesion corta
+                    # y cerrarla, para no mantener una transaccion abierta mientras
+                    # se procesan uno a uno.
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(models.WarehouseEvent.id)
+                            .where(models.WarehouseEvent.estado == "PENDIENTE")
+                            .order_by(models.WarehouseEvent.created_at)
+                            .limit(50)
                         )
-                        await _mark_event_failed(evento_id, e)
+                        evento_ids = result.scalars().all()
 
-        except Exception:
-            logger.error("Error en el bucle del procesador de eventos", exc_info=True)
+                    # Fase 2: procesar cada evento en su propia transaccion aislada.
+                    for evento_id in evento_ids:
+                        async with AsyncSessionLocal() as db:
+                            try:
+                                evento = await db.get(models.WarehouseEvent, evento_id)
+                                if not evento or evento.estado != "PENDIENTE":
+                                    continue
+
+                                await _process_single_event(db, evento)
+                                await db.commit()
+
+                            except Exception as e:
+                                # Rollback explicito: descarta cualquier descuento
+                                # parcial de ESTE evento. Los demas no se ven afectados.
+                                await db.rollback()
+                                logger.error(
+                                    "Evento %s fallo y se revirtio: %s",
+                                    evento_id, e, exc_info=True,
+                                )
+                                await _mark_event_failed(evento_id, e)
+
+            except Exception:
+                logger.error("Error en el bucle del procesador de eventos", exc_info=True)
+
+            finally:
+                # v11 (Fase 11.2): liberar SIEMPRE el lock en la misma conexion,
+                # incluso si el procesamiento lanzo una excepcion.
+                if lock_adquirido:
+                    await _liberar_lock(lock_db)
 
         await asyncio.sleep(30)
 

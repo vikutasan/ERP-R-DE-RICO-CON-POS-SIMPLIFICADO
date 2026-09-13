@@ -172,3 +172,117 @@ class TestGuardianDelContrato:
         with pytest.raises(HTTPException) as exc:
             await warehouse_service.update_warehouse(db, "alm_no_existe", payload)
         assert exc.value.status_code == 404
+
+
+# =============================================================================
+# 4. LOCK DISTRIBUIDO DEL PROCESADOR (v11 - Fase 11.2, Deuda 2)
+# =============================================================================
+# El procesador del Outbox puede correr en mas de un proceso. Sin exclusion
+# mutua, dos instancias leerian los MISMOS eventos PENDIENTE y aplicarian el
+# descuento DOS veces. Estos tests fijan el contrato del advisory lock:
+#
+#   - Una conexion adquiere el lock -> True.
+#   - Otra conexion intenta adquirirlo -> False (no bloquea, no espera).
+#   - Al liberar la primera, la segunda puede adquirirlo -> True.
+#
+# Se usan sesiones REALES de AsyncSessionLocal (no la fixture `db`) porque el
+# advisory lock esta ligado a la CONEXION fisica: dos sesiones distintas deben
+# mapear a dos conexiones distintas del pool.
+class TestLockDistribuidoProcesador:
+    """v11 (Fase 11.2): el advisory lock impide el doble procesamiento."""
+
+    async def test_lock_id_corresponde_a_rder(self):
+        """LOCK_ID = 0x52444552 = 'RDER' en ASCII. Documenta el valor magico."""
+        from modules.warehouse.service import LOCK_ID_PROCESADOR_EVENTOS
+
+        assert LOCK_ID_PROCESADOR_EVENTOS == 0x52444552
+        assert LOCK_ID_PROCESADOR_EVENTOS == 1380205906
+
+    async def test_una_sola_instancia_adquiere_el_lock(self):
+        """Sesion A adquiere -> True; sesion B (concurrente) -> False."""
+        from core.database import AsyncSessionLocal
+        from modules.warehouse.service import (
+            _intentar_adquirir_lock,
+            _liberar_lock,
+        )
+
+        async with AsyncSessionLocal() as sesion_a:
+            async with AsyncSessionLocal() as sesion_b:
+                try:
+                    # A toma el candado.
+                    assert await _intentar_adquirir_lock(sesion_a) is True
+
+                    # B NO puede tomarlo mientras A lo tenga: devuelve False
+                    # sin bloquear (pg_try_advisory_lock no espera).
+                    assert await _intentar_adquirir_lock(sesion_b) is False
+                finally:
+                    await _liberar_lock(sesion_a)
+
+    async def test_liberar_permite_a_otra_instancia_adquirir(self):
+        """Tras liberar A, B puede adquirir el lock (no queda huerfano)."""
+        from core.database import AsyncSessionLocal
+        from modules.warehouse.service import (
+            _intentar_adquirir_lock,
+            _liberar_lock,
+        )
+
+        async with AsyncSessionLocal() as sesion_a:
+            async with AsyncSessionLocal() as sesion_b:
+                assert await _intentar_adquirir_lock(sesion_a) is True
+                assert await _intentar_adquirir_lock(sesion_b) is False
+
+                # A libera explicitamente.
+                await _liberar_lock(sesion_a)
+
+                # Ahora B si puede tomarlo.
+                try:
+                    assert await _intentar_adquirir_lock(sesion_b) is True
+                finally:
+                    await _liberar_lock(sesion_b)
+
+    async def test_liberar_lock_no_adquirido_no_falla(self):
+        """Liberar un lock que no se tiene no debe lanzar excepcion.
+
+        `pg_advisory_unlock` devuelve False (no error) si el candado no estaba
+        tomado por esa conexion. El helper lo tolera para que el `finally` del
+        procesador sea seguro incluso si la adquisicion fallo.
+        """
+        from core.database import AsyncSessionLocal
+        from modules.warehouse.service import _liberar_lock
+
+        async with AsyncSessionLocal() as sesion:
+            # No se adquiere antes: liberar debe ser inocuo.
+            await _liberar_lock(sesion)
+
+    async def test_lock_persiste_si_la_conexion_vuelve_al_pool(self):
+        """ADVERTENCIA de diseno: devolver la conexion al pool NO libera el lock.
+
+        `AsyncSessionLocal` usa un pool de conexiones. Al salir del `async with`
+        la sesion se cierra, pero la CONEXION fisica vuelve al pool y sigue
+        viva: el advisory lock SIGUE TOMADO. Por eso el procesador DEBE liberar
+        el lock explicitamente en su bloque `finally` (no basta con cerrar la
+        sesion).
+
+        Este test fija ese comportamiento para que nadie asuma que 'cerrar la
+        sesion' libera el candado.
+        """
+        from core.database import AsyncSessionLocal
+        from modules.warehouse.service import (
+            _intentar_adquirir_lock,
+            _liberar_lock,
+        )
+
+        # Sesion efimera: adquiere y se cierra SIN liberar explicitamente.
+        async with AsyncSessionLocal() as sesion_efimera:
+            assert await _intentar_adquirir_lock(sesion_efimera) is True
+        # La conexion volvio al pool con el lock AUN tomado.
+
+        # Una sesion nueva (que reutiliza la MISMA conexion del pool) NO puede
+        # adquirirlo: el lock sigue vivo. Esto demuestra por que el `finally`
+        # explicito del procesador es obligatorio.
+        async with AsyncSessionLocal() as sesion_nueva:
+            try:
+                assert await _intentar_adquirir_lock(sesion_nueva) is False
+            finally:
+                # Limpieza: liberar el lock que quedo tomado por la sesion efimera.
+                await _liberar_lock(sesion_nueva)
