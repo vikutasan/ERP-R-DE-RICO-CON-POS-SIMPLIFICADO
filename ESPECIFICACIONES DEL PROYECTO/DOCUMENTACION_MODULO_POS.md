@@ -243,6 +243,31 @@ El componente padre ExperimentCenterUI.jsx estaba enviando currentUser como un o
 - Se impuso la regla del useMemo() en componentes de alto nivel para props tipo objeto que no mutan sus valores reales.
 - **Cambio Crtico en Cleanups de Desmontaje:** Se reescribi el useEffect de limpieza de la terminal para usar un array de dependencias vaco []. Para evitar cierres de estado obsoletos (*stale closures*), se implementaron useRef locales (selectedTerminalRef, currentUserRef) que apuntan a los valores actualizados. As, el cleanup solo se invoca cuando el componente **realmente se destruye** al salir del mdulo o cerrar la pestaa, leyendo los valores directamente de las referencias.
 
+### Incidente Veracidad de Ocupacin de Terminales (13/Septiembre/2026) — v12
+
+**Sntoma:** El landing de seleccin de terminal "menta" sobre la ocupacin real. Tres manifestaciones concretas:
+1. **CAJA:** Una terminal ocupada por el propio usuario se pintaba como LIBRE (bug dependiente del observador: si VICTOR, dueo de CAJA, miraba el landing, CAJA apareca libre).
+2. **T2:** Una terminal libre se etiquetaba como `SIN CONEXIN` en vez de `DISPONIBLE`, confundiendo "libre" con "sin red".
+3. **Lock hurfano:** Al cerrar la pestaa o navegar fuera, el candado de la terminal quedaba en PostgreSQL hasta que expiraba el TTL (20 min), bloqueando la terminal para otros usuarios.
+
+**Anlisis Forense:**
+- **Defecto 1 (CAJA):** `TerminalSelector.jsx` calculaba `isMine = isOccupied && isOccupied.occupier_id === currentUser?.id` y `lockedByOther = isOccupied && !isMine`. El render slo tena DOS ramas (`lockedByOther` y libre). Cuando `isMine === true`, `lockedByOther === false`, as que caa en la rama "libre" y se pintaba como disponible. **Bug dependiente del observador.**
+- **Defecto 2 (T2):** La funcin `getNetStatus` devolva la etiqueta `SIN CONEXIN` para el estado sin ocupante, mezclando semntica de red con semntica de ocupacin.
+- **Defecto 3 (lock hurfano):** El camino de salida explcito (`handleTerminalSwitch`  `doTerminalExit`) **s ya** liberaba el lock. El caso real hurfano era el cierre de pesta / navegacin fuera, que el cleanup de desmontaje cubra parcialmente pero `useBeforeUnload` no liberaba.
+
+**Resolucin (v12 — 4 fases):**
+- **Fase 12.1:** Se extrajo la clasificacin a una funcin pura `resolveCardState(info, currentUserId)` en `apps/pos/utils/terminalCardState.js` que devuelve `'free' | 'mine' | 'occupied'`. Se aadi un TERCER estado visual mbar ("TU SESIN ACTIVA") para la terminal propia. Al hacer clic en una terminal `mine`, se re-entra sin re-lockear (respeta la regla anti-ping-pong). Cubierto con 7 tests vitest.
+- **Fase 12.2:** `'SIN CONEXIN'`  `'DISPONIBLE'` en `TerminalSelector.jsx` para el estado libre.
+- **Fase 12.3:** Se extendi `useBeforeUnload.js` para liberar el lock de la terminal va `navigator.sendBeacon` al cerrar/navegar fuera de la pesta. Usa `useRef` para `selectedTerminal` y `currentUser` (evita *stale closures*). **Nunca re-adquiere un lock** (regla anti-ping-pong).
+- **Fase 12.4:** Se aadi el helper `_iso_utc(dt)` en `apps/api/modules/pos/router.py` para serializar `locked_at` con sufijo `Z` explcito; los parches defensivos del front (`TerminalSelector.jsx`, `NetworkMonitorUI.jsx`) se mantienen por robustez ante offsets `+00:00`.
+
+**Leccin (Nueva Regla de Veracidad de Estado):**
+- **Nunca** colapsar tres estados (libre / mo / ajeno) en dos ramas de render. Una terminal ocupada por el propio usuario NO es "libre".
+- La etiqueta de red (`SIN CONEXIN`) **no** debe reutilizarse para describir ocupacin (`DISPONIBLE`).
+- Todo lock debe liberarse en **ambos** caminos: salida explcita (handler) y abandono de pesta (`beforeunload` con `sendBeacon`).
+
+**Archivos involucrados:** `apps/pos/utils/terminalCardState.js` (nuevo), `apps/pos/utils/terminalCardState.test.js` (nuevo), `apps/pos/components/TerminalSelector.jsx`, `apps/pos/hooks/useBeforeUnload.js`, `apps/pos/RetailVisionPOS.jsx`, `apps/api/modules/pos/router.py`, `apps/network/NetworkMonitorUI.jsx`.
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
