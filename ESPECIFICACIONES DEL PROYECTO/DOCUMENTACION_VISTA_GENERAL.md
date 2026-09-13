@@ -1,8 +1,8 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.1.0
-> **Ultima actualizacion:** 31 de agosto de 2026
-> **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview)
+> **Version:** 1.2.0
+> **Ultima actualizacion:** 13 de septiembre de 2026
+> **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py)
 
 ---
 
@@ -200,4 +200,75 @@ La zona horaria se lee desde `system_settings` mediante la utilidad centralizada
 
 ---
 
-> **Esta documentacion refleja el estado del sistema al 31 de agosto de 2026.**
+## 6. EL CEMENTERIO DE BUGS
+
+### 🐛 BUG 1: La direccion y el telefono se "borraban solos" (13 Sep 2026)
+
+**Sintoma reportado:** El operador escribia la direccion y el telefono en el modal de edicion, presionaba Guardar, y al cabo de un rato (o tras recargar la pagina) los campos aparecian vacios otra vez. El nombre del negocio y el de la sucursal si se conservaban.
+
+**Diagnostico:** El sintoma era enganoso. Los datos **nunca se borraban de la base de datos**. Lo que fallaba era la **lectura**.
+
+```
+GET /api/v1/settings/  ->  HTTP 500 Internal Server Error
+PATCH /api/v1/settings/{key}  ->  HTTP 200 OK
+```
+
+La escritura funcionaba perfectamente; la lectura fallaba por completo.
+
+**Causa raiz:** El endpoint `GET /api/v1/settings/` devolvia **todos** los registros de `system_settings` validados contra el contrato `SystemSettingResponse`. Ese contrato declaraba `category: str` e `input_type: str` como **campos obligatorios**.
+
+El registro `id=22` (`heladeria_terminals_config`) tenia `category = NULL` e `input_type = NULL` en la base de datos. Un unico registro malformado bastaba para que Pydantic lanzara:
+
+```
+fastapi.exceptions.ResponseValidationError: 2 validation errors:
+  {'type': 'string_type', 'loc': ('response', 15, 'category'), 'msg': 'Input should be a valid string', 'input': None}
+  {'type': 'string_type', 'loc': ('response', 15, 'input_type'), 'msg': 'Input should be a valid string', 'input': None}
+```
+
+**Por que se veia como "se borra la direccion y el telefono":** El frontend en [`loadBizInfo`](apps/ExperimentCenterUI.jsx:104) hace `if (res.ok)`. Como la respuesta era 500, `res.ok` era `false`, el bloque se saltaba en silencio (la degradacion elegante del `catch` no mostraba nada) y `bizInfo` conservaba los valores por defecto del `useState`:
+
+```javascript
+const [bizInfo, setBizInfo] = useState({
+    business_name: 'R de Rico',
+    branch_name: 'Sucursal San Pablo',
+    business_address: '',      // <-- vacio
+    business_phone: '',        // <-- vacio
+    ...
+});
+```
+
+Es decir: `business_name` y `branch_name` "sobrevivian" porque sus valores por defecto en el `useState` coincidian con los reales. `business_address` y `business_phone` aparecian vacios porque sus defaults eran `''`. **El bug no era de escritura, era de lectura.**
+
+**Por que el registro quedo con NULL:** El modelo SQLAlchemy define los defaults del lado Python:
+
+```python
+category = Column(String, default="general")
+input_type = Column(String, default="text")
+```
+
+Los defaults de Python **solo aplican cuando SQLAlchemy construye el INSERT**. Si la fila se creo por SQL crudo, por `op.bulk_insert` en una migracion, o por un script de soporte de Heladeria, esas columnas quedaron NULL. Es el mismo patron documentado en el modulo de Almacenes (`op.bulk_insert` omite defaults Python).
+
+**Solucion aplicada (3 capas):**
+
+| Capa | Archivo | Cambio |
+|---|---|---|
+| 1. Contrato tolerante | [`apps/api/modules/settings/schemas.py`](apps/api/modules/settings/schemas.py:17) | `category` e `input_type` pasan a `Optional[str]` con default (`"general"` / `"text"`). Un NULL ya no rompe la respuesta. |
+| 2. Reparacion de datos | `system_settings` (BD) | `UPDATE system_settings SET category='heladeria' WHERE category IS NULL` y `input_type='json' WHERE input_type IS NULL`. |
+| 3. Blindaje del seed | [`apps/api/modules/settings/service.py`](apps/api/modules/settings/service.py:24) | `seed_settings()` ahora repara filas historicas con NULL en cada arranque, ademas de sembrar las faltantes. |
+
+**Verificacion:**
+
+```
+GET /api/v1/settings/  ->  200
+  business_name     = R de Rico
+  branch_name       = Sucursal San Pablo
+  business_phone    = 7225 41 05 53
+  business_timezone = America/Mexico_City
+  business_address  = MANUEL BUENDIA TELLEZ GIRON ESQUINA CON INDEPENDENCIA, SAN PABLO AUTOPAN; TOLUCA, MEXICO
+```
+
+**Leccion:** Un `ResponseValidationError` en un endpoint de listado es una falla **total**, no parcial. Un solo registro con NULL tumba la respuesta completa. Los contratos de respuesta deben ser tolerantes a NULL cuando la columna de BD lo permite, y los seeds deben usar los defaults del modelo, nunca SQL crudo sin columnas completas.
+
+---
+
+> **Esta documentacion refleja el estado del sistema al 13 de septiembre de 2026.**

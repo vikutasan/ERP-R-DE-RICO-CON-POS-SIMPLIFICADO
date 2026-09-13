@@ -99,5 +99,21 @@ async def seed_settings(db: AsyncSession):
         result = await db.execute(select(models.SystemSetting).where(models.SystemSetting.key == s_data["key"]))
         if not result.scalar_one_or_none():
             db.add(models.SystemSetting(**s_data))
-    
+
+    await db.commit()
+
+    # v1.2 (BUG 4): repara filas historicas con NULL en columnas NOT NULL del
+    # contrato de respuesta. Un solo registro con category/input_type NULL hacia
+    # que GET /api/v1/settings/ devolviera HTTP 500 (ResponseValidationError),
+    # rompiendo la carga de la Vista General.
+    await db.execute(
+        update(models.SystemSetting)
+        .where(models.SystemSetting.category.is_(None))
+        .values(category="general")
+    )
+    await db.execute(
+        update(models.SystemSetting)
+        .where(models.SystemSetting.input_type.is_(None))
+        .values(input_type="text")
+    )
     await db.commit()
