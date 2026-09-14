@@ -6,7 +6,7 @@
 >
 > **Estado:** 📋 **PLANIFICADO.** No implementado. Depende de V19 (Fase 19.4).
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 3
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 4
 >
 > **Cambios de la Rev. 2:** se incorpora la **Sección 6.5 — Arreglo de zona horaria
 > del POS IA**, tras auditar el módulo a fondo. Se documenta el **bug del `+6h`**
@@ -20,6 +20,13 @@
 > **desfasa todos los reportes de ventas 6 horas**. Se amplía la regla del commit
 > atómico a `pos` + `analytics` y se añade el helper compartido
 > `local_day_bounds_utc()`.
+>
+> **Cambios de la Rev. 4:** por decisión del dueño, **`grandeza` deja de ser una
+> excepción** y se migra al esquema global. Se incorpora la **Sección 6.7 —
+> Migrar `grandeza` a UTC (Fase 20.2.d)**, que separa las **fechas de negocio**
+> (`Column(Date)`, se quedan locales) de los **instantes reales**
+> (`Column(DateTime)`, pasan a UTC). Se elimina `_now_mexico()` como fuente de
+> hora local y se corrigen 2 anti-patrones de frontend.
 
 ---
 
@@ -33,7 +40,7 @@ corregir mi propio diseño inicial):
 |---|---|---|---|
 | 1 | "Hay un solo mecanismo de zona horaria" | **FALSO.** Hay **TRES**: `business_timezone`, `network_tz_offset_hours`, `heladeria_kds_urgency_config.tzOffsetHours` | ✅ Sí |
 | 2 | "El selector controla todo el sistema" | **FALSO.** Solo controla `analytics`, `hr` y `grandeza`. Red y KDS lo ignoran | ✅ Sí |
-| 3 | "`grandeza` guarda UTC" | **FALSO.** Guarda **hora local a propósito** ([`grandeza/service.py:15`](apps/api/modules/grandeza/service.py:15)) | ✅ Sí |
+| 3 | "`grandeza` guarda UTC" | **FALSO.** Guarda **hora local a propósito** ([`grandeza/service.py:15`](apps/api/modules/grandeza/service.py:15)) | ✅ Sí (Rev. 4: se migra) |
 | 4 | "El frontend ya lee la zona del negocio" | **FALSO.** Nunca la lee. Usa la zona del navegador | ✅ Sí |
 | 5 | "Son pocos los lugares que formatean fechas" | **FALSO.** Son **49** (46 en `.jsx` + 3 en `.js`) | ✅ Sí |
 | 6 | "`hr` guarda UTC correctamente" | **CIERTO.** Usa `timezone=True, server_default=func.now()` (19 columnas) | — |
@@ -43,11 +50,16 @@ corregir mi propio diseño inicial):
 | 10 | "El `+6h` de `pos/service.py` es un bug" | **MATIZ.** Hoy es un **parche funcional** que compensa el naive local. Se vuelve bug **solo si** se migra `created_at` a UTC sin quitarlo | ✅ Sí |
 | 11 | "Migrar `pos` a UTC solo afecta a `pos`" | **FALSO.** `analytics/service.py` filtra `Ticket.created_at` con fronteras naive local (12 usos). Migrar `pos` sin tocar `analytics` **desfasa los reportes 6h** | ✅ Sí |
 | 12 | "`analytics` ya sigue al selector" | **MATIZ.** Lo sigue para **formatear** (frontend), pero **NO** para **filtrar** (SQL). Su filtro ignora el selector | ✅ Sí |
+| 13 | "`grandeza` debe quedar excluido" | **FALSO (Rev. 4).** El dueño ordenó incluirlo. Sus `Column(Date)` (`journey_date`, `route_date`) se quedan locales; sus `Column(DateTime)` se migran a UTC | ✅ Sí |
 
 **Conclusión de la autocrítica:** este plan **NO es "activar" algo que ya existe**.
-Es **corregir desviaciones reales** en 4 módulos backend + reescribir la capa de
-presentación de fechas en 49 puntos del frontend. Cualquier plan que diga lo
-contrario está mintiendo.
+Es **corregir desviaciones reales** en **5 módulos backend** (`network`, `cash`,
+`orders`, `pos`, `analytics`, `grandeza`) + reescribir la capa de presentación de
+fechas en 49 puntos del frontend. Cualquier plan que diga lo contrario está mintiendo.
+
+**Nota de la Rev. 4:** `grandeza` **ya no es una excepción**. Se migra como los
+demás, con la única salvedad de que sus **fechas de negocio** (`Column(Date)`)
+permanecen en calendario local por definición — no son instantes.
 
 ---
 
@@ -139,7 +151,7 @@ sueltos por un **helper único** que respete la zona elegida.
 
 | Módulo | Ubicación | Razón |
 |---|---|---|
-| `grandeza` | [`service.py:15`](apps/api/modules/grandeza/service.py:15) | Guarda local **a propósito** para fechas de negocio de reparto |
+| `grandeza` | [`service.py:18`](apps/api/modules/grandeza/service.py:18) | Guarda local vía `_now_mexico()`. **Rev. 4: se migra a UTC** (Sección 6.7) |
 
 **⚠️ `datetime.now()` en lógica (no columnas) — revisar caso por caso:**
 
@@ -204,7 +216,7 @@ comentario. Ver la Sección 6.5 para el código exacto.
 
 | # | Mecanismo | Definición | Consumidores | ¿Sigue al selector? |
 |---|---|---|---|---|
-| 1 | `business_timezone` | Setting (default `America/Mexico_City`) | `analytics`, `hr`, `grandeza` vía [`core/timezone.py`](apps/api/core/timezone.py:21) | ✅ **SÍ** |
+| 1 | `business_timezone` | Setting (default `America/Mexico_City`) | `analytics`, `hr` vía [`core/timezone.py`](apps/api/core/timezone.py:21). **`grandeza` deja de consumirlo para escribir** (Rev. 4) | ✅ **SÍ** |
 | 2 | `network_tz_offset_hours` | Setting (seed = `"6"`) | [`network/router.py:16`](apps/api/modules/network/router.py:16) | ❌ **NO** |
 | 3 | `heladeria_kds_urgency_config.tzOffsetHours` | Setting (seed = `6`) | KDS Heladería | ❌ **NO** |
 
@@ -418,7 +430,8 @@ si `tzOffsetHours` no está configurado explícitamente, derivarlo de `business_
 
 ## 6. FASE 20.2 — MIGRAR TIMESTAMPS A UTC (backend)
 
-**Objetivo:** eliminar la Convención B. **NO tocar** `grandeza` (Convención C).
+**Objetivo:** eliminar la Convención B. **Rev. 4: `grandeza` (Convención C)
+también se migra** — ver Sección 6.7. Solo sus `Column(Date)` quedan locales.
 
 ### 6.1 Tabla de migración
 
@@ -720,6 +733,173 @@ Auditoría POS + smoke ticket impreso.
 
 ---
 
+## 6.7 FASE 20.2.d — MIGRAR `grandeza` A UTC (Rev. 4)
+
+> **Origen:** decisión del dueño (Rev. 4): **`grandeza` NO queda excluido** del
+> esquema global. Se migra como cualquier otro módulo, respetando su lógica de
+> **fechas de negocio**.
+
+### 6.7.1 La distinción fundamental: `Date` ≠ `DateTime`
+
+`grandeza` mezcla **dos conceptos de tiempo** que el plan original confundió al
+tratarlos como uno solo. Separarlos es la clave de la migración:
+
+| Concepto | Columnas | Tipo | ¿Se migra a UTC? |
+|---|---|---|---|
+| **Fecha de negocio** (qué día corre la ruta) | `journey_date`, `route_date` | `Column(Date)` | ❌ **NO.** Es un día del calendario, no un instante |
+| **Instante real** (cuándo ocurrió) | `dispatched_at`, `arrived_at`, `completed_at`, `recorded_at`, `created_at`, `updated_at` | `Column(DateTime)` | ✅ **SÍ.** Debe ser UTC |
+
+**Por qué `journey_date` NO se toca:** "la jornada del 14 de septiembre" es un
+**día del calendario local**, no un punto en el tiempo. Convertirlo a UTC lo
+volvería "13 de septiembre 18:00" — absurdo. Es el mismo principio que
+`grandeza/service.py:293` usa con `route_date.weekday()`: el día de la semana
+de una fecha de negocio se calcula en **calendario local**, siempre.
+
+**Por qué los `DateTime` SÍ se migran:** `dispatched_at` es "el instante en que
+salió el repartidor". Ese instante es universal. Guardarlo en local es el bug.
+
+### 6.7.2 El hallazgo: `_now_mexico()` es el `+6h` de `grandeza`
+
+[`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18):
+
+```python
+async def _now_mexico(db):
+    """Retorna datetime naive en hora del negocio (configurable via system_settings)."""
+    return local_now(await get_business_tz(db))
+```
+
+**Es funcionalmente idéntico al `+6h` del POS:** guarda hora local en una columna
+que debería ser UTC. Y tiene el **mismo problema de fondo**: si el dueño cambia
+el selector a otra zona, los datos históricos quedan en una zona y los nuevos en
+otra, sin forma de distinguirlos.
+
+**Diferencia con el POS:** aquí el comentario **no miente** — dice explícitamente
+que guarda local. Es una decisión consciente, no un accidente. Pero sigue siendo
+una desviación del principio "Store UTC".
+
+### 6.7.3 El arreglo — `_now_mexico()` → `_utcnow()`
+
+```python
+# apps/api/modules/grandeza/service.py
+from core.timestamps import utcnow  # NUEVO helper (Fase 20.0)
+
+# ANTES
+# async def _now_mexico(db):
+#     return local_now(await get_business_tz(db))
+
+# DESPUES — se conserva el nombre como alias para no romper las 3 llamadas
+async def _now_mexico(db):
+    """DEPRECADO (Rev. 4): conservado como alias de utcnow() para no romper
+    las llamadas existentes. El nombre es historico; el valor es UTC."""
+    return utcnow()
+```
+
+> **Decisión de diseño:** se **conserva el nombre** `_now_mexico` como alias en
+> vez de renombrarlo, para que el diff sea mínimo y las 3 llamadas
+> ([`:344`](apps/api/modules/grandeza/service.py:344),
+> [`:484`](apps/api/modules/grandeza/service.py:484),
+> [`:692`](apps/api/modules/grandeza/service.py:692)) no cambien. El nombre
+> queda documentado como histórico.
+
+**Los 7 modelos** ([`grandeza/models.py`](apps/api/modules/grandeza/models.py:23))
+cambian `default=datetime.now` → `default=_utcnow`:
+
+| Línea | Columna |
+|---|---|
+| 23, 24 | `GrandezaProductConfig.created_at/updated_at` |
+| 45, 46 | `GrandezaClient.created_at/updated_at` |
+| 82 | `GrandezaRouteSlot.created_at` |
+| 116, 117 | `GrandezaJourney.created_at/updated_at` |
+| 179 | `GrandezaVisit.created_at` |
+| 221 | `GrandezaDriverLocation.recorded_at` |
+| 250 | `GrandezaExpense.created_at` |
+| 291, 292 | `GrandezaSettings.created_at/updated_at` |
+
+### 6.7.4 El acoplamiento oculto: `strftime` y `order_by` sobre `created_at`
+
+Igual que en `analytics`, hay **lecturas** de `created_at` que asumen local:
+
+| Línea | Patrón | Problema tras migrar |
+|---|---|---|
+| [`service.py:614`](apps/api/modules/grandeza/service.py:614) | `v.created_at.strftime("%Y-%m-%d")` | Devuelve el **día UTC**, no el local |
+| [`service.py:549,597,718,864`](apps/api/modules/grandeza/service.py:549) | `order_by(...created_at.desc())` | ✅ **Sin problema** (ordenar es invariante a la zona) |
+| [`service.py:399,674`](apps/api/modules/grandeza/service.py:399) | `order_by(...recorded_at/created_at)` | ✅ **Sin problema** |
+
+**Arreglo de `:614`:**
+
+```python
+# ANTES — dia UTC
+# "date": v.created_at.strftime("%Y-%m-%d") if v.created_at else None,
+
+# DESPUES — dia local del negocio
+"date": await _to_local_date_str(db, v.created_at),
+```
+
+con el helper nuevo en `core/timestamps.py`:
+
+```python
+async def to_local_date_str(db, dt_utc: datetime | None) -> str | None:
+    """Convierte un instante UTC naive a 'YYYY-MM-DD' en la zona del negocio."""
+    if dt_utc is None:
+        return None
+    tz = await get_business_tz(db)
+    return dt_utc.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%Y-%m-%d")
+```
+
+### 6.7.5 El frontend de `grandeza` — 2 anti-patrones a eliminar
+
+| Archivo | Línea | Anti-patrón | Arreglo |
+|---|---|---|---|
+| [`GrandezaDailyUI.jsx`](apps/pos/GrandezaDailyUI.jsx:700) | 700, 728 | `new Date(x + 'Z')` — parche manual | `formatLocalTime(x)` |
+| [`GrandezaDriverUI.jsx`](apps/pos/GrandezaDriverUI.jsx:997) | 997, 1121 | `timeZone: 'America/Mexico_City'` hardcodeado | `formatLocalTime(x)` |
+| [`GrandezaDriverUI.jsx`](apps/pos/GrandezaDriverUI.jsx:461) | 461, 462 | `new Date().toISOString()` (offline) | ✅ **Sin problema** (ya es UTC) |
+
+> **Nota:** `GrandezaDailyUI.jsx` y `GrandezaDriverUI.jsx` **NO son la UI
+> intocable** — la Restricción A aplica solo a
+> [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29). Ambos son
+> modificables.
+
+### 6.7.6 Lo que NO se toca de `grandeza`
+
+| Elemento | Razón |
+|---|---|
+| `journey_date`, `route_date` (`Column(Date)`) | Son **fechas de negocio**, no instantes |
+| `route_date.weekday()` ([`:294,810`](apps/api/modules/grandeza/service.py:294)) | Día de semana de una fecha de negocio = calendario local |
+| `day_map` / `days_map` ([`:293,809`](apps/api/modules/grandeza/service.py:293)) | Idem |
+| `order_by(...created_at)` | Ordenar es invariante a la zona |
+| `GrandezaDriverUI.jsx:461-462` | `toISOString()` ya es UTC correcto |
+
+### 6.7.7 Orden y commit atómico
+
+La Fase 20.2.d **puede ir en su propio commit** (no está acoplada a `pos` ni a
+`analytics`), pero **debe ir DESPUÉS de la Fase 20.3** (frontend listo) para que
+`GrandezaDailyUI`/`GrandezaDriverUI` ya usen `formatLocalTime` cuando los datos
+cambien de zona.
+
+**Commit de la Fase 20.2.d:**
+
+| Archivo | Cambio |
+|---|---|
+| [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) | `_now_mexico` → alias de `utcnow()` |
+| [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614) | `strftime` → `to_local_date_str()` |
+| [`grandeza/models.py`](apps/api/modules/grandeza/models.py:23) | 9 columnas → `default=_utcnow` |
+| [`GrandezaDailyUI.jsx:700,728`](apps/pos/GrandezaDailyUI.jsx:700) | `+ 'Z'` → `formatLocalTime()` |
+| [`GrandezaDriverUI.jsx:997,1121`](apps/pos/GrandezaDriverUI.jsx:997) | hardcode → `formatLocalTime()` |
+
+### 6.7.8 Tests de la Fase 20.2.d
+
+- Test nuevo: `GrandezaJourney.created_at` recién creado está a menos de 5s de `utcnow()`.
+- Test nuevo: `GrandezaVisit.completed_at` recién creado está a menos de 5s de `utcnow()`.
+- Test nuevo: `journey_date` **NO cambia** (sigue siendo la fecha local pasada).
+- Test nuevo: `to_local_date_str()` devuelve el día local correcto para un
+  instante UTC de las **23:30 local** (que en UTC es el día siguiente).
+- Test de regresión: `get_production_estimate()` sigue agrupando por día local.
+- **Regresión:** pytest **~80/80** + smoke Ruta Grandeza (crear jornada, verificar hora).
+
+**Verificación:** pytest **~80/80** + smoke Ruta Grandeza + smoke Driver App.
+
+---
+
 ## 7. FASE 20.3 — FRONTEND: CONTEXTO GLOBAL DE ZONA HORARIA
 
 **Objetivo:** que el frontend **sepa** la zona del negocio y formatee con ella.
@@ -916,6 +1096,7 @@ ambos `_utcnow` hacen exactamente lo mismo).
 | 20.2 | 🔴 **ALTO** | KDS muestra 6h de antigüedad | Migrar `pos` junto con 20.3 |
 | **20.2.b** | 🔴 **ALTO** | **Auditoría POS desfasada 6h** | **Commit atómico con 20.2 (ver 6.5.2)** |
 | **20.2.c** | 🔴 **ALTO** | **Reportes de ventas desfasados 6h** | **Commit atómico con 20.2 (ver 6.6.4)** |
+| **20.2.d** | 🟡 **Medio** | **Reparto con horas desfasadas 6h** | **Commit propio, DESPUÉS de 20.3 (ver 6.7.7)** |
 | 20.3 | 🟢 Bajo | Ninguno (solo añade contexto) | Degradación elegante |
 | 20.4 | 🔴 **ALTO** | Fechas mal mostradas | Oleadas + smoke por pantalla |
 | 20.5 | 🟡 Medio | Tests de warehouse/security | **DIFERIR** |
@@ -979,6 +1160,38 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
 4. **Test de frontera:** ticket de las **23:30 local** en el día local correcto.
 5. **Test de paridad:** `local_day_bounds_utc()` == rango del `+6h` generalizado del POS.
 
+### 10.5 El riesgo #5: `grandeza` y la trampa `Date` ≠ `DateTime` (Rev. 4)
+
+**El riesgo más sutil del plan**, porque **la columna se ve igual pero significa otra cosa**:
+
+> [`grandeza/models.py`](apps/api/modules/grandeza/models.py:95) mezcla dos tipos de
+> columna temporal en la misma tabla:
+> - `journey_date` / `route_date` son `Column(Date)` → **fecha de calendario de negocio**
+>   ("¿qué día corre la ruta?"). **Se quedan locales, siempre.**
+> - `dispatched_at`, `arrived_at`, `completed_at`, `recorded_at`, `created_at`,
+>   `updated_at` son `Column(DateTime)` → **instantes reales**. **Migran a UTC.**
+>
+> Si se migra `journey_date` a UTC, "14 de septiembre" se convierte en
+> "13 de septiembre 18:00" → **absurdo**. Si NO se migra `dispatched_at`, el reparto
+> queda desfasado 6 horas respecto al resto del ERP.
+
+**Mitigación obligatoria:**
+1. **Distinguir por tipo de columna, no por nombre** (Sección 6.7.1): `Date` = negocio
+   (local), `DateTime` = instante (UTC).
+2. **`_now_mexico()` se convierte en alias de `utcnow()`** (Sección 6.7.3): el nombre se
+   conserva para minimizar el diff, pero el valor pasa a ser UTC.
+3. **`strftime("%Y-%m-%d")` de [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614)
+   se sustituye por `to_local_date_str()`** (Sección 6.7.4): devuelve el día **local**,
+   no el día UTC.
+4. **NO tocar** `weekday()`, `day_map`, `route_date` ni los `order_by` (Sección 6.7.6):
+   el orden es invariante a la zona; el día de la semana de una fecha de negocio se
+   calcula en calendario local.
+5. **Frontend primero:** la Fase 20.2.d va **DESPUÉS** de la Fase 20.3, para que
+   [`GrandezaDailyUI.jsx`](apps/pos/GrandezaDailyUI.jsx:700) y
+   [`GrandezaDriverUI.jsx`](apps/pos/GrandezaDriverUI.jsx:997) ya formateen bien.
+6. **Test de frontera:** `journey_date` de un viaje creado a las **23:30 local** debe
+   seguir siendo el día local, no el día UTC.
+
 ---
 
 ## 11. ORDEN DE EJECUCIÓN
@@ -994,6 +1207,8 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
 20.2.b  Arreglar el +6h del POS IA (generalizar con ZoneInfo)  ← MISMO COMMIT que 20.2
 20.2.c  Arreglar el filtro de fechas de analytics (UTC vs local) ← MISMO COMMIT que 20.2
   ↓     pytest ~76/76 + smoke POS + smoke KDS + smoke Auditoría POS + smoke Estadísticas
+20.2.d  Migrar grandeza a UTC (Date local / DateTime UTC)  ← COMMIT PROPIO, tras 20.3
+  ↓     pytest ~80/80 + smoke Reparto Grandeza + smoke App Repartidor
 20.4    Migrar los 49 puntos de formateo (4 oleadas)
   ↓     vitest ~305/305 + build + smoke por pantalla
 20.5    Unificación y limpieza → DIFERIDA
@@ -1015,6 +1230,15 @@ correctamente **antes** de que los datos cambien, para que el KDS no muestre
 
 Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 6 horas entre commits.
+
+**⚠️ Regla del commit de la Fase 20.2.d (Rev. 4):** `grandeza` **NO** está acoplada a
+`pos` ni a `analytics`, así que va en su **propio commit**, pero **DESPUÉS de la Fase
+20.3** (frontend listo). Un solo commit que contenga:
+1. [`grandeza/models.py`](apps/api/modules/grandeza/models.py:95) → 9 columnas `DateTime` con `default=_utcnow`
+2. [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) → `_now_mexico()` alias de `utcnow()`
+3. [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614) → `to_local_date_str()`
+4. [`GrandezaDailyUI.jsx:700,728`](apps/pos/GrandezaDailyUI.jsx:700) → quitar el parche `+ 'Z'`
+5. [`GrandezaDriverUI.jsx:997,1121`](apps/pos/GrandezaDriverUI.jsx:997) → `formatLocal` en vez de `timeZone` hardcodeado
 
 ---
 
@@ -1044,7 +1268,7 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 
 ### Fase 20.2
 - [ ] `network`, `cash`, `orders`, `pos` migrados a `utcnow()`
-- [ ] `grandeza` **NO** tocado
+- [ ] `grandeza` migrado en la Fase 20.2.d (Rev. 4) — ver checklist propia
 - [ ] `pos` migrado **en el mismo commit** que la oleada 4 de 20.4
 - [ ] `docker exec rderico-api-dev python -m pytest -q` → **~70/70**
 - [ ] Smoke POS: crear ticket, verificar hora correcta
@@ -1079,6 +1303,23 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 - [ ] `docker exec rderico-api-dev python -m pytest -q` → **~76/76**
 - [ ] Smoke Estadísticas de Ventas: total del día == corte de caja
 
+### Fase 20.2.d — Migrar `grandeza` a UTC (Rev. 4)
+- [ ] `core/timestamps.py::to_local_date_str()` creado
+- [ ] [`grandeza/models.py`](apps/api/modules/grandeza/models.py:95) → 9 columnas `DateTime` con `default=_utcnow` (**NO** `journey_date`/`route_date`)
+- [ ] [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) → `_now_mexico()` alias de `utcnow()`
+- [ ] [`grandeza/service.py:344,484,692`](apps/api/modules/grandeza/service.py:344) → siguen llamando a `_now_mexico()` (ahora UTC)
+- [ ] [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614) → `to_local_date_str()` en vez de `strftime`
+- [ ] `journey_date` / `route_date` **intactos** (siguen siendo `Column(Date)` local)
+- [ ] `weekday()`, `day_map`, `order_by` **intactos**
+- [ ] [`GrandezaDailyUI.jsx:700,728`](apps/pos/GrandezaDailyUI.jsx:700) → parche `+ 'Z'` eliminado
+- [ ] [`GrandezaDriverUI.jsx:997,1121`](apps/pos/GrandezaDriverUI.jsx:997) → `timeZone` hardcodeado reemplazado por `formatLocal`
+- [ ] Test: `created_at` de un viaje nuevo < 5s de `utcnow()`
+- [ ] Test: `journey_date` de un viaje creado a las **23:30 local** sigue siendo el día local
+- [ ] Test: `to_local_date_str()` de un instante 23:30 local devuelve el día local
+- [ ] `docker exec rderico-api-dev python -m pytest -q` → **~80/80**
+- [ ] Smoke Reparto Grandeza: horas de despacho/llegada correctas
+- [ ] Smoke App Repartidor: horas correctas en el móvil
+
 ### Fase 20.4
 - [ ] Oleada 1 (analytics, inventory, network) migrada + smoke
 - [ ] Oleada 2 (production) migrada + smoke
@@ -1102,7 +1343,7 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 |---|---|---|
 | 1 | Reescribir datos históricos | Imposible distinguir UTC de local con certeza |
 | 2 | Tocar `RetailVisionPOS.jsx` | Restricción A (POS IA intocable) |
-| 3 | Migrar `grandeza` a UTC | Guarda local **a propósito** para fechas de negocio |
+| 3 | ~~Migrar `grandeza` a UTC~~ | **REV. 4: SÍ se migra** (Sección 6.7). Solo sus `Column(Date)` quedan locales |
 | 4 | Convertir montos (`$1,234`) | No son fechas |
 | 5 | Convertir `new Date()` sin argumento | Ya es la hora del dispositivo |
 | 6 | Zona horaria por usuario | Una sola sucursal → selector global es correcto |
@@ -1138,6 +1379,13 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
     al migrar el que "escribe". **Grep por la columna, no por el módulo.**
 12. **Un helper compartido elimina la clase de bug.** POS y Analytics usan el MISMO
     `local_day_bounds_utc()`: no pueden desincronizarse por construcción.
+13. **`Date` ≠ `DateTime`.** En `grandeza`, `journey_date` (día de negocio) y
+    `dispatched_at` (instante real) conviven en la misma tabla. Migrar ambos a UTC
+    rompe el calendario; no migrar ninguno desfasa el reparto. **Distinguir por tipo
+    de columna, no por nombre.**
+14. **"Excluir un módulo" es una decisión, no un olvido.** `grandeza` se había excluido
+    por comodidad; el usuario lo detectó. **Si un módulo tiene `DateTime`, entra al
+    esquema global.** La única excepción legítima son las `Column(Date)` de negocio.
 
 ---
 
@@ -1151,9 +1399,10 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 | 20.2 | ~12 edits | 🔴 Alta | 2 |
 | **20.2.b** | **~6 edits** | 🔴 **Alta** | **1** |
 | **20.2.c** | **~3 edits** | 🔴 **Alta** | **1** |
+| **20.2.d** | **~5 edits** | 🟡 **Media** | **1** |
 | 20.4 | ~22 edits | 🔴 Alta | 3 |
 | 20.5 | — | ⏸️ Diferida | 0 |
-| **Total** | **~53 archivos** | — | **~10 sesiones** |
+| **Total** | **~58 archivos** | — | **~11 sesiones** |
 
 **Comparación con V19:** V19 son ~15 archivos y ~3 sesiones. **V20 es 3× más
 grande.** Por eso son planes separados.
@@ -1165,7 +1414,7 @@ grande.** Por eso son planes separados.
 | Aspecto | V19 (Transversal) | V20 (Zona Horaria Global) |
 |---|---|---|
 | **Objetivo** | Conectar `VITE_API_URL` + unificar timestamps | Selector como fuente de verdad de TODA la UI |
-| **Alcance** | 15 archivos | ~44 archivos |
+| **Alcance** | 15 archivos | ~58 archivos |
 | **Dependencia** | Ninguna | **Requiere V19 Fase 19.4** |
 | **Bloqueante** | Sección 16 (selector) | Ninguno propio |
 | **Riesgo** | 🟡 Medio | 🔴 Alto |
@@ -1174,6 +1423,7 @@ grande.** Por eso son planes separados.
 
 La Fase 19.4 de V19 migra `network`, `cash`, `orders` a UTC (sin tocar `grandeza`).
 La Fase 20.2 de V20 **repite** esa migración para `pos` y añade el frontend.
+La Fase 20.2.d de V20 (Rev. 4) migra `grandeza`, que V19 dejó fuera.
 **No hay conflicto:** si V19 ya migró `network`/`cash`/`orders`, la Fase 20.2 solo
 hace `pos` y verifica los demás.
 
@@ -1184,7 +1434,9 @@ hace `pos` y verifica los demás.
 Este plan convierte al ERP en un sistema que sigue la **mejor práctica de la
 industria** ("Store UTC, Display Local") de forma **completa y verificable**:
 
-- **Backend:** todo en UTC, con `grandeza` como excepción documentada.
+- **Backend:** todo en UTC. **Rev. 4: sin excepciones** — `grandeza` también se
+  migra; solo sus `Column(Date)` (`journey_date`, `route_date`) permanecen como
+  fechas de calendario local, que es su naturaleza.
 - **API:** serializa en UTC con `iso_utc()`, expone la zona del negocio.
 - **Frontend:** un solo helper (`formatLocal`) y un solo contexto (`TimezoneProvider`).
 - **Selector:** deja de mentir — ahora **sí** controla todo el ERP.
