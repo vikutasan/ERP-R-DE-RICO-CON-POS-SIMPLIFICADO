@@ -212,19 +212,10 @@ async def get_audit_log(
         "events": events,
         "security_alerts": security_alerts[-20:],
     }
-def _iso_utc(dt):
-    """v12 (Fase 12.4): serializa un datetime naive (UTC) con sufijo Z explicito.
-
-    Las columnas `locked_at`/`opened_at` son `timestamp WITHOUT time zone` y la
-    API las serializaba sin sufijo, obligando al front a un parche fragil
-    (`endsWith('Z')`). Aqui normalizamos el contrato: siempre termina en `Z`.
-    """
-    if dt is None:
-        return None
-    iso = dt.isoformat()
-    if iso.endswith("Z") or "+" in iso:
-        return iso
-    return iso + "Z"
+# v18 (Fase 18.1): el helper se movio a core/serialization.py para que Heladeria
+# lo reutilice. Se conserva este alias para NO alterar el POS IA: el comportamiento
+# es IDENTICO (mismo cuerpo de funcion, ahora compartido).
+from core.serialization import iso_utc as _iso_utc
 
 
 @router.get("/terminals/status")

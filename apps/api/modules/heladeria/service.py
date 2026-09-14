@@ -18,6 +18,7 @@ from .schemas import (
 )
 from modules.catalog.models import Product, Category
 from modules.pos.models import Ticket, TicketItem
+from core.serialization import iso_utc
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -176,7 +177,7 @@ async def get_kds_orders(db: AsyncSession, station: str) -> list[KdsOrderRespons
             account_num=ticket.account_num,
             customer_group_name=ticket.customer_group_name,
             terminal_id=ticket.terminal_id,
-            created_at=ticket.created_at.isoformat() if ticket.created_at else "",
+            created_at=iso_utc(ticket.created_at) or "",
             paid_at=None,  # Se puede agregar si se trackea el momento del pago
             items=item_responses,
         ))
