@@ -541,7 +541,7 @@ export const ExperimentCenterUI = () => {
                                     <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
                                 </div>
                             }>
-                                <HeladeriaHubUI onBack={() => setActiveModule('overview')} />
+                                <HeladeriaHubUI onBack={() => setActiveModule('overview')} userPermissions={userPermissions} />
                             </React.Suspense>
                         )}
                     </div>

@@ -1,4 +1,5 @@
-import React, { useState, Suspense } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import { CONFIG } from '../pos/config';
 
 // ═══ LAZY IMPORTS — Aislamiento de secciones ═══
 const PosHeladeriaUI = React.lazy(() => import('./sections/PosHeladeriaUI').then(m => ({default: m.PosHeladeriaUI})));
@@ -53,7 +54,19 @@ const SectionLoader = () => (
  *
  * Estructura de navegación:
  *   Landing (3 gestores) → Sub-suite (2 herramientas cada una) → Herramienta real
+ *
+ * Branding editable:
+ *   El nombre y eslogan se cargan desde system_settings (clave `heladeria_branding`).
+ *   Solo los usuarios con permiso `editar_ui_heladeria` o `all=full` pueden editarlos.
  */
+
+// ═══ Branding defaults ═══
+const DEFAULT_BRANDING = {
+    nombre: 'Heladería\nR de Rico.',
+    eslogan: 'Haciendo tu vida más dulce.',
+};
+
+const BRANDING_KEY = 'heladeria_branding';
 
 // ═══ Definición de los 3 gestores y sus herramientas internas ═══
 const GESTORES = [
@@ -143,6 +156,157 @@ const renderSection = (id, onBack) => {
         case 'precios': return wrapped(DisplayPreciosUI, 'Display Precios');
         default: return null;
     }
+};
+
+// ═══ Helpers de permisos ═══
+const canEditBranding = (perms) => {
+    if (!perms) return false;
+    return perms.editar_ui_heladeria === 'full' || perms.all === 'full';
+};
+
+// ═══ Branding service (load/save desde system_settings) ═══
+async function loadBranding() {
+    try {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/settings/`, { cache: 'no-store' });
+        if (!res.ok) return { ...DEFAULT_BRANDING };
+        const settings = await res.json();
+        const list = Array.isArray(settings) ? settings : [];
+        const entry = list.find(s => s && s.key === BRANDING_KEY);
+        if (!entry || !entry.value) return { ...DEFAULT_BRANDING };
+        try {
+            const parsed = typeof entry.value === 'string' ? JSON.parse(entry.value) : entry.value;
+            return {
+                nombre: parsed.nombre || DEFAULT_BRANDING.nombre,
+                eslogan: parsed.eslogan || DEFAULT_BRANDING.eslogan,
+            };
+        } catch {
+            return { ...DEFAULT_BRANDING };
+        }
+    } catch {
+        return { ...DEFAULT_BRANDING };
+    }
+}
+
+async function saveBranding(branding) {
+    const value = JSON.stringify(branding);
+    const res = await fetch(`${CONFIG.API_BASE_URL}/settings/${BRANDING_KEY}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'No se pudo guardar el branding.');
+    }
+    return branding;
+}
+
+// ═══ Modal de edición de branding ═══
+const BrandingEditorModal = ({ branding, onSave, onClose }) => {
+    const [nombre, setNombre] = useState(branding.nombre);
+    const [eslogan, setEslogan] = useState(branding.eslogan);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
+
+    const handleSave = async () => {
+        if (!nombre.trim() || !eslogan.trim()) {
+            setError('Ambos campos son obligatorios.');
+            return;
+        }
+        setSaving(true);
+        setError(null);
+        try {
+            await saveBranding({ nombre: nombre.trim(), eslogan: eslogan.trim() });
+            onSave({ nombre: nombre.trim(), eslogan: eslogan.trim() });
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.5)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            fontFamily: "'Inter', sans-serif",
+        }} onClick={onClose}>
+            <div style={{
+                background: '#ffffff', borderRadius: '12px',
+                padding: '32px', width: '100%', maxWidth: '480px',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            }} onClick={e => e.stopPropagation()}>
+                <h2 style={{
+                    margin: '0 0 24px', fontSize: '18px', fontWeight: '900',
+                    color: '#0f0f0f', letterSpacing: '-0.5px',
+                }}>
+                    ✏️ Editar Encabezado
+                </h2>
+
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                    Nombre de la heladería
+                </label>
+                <textarea
+                    value={nombre}
+                    onChange={e => setNombre(e.target.value)}
+                    rows={3}
+                    style={{
+                        width: '100%', padding: '12px', border: '1px solid #d1d5db',
+                        borderRadius: '8px', fontSize: '14px', fontWeight: '700',
+                        color: '#0f0f0f', resize: 'vertical', fontFamily: "'Inter', sans-serif",
+                        boxSizing: 'border-box', outline: 'none',
+                    }}
+                    onFocus={e => e.target.style.borderColor = '#0f0f0f'}
+                    onBlur={e => e.target.style.borderColor = '#d1d5db'}
+                />
+                <p style={{ margin: '4px 0 16px', fontSize: '11px', color: '#9ca3af' }}>
+                    Usa un salto de línea para separar en dos renglones.
+                </p>
+
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                    Eslogan
+                </label>
+                <input
+                    type="text"
+                    value={eslogan}
+                    onChange={e => setEslogan(e.target.value)}
+                    style={{
+                        width: '100%', padding: '12px', border: '1px solid #d1d5db',
+                        borderRadius: '8px', fontSize: '14px', fontWeight: '500',
+                        color: '#0f0f0f', fontFamily: "'Inter', sans-serif",
+                        boxSizing: 'border-box', outline: 'none',
+                    }}
+                    onFocus={e => e.target.style.borderColor = '#0f0f0f'}
+                    onBlur={e => e.target.style.borderColor = '#d1d5db'}
+                />
+
+                {error && (
+                    <p style={{ margin: '12px 0 0', fontSize: '12px', color: '#ef4444', fontWeight: '600' }}>
+                        ⚠️ {error}
+                    </p>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '24px', justifyContent: 'flex-end' }}>
+                    <button onClick={onClose} style={{
+                        background: 'none', border: '1px solid #d1d5db', color: '#6b7280',
+                        padding: '10px 20px', borderRadius: '8px', cursor: 'pointer',
+                        fontSize: '13px', fontWeight: '700',
+                    }}>
+                        Cancelar
+                    </button>
+                    <button onClick={handleSave} disabled={saving} style={{
+                        background: '#0f0f0f', color: '#ffffff', border: 'none',
+                        padding: '10px 24px', borderRadius: '8px', cursor: saving ? 'wait' : 'pointer',
+                        fontSize: '13px', fontWeight: '900', letterSpacing: '0.5px',
+                        opacity: saving ? 0.6 : 1,
+                    }}>
+                        {saving ? 'Guardando...' : 'Guardar'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // ═══ Sub-Suite — Vista intermedia dentro de un gestor ═══
@@ -311,10 +475,23 @@ const GestorSuiteUI = ({ gestor, onBack, onSelectTool }) => {
 };
 
 // ═══ Landing principal ═══
-export const HeladeriaHubUI = ({ onBack }) => {
+export const HeladeriaHubUI = ({ onBack, userPermissions }) => {
     // Navegación de dos niveles: gestor activo → herramienta activa
     const [activeGestor, setActiveGestor] = useState(null);
     const [activeTool, setActiveTool] = useState(null);
+
+    // Branding editable
+    const [branding, setBranding] = useState(DEFAULT_BRANDING);
+    const [showBrandingEditor, setShowBrandingEditor] = useState(false);
+
+    // Cargar branding al montar
+    useEffect(() => {
+        let alive = true;
+        loadBranding().then(b => { if (alive) setBranding(b); });
+        return () => { alive = false; };
+    }, []);
+
+    const hasEditPerm = canEditBranding(userPermissions);
 
     // Nivel 3: Herramienta real (POS, KDS, etc.)
     if (activeTool) {
@@ -332,6 +509,17 @@ export const HeladeriaHubUI = ({ onBack }) => {
             />
         );
     }
+
+    // Renderizar el nombre con saltos de línea como <br />
+    const renderNombre = () => {
+        const parts = branding.nombre.split('\n');
+        return parts.map((part, i) => (
+            <React.Fragment key={i}>
+                {i > 0 && <br />}
+                {part}
+            </React.Fragment>
+        ));
+    };
 
     // Nivel 1: Landing con 3 gestores
     return (
@@ -351,7 +539,25 @@ export const HeladeriaHubUI = ({ onBack }) => {
                 borderBottom: '1px solid #0f0f0f',
                 padding: '12px 40px',
                 display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+                gap: '12px',
             }}>
+                {/* Botón discreto de edición — solo visible con permiso */}
+                {hasEditPerm && (
+                    <button
+                        onClick={() => setShowBrandingEditor(true)}
+                        title="Editar encabezado"
+                        style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            fontSize: '14px', color: '#d1d5db', padding: '2px 6px',
+                            borderRadius: '4px', transition: 'color 0.15s',
+                            lineHeight: 1,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.color = '#0f0f0f'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#d1d5db'}
+                    >
+                        ✏️
+                    </button>
+                )}
                 <span style={{
                     fontSize: '11px', fontWeight: '800', color: '#0f0f0f',
                     textTransform: 'uppercase', letterSpacing: '3px',
@@ -361,7 +567,7 @@ export const HeladeriaHubUI = ({ onBack }) => {
                 </span>
             </div>
 
-            {/* Hero headline */}
+            {/* Hero headline — usa branding dinámico */}
             <div style={{
                 padding: '48px 40px 32px',
                 borderBottom: '1px solid #0f0f0f',
@@ -374,13 +580,13 @@ export const HeladeriaHubUI = ({ onBack }) => {
                     lineHeight: '1.0',
                     letterSpacing: '-2px',
                 }}>
-                    Heladería<br />R de Rico.
+                    {renderNombre()}
                 </h1>
                 <p style={{
                     margin: '16px 0 0',
                     fontSize: '28px', color: '#6b7280', fontWeight: '500',
                 }}>
-                    Haciendo tu vida más dulce.
+                    {branding.eslogan}
                 </p>
             </div>
 
@@ -415,6 +621,18 @@ export const HeladeriaHubUI = ({ onBack }) => {
                     Módulo Heladería
                 </span>
             </div>
+
+            {/* Modal de edición de branding */}
+            {showBrandingEditor && (
+                <BrandingEditorModal
+                    branding={branding}
+                    onSave={(newBranding) => {
+                        setBranding(newBranding);
+                        setShowBrandingEditor(false);
+                    }}
+                    onClose={() => setShowBrandingEditor(false)}
+                />
+            )}
         </div>
     );
 };

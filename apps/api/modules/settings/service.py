@@ -150,6 +150,15 @@ async def seed_settings(db: AsyncSession):
             "description": "Umbrales de urgencia visual del KDS de Heladería (V15). tzOffsetHours se deriva de business_timezone (V20).",
             "category": "heladeria",
             "input_type": "json"
+        },
+        # Branding editable del módulo Heladería (nombre + eslogan).
+        # Se lee desde el Hub y se edita con el permiso `editar_ui_heladeria`.
+        {
+            "key": "heladeria_branding",
+            "value": '{"nombre":"Heladería\\nR de Rico.","eslogan":"Haciendo tu vida más dulce."}',
+            "description": "Nombre y eslogan editables del módulo Heladería.",
+            "category": "heladeria",
+            "input_type": "json"
         }
     ]
     
