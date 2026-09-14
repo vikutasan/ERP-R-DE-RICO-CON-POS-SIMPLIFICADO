@@ -189,11 +189,20 @@ async function loadBranding() {
 
 async function saveBranding(branding) {
     const value = JSON.stringify(branding);
-    const res = await fetch(`${CONFIG.API_BASE_URL}/settings/${BRANDING_KEY}`, {
+    let res = await fetch(`${CONFIG.API_BASE_URL}/settings/${BRANDING_KEY}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value }),
     });
+    // Si la clave no existe aún (404), ejecutar seed y reintentar
+    if (res.status === 404) {
+        await fetch(`${CONFIG.API_BASE_URL}/settings/seed`, { method: 'POST' });
+        res = await fetch(`${CONFIG.API_BASE_URL}/settings/${BRANDING_KEY}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value }),
+        });
+    }
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'No se pudo guardar el branding.');
