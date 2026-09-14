@@ -4,7 +4,7 @@ import {
   Lock, Eye, EyeOff, Settings, Plus, Trash2, Edit3, Copy,
   ChevronUp, ChevronDown, ArrowLeft, TrendingUp, TrendingDown,
   List, Table, Zap, Target, DollarSign, Package, Percent, X, Check,
-  LayoutDashboard, Sparkles, Calendar
+  LayoutDashboard, Sparkles, Calendar, AlertTriangle, RefreshCw
 } from 'lucide-react';
 import { CONFIG } from '../pos/config';
 import ProductStatsView from './ProductStatsView';
@@ -713,6 +713,8 @@ export const EstadisticasVentasUI = ({ userPermissions = {} }) => {
   const [timeSeriesMetrics, setTimeSeriesMetrics] = useState(null);
   const [period, setPeriod] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
+  const [retryKey, setRetryKey] = useState(0);
   const [editingSection, setEditingSection] = useState(null);
   const [showEditor, setShowEditor] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null);
@@ -723,6 +725,7 @@ export const EstadisticasVentasUI = ({ userPermissions = {} }) => {
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
+      setFetchError(null);
       try {
         let url = `${API_BASE}/analytics/rankings?`;
         if (customDateRange) {
@@ -734,18 +737,34 @@ export const EstadisticasVentasUI = ({ userPermissions = {} }) => {
         }
         
         const resp = await fetch(url);
-        if (resp.ok) { 
-          const d = await resp.json(); 
-          setAllData(d.all || []); 
+        if (resp.ok) {
+          const d = await resp.json();
+          setAllData(d.all || []);
           setTicketMetrics(d.ticket_metrics || null);
           setTimeSeriesMetrics(d.time_series_metrics || null);
           setPeriod(d.period || null);
+        } else {
+          // v20 (Fase 20.2.b): antes este fallo se tragaba en silencio (solo
+          // console.error), lo que hizo pasar desapercibido el GroupingError 500.
+          // Ahora se expone un estado de error visible al usuario.
+          let detail = '';
+          try { const errBody = await resp.json(); detail = errBody?.detail || ''; } catch(_) {}
+          setFetchError({
+            status: resp.status,
+            message: detail || `El servidor respondió ${resp.status}. No se pudieron cargar las estadísticas.`
+          });
         }
-      } catch(e) { console.error(e); }
+      } catch(e) {
+        console.error(e);
+        setFetchError({
+          status: 0,
+          message: 'No se pudo conectar con el servidor. Verifica tu conexión e inténtalo de nuevo.'
+        });
+      }
       finally { setIsLoading(false); }
     };
     fetchData();
-  }, [sections.map(s=>s.temporality).join(','), customDateRange]);
+  }, [sections.map(s=>s.temporality).join(','), customDateRange, retryKey]);
 
   const addSection = (config) => {
     const newSec = { ...config, id: config.id || generateId(), order: sections.length };
@@ -811,7 +830,24 @@ export const EstadisticasVentasUI = ({ userPermissions = {} }) => {
       </header>
 
       <div className="flex-1 overflow-auto p-8 custom-scrollbar-light">
-        {isLoading && dashboardTab !== 'product_stats' ? (
+        {fetchError ? (
+          <div className="flex flex-col items-center justify-center h-full gap-6">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-red-100 to-orange-100 flex items-center justify-center">
+              <AlertTriangle size={40} className="text-red-500"/>
+            </div>
+            <div className="text-center max-w-lg">
+              <h2 className="text-2xl font-bold text-slate-700 mb-2">No se pudieron cargar las estadísticas</h2>
+              <p className="text-slate-500 font-medium">{fetchError.message}</p>
+              {fetchError.status ? (
+                <p className="text-xs text-slate-400 font-mono mt-2">Código HTTP: {fetchError.status}</p>
+              ) : null}
+            </div>
+            <button onClick={() => setRetryKey(k => k + 1)}
+              className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 flex items-center gap-2">
+              <RefreshCw size={18}/> Reintentar
+            </button>
+          </div>
+        ) : isLoading && dashboardTab !== 'product_stats' ? (
           <div className="flex items-center justify-center h-full"><Activity className="animate-spin text-blue-500" size={40}/></div>
         ) : dashboardTab === 'product_stats' ? (
           <ProductStatsView period={period} showMonetary={showMonetary} onEditPeriod={() => setShowDateModal(true)} />
