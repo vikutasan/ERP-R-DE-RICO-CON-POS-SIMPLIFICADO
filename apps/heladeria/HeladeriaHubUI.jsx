@@ -15,16 +15,21 @@ class SectionErrorBoundary extends React.Component {
     static getDerivedStateFromError(error) { return { hasError: true, error }; }
     render() {
         if (this.state.hasError) return (
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',
-                justifyContent:'center',height:'100%',gap:'16px',color:'#fff',padding:'40px'}}>
-                <span style={{fontSize:'48px'}}>⚠️</span>
-                <h3 style={{margin:0}}>Error en sección {this.props.name}</h3>
-                <pre style={{color:'#ef4444',fontSize:'11px',maxWidth:'500px',overflow:'auto'}}>
+            <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', height: '100%', gap: '16px', padding: '40px',
+                background: '#ffffff', fontFamily: "'Inter', sans-serif",
+            }}>
+                <span style={{ fontSize: '48px' }}>⚠️</span>
+                <h3 style={{ margin: 0, color: '#0f0f0f', fontWeight: '900' }}>Error en {this.props.name}</h3>
+                <pre style={{ color: '#ef4444', fontSize: '11px', maxWidth: '500px', overflow: 'auto' }}>
                     {this.state.error?.toString()}
                 </pre>
-                <button onClick={this.props.onBack}
-                    style={{background:'#f97316',color:'#000',border:'none',padding:'12px 24px',
-                        borderRadius:'8px',cursor:'pointer',fontWeight:'bold'}}>
+                <button onClick={this.props.onBack} style={{
+                    background: '#0f0f0f', color: '#fff', border: 'none',
+                    padding: '12px 24px', borderRadius: '8px', cursor: 'pointer',
+                    fontWeight: '900', fontSize: '13px', letterSpacing: '1px',
+                }}>
                     ← Volver al Hub
                 </button>
             </div>
@@ -34,16 +39,18 @@ class SectionErrorBoundary extends React.Component {
 }
 
 const SectionLoader = () => (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'#f9a8d4',fontSize:'16px',gap:'10px'}}>
-        <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>🍦</span> Cargando...
-        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+    <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        height: '100%', color: '#0f0f0f', fontSize: '14px', gap: '12px',
+        fontFamily: "'Inter', sans-serif", fontWeight: '700', background: '#ffffff',
+    }}>
+        <span>🍦</span> Cargando...
     </div>
 );
 
 /**
  * HeladeriaHubUI — Landing Page del Módulo Heladería
- * Hub de acceso a todas las secciones de la heladería R de Rico.
- * Estética de heladería de alta gama (Häagen-Dazs / Amorino).
+ * Estética editorial B&W — blanco, tipografía ultra-bold, divisores lineales.
  */
 
 const SECCIONES = [
@@ -52,54 +59,42 @@ const SECCIONES = [
         nombre: 'POS Heladería',
         descripcion: 'Punto de venta rápido para el personal de mostrador',
         icono: '⚡',
-        gradiente: 'linear-gradient(135deg, #f43f5e, #fb7185)',
-        glowColor: 'rgba(244, 63, 94, 0.3)',
-        borderColor: 'rgba(251, 113, 133, 0.3)',
+        num: '01',
     },
     {
         id: 'tienda',
         nombre: 'Tienda Interactiva',
         descripcion: 'Experiencia táctil para clientes en mostrador',
         icono: '🍦',
-        gradiente: 'linear-gradient(135deg, #ec4899, #f472b6)',
-        glowColor: 'rgba(236, 72, 153, 0.3)',
-        borderColor: 'rgba(244, 114, 182, 0.3)',
+        num: '02',
     },
     {
         id: 'kds_helados',
-        nombre: 'KDS Estación de Helados',
+        nombre: 'KDS Estación Helados',
         descripcion: 'Pantalla de preparación para helados artesanales',
         icono: '📋',
-        gradiente: 'linear-gradient(135deg, #14b8a6, #5eead4)',
-        glowColor: 'rgba(94, 234, 212, 0.3)',
-        borderColor: 'rgba(94, 234, 212, 0.3)',
+        num: '03',
     },
     {
         id: 'kds_malteadas',
-        nombre: 'KDS Malteadas y Aguas Frescas',
+        nombre: 'KDS Malteadas y Aguas',
         descripcion: 'Pantalla de preparación para bebidas y malteadas',
         icono: '🥤',
-        gradiente: 'linear-gradient(135deg, #8b5cf6, #c4b5fd)',
-        glowColor: 'rgba(196, 181, 253, 0.3)',
-        borderColor: 'rgba(196, 181, 253, 0.3)',
+        num: '04',
     },
     {
         id: 'totem',
-        nombre: 'Display Tótem Sugestivo',
-        descripcion: 'Contenido visual para atraer clientes',
+        nombre: 'Display Tótem',
+        descripcion: 'Contenido visual sugestivo para atraer clientes',
         icono: '📺',
-        gradiente: 'linear-gradient(135deg, #f59e0b, #fbbf24)',
-        glowColor: 'rgba(251, 191, 36, 0.3)',
-        borderColor: 'rgba(251, 191, 36, 0.3)',
+        num: '05',
     },
     {
         id: 'precios',
-        nombre: 'Display Pantalla de Precios',
+        nombre: 'Display de Precios',
         descripcion: 'Menú digital con precios en tiempo real',
         icono: '💰',
-        gradiente: 'linear-gradient(135deg, #0ea5e9, #38bdf8)',
-        glowColor: 'rgba(56, 189, 248, 0.3)',
-        borderColor: 'rgba(56, 189, 248, 0.3)',
+        num: '06',
     },
 ];
 
@@ -131,137 +126,105 @@ export const HeladeriaHubUI = ({ onBack }) => {
     return (
         <div style={{
             height: '100%',
-            background: 'linear-gradient(160deg, #0a0a0a 0%, #120818 30%, #0d0a1a 60%, #0a0a0a 100%)',
+            background: '#ffffff',
             display: 'flex',
             flexDirection: 'column',
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: "'Inter', -apple-system, sans-serif",
             overflow: 'auto',
         }}>
             {/* Google Fonts */}
-            <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
-            {/* Header */}
+            {/* Top strip */}
             <div style={{
-                padding: '30px 40px 20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                borderBottom: '1px solid #0f0f0f',
+                padding: '12px 40px',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                    <button
-                        onClick={onBack}
-                        style={{
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            color: '#9ca3af',
-                            padding: '10px 20px',
-                            borderRadius: '12px',
-                            cursor: 'pointer',
-                            fontWeight: '700',
-                            fontSize: '13px',
-                            transition: 'all 0.3s ease',
-                        }}
-                        onMouseEnter={e => { e.target.style.background = 'rgba(255,255,255,0.1)'; e.target.style.color = '#fff'; }}
-                        onMouseLeave={e => { e.target.style.background = 'rgba(255,255,255,0.05)'; e.target.style.color = '#9ca3af'; }}
-                    >
-                        ← Dashboard
-                    </button>
-                    <div>
-                        <h1 style={{
-                            margin: 0,
-                            fontFamily: "'Playfair Display', serif",
-                            fontSize: '2.2rem',
-                            fontWeight: '800',
-                            background: 'linear-gradient(135deg, #f9a8d4, #c084fc, #93c5fd)',
-                            WebkitBackgroundClip: 'text',
-                            WebkitTextFillColor: 'transparent',
-                            letterSpacing: '-0.5px',
-                        }}>
-                            Heladería R de Rico
-                        </h1>
-                        <p style={{
-                            margin: '4px 0 0',
-                            color: '#6b7280',
-                            fontSize: '13px',
-                            fontWeight: '500',
-                            letterSpacing: '3px',
-                            textTransform: 'uppercase',
-                        }}>
-                            Centro de Control
-                        </p>
-                    </div>
-                </div>
-                <div style={{
-                    fontSize: '48px',
-                    filter: 'drop-shadow(0 0 20px rgba(244, 114, 182, 0.4))',
-                    animation: 'gentlePulse 4s ease-in-out infinite',
+                <button
+                    onClick={onBack}
+                    style={{
+                        background: 'none', border: '1px solid #d1d5db',
+                        color: '#6b7280', padding: '6px 16px', borderRadius: '100px',
+                        cursor: 'pointer', fontWeight: '700', fontSize: '12px',
+                        letterSpacing: '0.5px',
+                    }}
+                >
+                    ← Dashboard
+                </button>
+                <span style={{
+                    fontSize: '11px', fontWeight: '800', color: '#0f0f0f',
+                    textTransform: 'uppercase', letterSpacing: '3px',
+                    textDecoration: 'underline', textUnderlineOffset: '4px',
                 }}>
-                    🍨
-                </div>
+                    Heladería R de Rico
+                </span>
             </div>
 
-            {/* Divider */}
+            {/* Hero headline */}
             <div style={{
-                margin: '0 40px',
-                height: '1px',
-                background: 'linear-gradient(90deg, transparent, rgba(244, 114, 182, 0.2), rgba(196, 181, 253, 0.2), transparent)',
-            }} />
+                padding: '48px 40px 32px',
+                borderBottom: '1px solid #0f0f0f',
+            }}>
+                <h1 style={{
+                    margin: 0,
+                    fontSize: 'clamp(3rem, 6vw, 5.5rem)',
+                    fontWeight: '900',
+                    color: '#0f0f0f',
+                    lineHeight: '1.0',
+                    letterSpacing: '-2px',
+                }}>
+                    Let's make<br />life sweeter.
+                </h1>
+                <p style={{
+                    margin: '16px 0 0',
+                    fontSize: '14px', color: '#6b7280', fontWeight: '500',
+                }}>
+                    Centro de control — selecciona una sección para comenzar
+                </p>
+            </div>
 
-            {/* Cards Grid */}
+            {/* Sections grid */}
             <div style={{
                 flex: 1,
-                padding: '30px 40px 40px',
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                gap: '24px',
-                alignContent: 'start',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                borderTop: 'none',
             }}>
-                {SECCIONES.map((seccion) => (
+                {SECCIONES.map((sec, idx) => (
                     <SeccionCard
-                        key={seccion.id}
-                        seccion={seccion}
-                        onClick={() => setActiveSection(seccion.id)}
+                        key={sec.id}
+                        seccion={sec}
+                        idx={idx}
+                        total={SECCIONES.length}
+                        onClick={() => setActiveSection(sec.id)}
                     />
                 ))}
             </div>
 
             {/* Footer */}
             <div style={{
-                padding: '16px 40px',
-                textAlign: 'center',
-                borderTop: '1px solid rgba(255,255,255,0.03)',
+                borderTop: '1px solid #e5e7eb',
+                padding: '14px 40px',
+                display: 'flex', justifyContent: 'space-between',
             }}>
-                <p style={{
-                    margin: 0,
-                    color: '#374151',
-                    fontSize: '11px',
-                    fontWeight: '500',
-                    letterSpacing: '2px',
-                    textTransform: 'uppercase',
-                }}>
-                    Heladería R de Rico — Toluca, México
-                </p>
+                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '500' }}>
+                    R de Rico — Toluca, México
+                </span>
+                <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '500' }}>
+                    Módulo Heladería
+                </span>
             </div>
-
-            <style>{`
-                @keyframes gentlePulse {
-                    0%, 100% { transform: scale(1); opacity: 1; }
-                    50% { transform: scale(1.08); opacity: 0.9; }
-                }
-                @keyframes cardEntry {
-                    from { opacity: 0; transform: translateY(20px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
         </div>
     );
 };
 
 /**
- * SeccionCard — Tarjeta premium para cada sección de la heladería
+ * SeccionCard — Tarjeta editorial para cada sección
  */
-const SeccionCard = ({ seccion, onClick }) => {
+const SeccionCard = ({ seccion, idx, total, onClick }) => {
     const [isHovered, setIsHovered] = useState(false);
+    const isLastRow = idx >= total - (total % 3 || 3);
 
     return (
         <button
@@ -269,79 +232,67 @@ const SeccionCard = ({ seccion, onClick }) => {
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
             style={{
-                background: isHovered
-                    ? 'rgba(255, 255, 255, 0.06)'
-                    : 'rgba(255, 255, 255, 0.02)',
-                border: `1px solid ${isHovered ? seccion.borderColor : 'rgba(255,255,255,0.06)'}`,
-                borderRadius: '20px',
+                background: isHovered ? '#0f0f0f' : '#ffffff',
+                border: 'none',
+                borderRight: '1px solid #e5e7eb',
+                borderBottom: '1px solid #e5e7eb',
                 padding: '32px 28px',
                 cursor: 'pointer',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'flex-start',
-                gap: '16px',
-                transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                transform: isHovered ? 'translateY(-4px) scale(1.02)' : 'translateY(0) scale(1)',
-                boxShadow: isHovered
-                    ? `0 20px 40px -12px ${seccion.glowColor}, 0 0 0 1px ${seccion.borderColor}`
-                    : '0 4px 20px -4px rgba(0,0,0,0.3)',
-                animation: 'cardEntry 0.6s ease-out both',
-                backdropFilter: 'blur(12px)',
+                gap: '12px',
+                transition: 'background 0.15s ease',
                 textAlign: 'left',
                 outline: 'none',
             }}
         >
-            {/* Icono */}
-            <div style={{
-                fontSize: '40px',
-                width: '72px',
-                height: '72px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '18px',
-                background: isHovered
-                    ? `linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))`
-                    : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${isHovered ? seccion.borderColor : 'rgba(255,255,255,0.05)'}`,
-                transition: 'all 0.4s ease',
-                transform: isHovered ? 'rotate(-3deg) scale(1.1)' : 'rotate(0) scale(1)',
+            {/* Number + icon row */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'flex-start' }}>
+                <span style={{
+                    fontSize: '11px', fontWeight: '800', color: isHovered ? '#6b7280' : '#d1d5db',
+                    letterSpacing: '1px', transition: 'color 0.15s',
+                }}>
+                    {seccion.num}
+                </span>
+                <span style={{ fontSize: '28px', lineHeight: 1 }}>{seccion.icono}</span>
+            </div>
+
+            {/* Name */}
+            <h3 style={{
+                margin: 0,
+                fontSize: '1.1rem',
+                fontWeight: '900',
+                color: isHovered ? '#ffffff' : '#0f0f0f',
+                lineHeight: '1.2',
+                letterSpacing: '-0.3px',
+                transition: 'color 0.15s',
             }}>
-                {seccion.icono}
-            </div>
+                {seccion.nombre}
+            </h3>
 
-            {/* Texto */}
-            <div>
-                <h3 style={{
-                    margin: '0 0 6px',
-                    fontFamily: "'Playfair Display', serif",
-                    fontSize: '1.25rem',
-                    fontWeight: '700',
-                    color: '#f9fafb',
-                    transition: 'all 0.3s ease',
-                }}>
-                    {seccion.nombre}
-                </h3>
-                <p style={{
-                    margin: 0,
-                    color: '#6b7280',
-                    fontSize: '13px',
-                    lineHeight: '1.5',
-                    fontWeight: '400',
-                }}>
-                    {seccion.descripcion}
-                </p>
-            </div>
+            {/* Description */}
+            <p style={{
+                margin: 0,
+                color: isHovered ? '#9ca3af' : '#6b7280',
+                fontSize: '12px',
+                lineHeight: '1.5',
+                fontWeight: '400',
+                transition: 'color 0.15s',
+            }}>
+                {seccion.descripcion}
+            </p>
 
-            {/* Accent line */}
-            <div style={{
-                width: isHovered ? '60px' : '30px',
-                height: '3px',
-                borderRadius: '3px',
-                background: seccion.gradiente,
-                transition: 'all 0.4s ease',
-                opacity: isHovered ? 1 : 0.4,
-            }} />
+            {/* Arrow */}
+            <span style={{
+                fontSize: '18px',
+                color: isHovered ? '#ffffff' : '#d1d5db',
+                transition: 'color 0.15s, transform 0.15s',
+                transform: isHovered ? 'translateX(4px)' : 'translateX(0)',
+                display: 'inline-block',
+            }}>
+                →
+            </span>
         </button>
     );
 };

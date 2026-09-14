@@ -1,7 +1,6 @@
 /**
  * FlavorAvailabilityToggle.jsx — Botón AGOTAR SABOR.
- * Toggle instantáneo con feedback visual.
- * Ubicado en la UI del POS Heladería (cajeros).
+ * Estética editorial B&W: borde negro, inversión al agotar.
  */
 import React, { useState } from 'react';
 import { heladeriaService } from '../services/heladeriaService';
@@ -30,28 +29,26 @@ export function FlavorAvailabilityToggle({ configId, name, isAvailable, onToggle
             style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                background: available
-                    ? 'rgba(239,68,68,0.1)'
-                    : 'rgba(34,197,94,0.1)',
-                border: `1px solid ${available ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
-                borderRadius: '10px',
-                padding: '8px 14px',
-                color: available ? '#ef4444' : '#22c55e',
+                gap: '6px',
+                background: available ? '#0f0f0f' : '#ffffff',
+                border: '1px solid #0f0f0f',
+                borderRadius: '100px',
+                padding: '6px 14px',
+                color: available ? '#ffffff' : '#0f0f0f',
                 fontSize: '11px',
                 fontWeight: '800',
                 textTransform: 'uppercase',
                 cursor: toggling ? 'wait' : 'pointer',
                 opacity: toggling ? 0.6 : 1,
-                transition: 'all 0.2s ease',
+                transition: 'all 0.15s ease',
                 letterSpacing: '0.5px',
             }}
         >
             {toggling ? '⏳' : available ? '⛔' : '✅'}
-            {toggling 
-                ? 'Procesando...' 
-                : available 
-                    ? `Agotar ${name}` 
+            {toggling
+                ? 'Procesando...'
+                : available
+                    ? `Agotar ${name}`
                     : `Habilitar ${name}`
             }
         </button>

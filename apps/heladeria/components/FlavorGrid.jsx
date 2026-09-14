@@ -1,43 +1,9 @@
 /**
- * FlavorGrid.jsx — Grid de sabores con colores representativos.
- * Sabores agotados aparecen en gris con badge rojo.
- * Estética Häagen-Dazs premium dark mode.
+ * FlavorGrid.jsx — Grid de sabores estilo editorial B&W.
+ * Inspirado en menús artesanales premium: fondo blanco, divisores lineales,
+ * badge de precio en píldora oscura, inversión total al seleccionar.
  */
 import React from 'react';
-
-// Mapa de colores por nombre de sabor (fallback a rosa)
-const SABOR_COLORS = {
-    'chocolate': '#5C3D2E',
-    'vainilla': '#F3E5AB',
-    'fresa': '#E8474C',
-    'mango': '#FFB347',
-    'cookies': '#C4A882',
-    'nuez': '#8B6914',
-    'pistache': '#93C572',
-    'cafe': '#6F4E37',
-    'oreo': '#2C2C2C',
-    'chicle': '#FF69B4',
-    'limon': '#FFF44F',
-    'coco': '#FFFDD0',
-    'mora': '#4B0082',
-    'guanabana': '#C8E6C9',
-    'queso': '#FFD700',
-};
-
-function getColorForFlavor(name) {
-    const lower = (name || '').toLowerCase();
-    for (const [key, color] of Object.entries(SABOR_COLORS)) {
-        if (lower.includes(key)) return color;
-    }
-    return '#f9a8d4'; // Rosa default
-}
-
-function isLightColor(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return (r * 299 + g * 587 + b * 114) / 1000 > 128;
-}
 
 export function FlavorGrid({ sabores, onSelect, selectedBolas = [], maxBolas = 3 }) {
     const isFull = selectedBolas.length >= maxBolas;
@@ -45,15 +11,13 @@ export function FlavorGrid({ sabores, onSelect, selectedBolas = [], maxBolas = 3
     return (
         <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-            gap: '10px',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
         }}>
-            {sabores.map((sabor) => {
-                const color = getColorForFlavor(sabor.name);
-                const isLight = isLightColor(color);
+            {sabores.map((sabor, idx) => {
                 const isDisabled = !sabor.is_available;
                 const isSelected = selectedBolas.some(b => b.config_id === sabor.config_id);
                 const cantSelect = isFull && !isSelected;
+                const col = idx % Math.ceil(Math.sqrt(sabores.length));
 
                 return (
                     <button
@@ -62,69 +26,88 @@ export function FlavorGrid({ sabores, onSelect, selectedBolas = [], maxBolas = 3
                         disabled={isDisabled || cantSelect}
                         style={{
                             position: 'relative',
-                            background: isDisabled
-                                ? 'rgba(255,255,255,0.05)'
-                                : `linear-gradient(135deg, ${color}, ${color}dd)`,
-                            border: isSelected
-                                ? '3px solid #f43f5e'
-                                : '2px solid rgba(255,255,255,0.1)',
-                            borderRadius: '16px',
-                            padding: '16px 8px',
+                            background: isSelected ? '#0f0f0f' : '#ffffff',
+                            border: 'none',
+                            borderRight: '1px solid #e5e7eb',
+                            borderBottom: '1px solid #e5e7eb',
+                            padding: '28px 16px 20px',
                             cursor: isDisabled || cantSelect ? 'not-allowed' : 'pointer',
-                            opacity: isDisabled ? 0.4 : cantSelect ? 0.6 : 1,
-                            transition: 'all 0.2s ease',
+                            opacity: isDisabled ? 0.45 : cantSelect ? 0.55 : 1,
+                            transition: 'background 0.15s ease, color 0.15s ease',
                             display: 'flex',
                             flexDirection: 'column',
                             alignItems: 'center',
-                            gap: '6px',
-                            minHeight: '90px',
-                            transform: isSelected ? 'scale(1.05)' : 'scale(1)',
-                            boxShadow: isSelected
-                                ? '0 0 20px rgba(244,63,94,0.4)'
-                                : '0 2px 8px rgba(0,0,0,0.2)',
+                            gap: '10px',
+                            minHeight: '120px',
                         }}
                     >
+                        {/* Price badge */}
+                        <span style={{
+                            position: 'absolute',
+                            top: '10px',
+                            right: '10px',
+                            background: isSelected ? '#ffffff' : '#0f0f0f',
+                            color: isSelected ? '#0f0f0f' : '#ffffff',
+                            fontSize: '10px',
+                            fontWeight: '800',
+                            padding: '3px 9px',
+                            borderRadius: '100px',
+                            letterSpacing: '0.3px',
+                        }}>
+                            ${parseFloat(sabor.price).toFixed(0)}
+                        </span>
+
+                        {/* Agotado badge */}
                         {isDisabled && (
                             <span style={{
                                 position: 'absolute',
-                                top: '-6px',
-                                right: '-6px',
+                                top: '10px',
+                                left: '10px',
                                 background: '#ef4444',
                                 color: '#fff',
-                                fontSize: '9px',
+                                fontSize: '8px',
                                 fontWeight: '900',
-                                padding: '2px 6px',
-                                borderRadius: '8px',
+                                padding: '2px 7px',
+                                borderRadius: '100px',
                                 textTransform: 'uppercase',
                                 letterSpacing: '0.5px',
                             }}>
                                 Agotado
                             </span>
                         )}
+
+                        {/* Emoji */}
                         <span style={{
-                            fontSize: '24px',
+                            fontSize: '36px',
                             filter: isDisabled ? 'grayscale(1)' : 'none',
+                            lineHeight: 1,
                         }}>
                             🍨
                         </span>
+
+                        {/* Name */}
                         <span style={{
-                            fontSize: '11px',
-                            fontWeight: '800',
-                            color: isDisabled ? '#666' : isLight ? '#1a1a1a' : '#fff',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            color: isSelected ? '#ffffff' : '#0f0f0f',
                             textAlign: 'center',
                             lineHeight: '1.2',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.3px',
+                            letterSpacing: '0.2px',
                         }}>
                             {sabor.name}
                         </span>
-                        <span style={{
-                            fontSize: '10px',
-                            color: isDisabled ? '#555' : isLight ? '#333' : 'rgba(255,255,255,0.7)',
-                            fontWeight: '600',
-                        }}>
-                            ${parseFloat(sabor.price).toFixed(0)}
-                        </span>
+
+                        {/* Selected checkmark */}
+                        {isSelected && (
+                            <span style={{
+                                position: 'absolute',
+                                bottom: '8px',
+                                right: '10px',
+                                color: '#ffffff',
+                                fontSize: '14px',
+                                fontWeight: '900',
+                            }}>✓</span>
+                        )}
                     </button>
                 );
             })}

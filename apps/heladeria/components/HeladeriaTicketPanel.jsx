@@ -1,6 +1,6 @@
 /**
- * HeladeriaTicketPanel.jsx — Panel derecho del POS: ticket en construcción.
- * Muestra items agregados, total, y botones de acción.
+ * HeladeriaTicketPanel.jsx — Panel de ticket del POS.
+ * Estética editorial B&W: blanco, divisores lineales, total ultra-bold.
  */
 import React from 'react';
 
@@ -9,35 +9,36 @@ export function HeladeriaTicketPanel({
 }) {
     return (
         <div style={{
-            background: 'rgba(255,255,255,0.03)',
-            borderRadius: '20px',
-            border: '1px solid rgba(255,255,255,0.08)',
-            padding: '20px',
+            background: '#ffffff',
+            border: '1px solid #e5e7eb',
+            borderLeft: '1px solid #0f0f0f',
             display: 'flex',
             flexDirection: 'column',
             height: '100%',
+            overflow: 'hidden',
         }}>
             {/* Header */}
             <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                marginBottom: '16px',
+                padding: '16px 20px',
+                borderBottom: '1px solid #e5e7eb',
             }}>
                 <div>
-                    <h3 style={{
-                        fontSize: '13px', fontWeight: '900', color: '#f59e0b',
-                        textTransform: 'uppercase', letterSpacing: '2px', margin: 0,
+                    <span style={{
+                        fontSize: '10px', fontWeight: '900', color: '#0f0f0f',
+                        textTransform: 'uppercase', letterSpacing: '3px',
                     }}>
-                        🛒 Ticket
-                    </h3>
+                        Ticket
+                    </span>
                     {ticket && (
-                        <span style={{ fontSize: '11px', color: '#666', fontWeight: '600' }}>
+                        <span style={{ display: 'block', fontSize: '10px', color: '#9ca3af', fontWeight: '600', marginTop: '2px' }}>
                             {ticket.account_num}
                         </span>
                     )}
                 </div>
                 <span style={{
-                    background: 'rgba(245,158,11,0.15)', color: '#f59e0b',
-                    padding: '4px 12px', borderRadius: '20px',
+                    background: '#0f0f0f', color: '#ffffff',
+                    padding: '3px 12px', borderRadius: '100px',
                     fontSize: '11px', fontWeight: '800',
                 }}>
                     {itemCount} item{itemCount !== 1 ? 's' : ''}
@@ -47,64 +48,62 @@ export function HeladeriaTicketPanel({
             {/* Items */}
             <div style={{
                 flex: 1, overflowY: 'auto',
-                display: 'flex', flexDirection: 'column', gap: '8px',
-                marginBottom: '16px',
+                display: 'flex', flexDirection: 'column',
             }}>
                 {items.length === 0 ? (
                     <div style={{
                         display: 'flex', flexDirection: 'column', alignItems: 'center',
-                        justifyContent: 'center', flex: 1, color: '#444',
-                        gap: '8px',
+                        justifyContent: 'center', flex: 1, color: '#d1d5db',
+                        gap: '12px', padding: '40px',
                     }}>
-                        <span style={{ fontSize: '40px', opacity: 0.3 }}>🍦</span>
-                        <span style={{ fontSize: '12px', fontWeight: '600' }}>Arma un helado y agrégalo</span>
+                        <span style={{ fontSize: '48px', opacity: 0.4 }}>🍦</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                            Arma un helado
+                        </span>
                     </div>
                 ) : (
                     items.map((item, index) => (
                         <div key={item.id || index} style={{
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: '14px',
-                            padding: '14px',
-                            border: '1px solid rgba(255,255,255,0.06)',
+                            padding: '14px 20px',
+                            borderBottom: '1px solid #f3f4f6',
                         }}>
                             <div style={{
                                 display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
                             }}>
                                 <div style={{ flex: 1 }}>
                                     <span style={{
-                                        fontSize: '13px', fontWeight: '700', color: '#fff',
-                                        display: 'block', marginBottom: '4px',
+                                        fontSize: '13px', fontWeight: '800', color: '#0f0f0f',
+                                        display: 'block', marginBottom: '2px',
                                     }}>
-                                        🍦 {item.label}
+                                        {item.label}
                                     </span>
                                     {item.recipientName && (
                                         <span style={{
-                                            fontSize: '11px', color: '#f9a8d4', fontWeight: '600',
-                                            display: 'block',
+                                            fontSize: '11px', color: '#6b7280', fontWeight: '600', display: 'block',
                                         }}>
-                                            👤 {item.recipientName}
+                                            Para: {item.recipientName}
                                         </span>
                                     )}
                                     {item.bolas && (
-                                        <span style={{ fontSize: '10px', color: '#888', display: 'block', marginTop: '2px' }}>
-                                            {item.bolas.map(b => b.name).join(' + ')}
-                                            {item.extras?.length > 0 && ` +${item.extras.map(e => e.name).join('+')}`}
+                                        <span style={{ fontSize: '10px', color: '#9ca3af', display: 'block', marginTop: '2px' }}>
+                                            {item.bolas.map(b => b.name).join(' · ')}
+                                            {item.extras?.length > 0 && ` + ${item.extras.map(e => e.name).join(', ')}`}
                                         </span>
                                     )}
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: '12px' }}>
                                     <span style={{
-                                        color: '#f59e0b', fontWeight: '800', fontSize: '14px',
-                                        whiteSpace: 'nowrap',
+                                        color: '#0f0f0f', fontWeight: '900', fontSize: '15px', whiteSpace: 'nowrap',
                                     }}>
                                         ${parseFloat(item.subtotal).toFixed(2)}
                                     </span>
                                     <button onClick={() => onRemoveItem(index)} style={{
-                                        background: 'rgba(239,68,68,0.15)', border: 'none',
-                                        color: '#ef4444', cursor: 'pointer', fontSize: '12px',
-                                        fontWeight: '700', padding: '4px 8px', borderRadius: '8px',
+                                        background: 'none', border: '1px solid #e5e7eb',
+                                        color: '#9ca3af', cursor: 'pointer', fontSize: '14px',
+                                        fontWeight: '700', padding: '2px 8px', borderRadius: '6px',
+                                        lineHeight: 1,
                                     }}>
-                                        ✕
+                                        ×
                                     </button>
                                 </div>
                             </div>
@@ -114,20 +113,15 @@ export function HeladeriaTicketPanel({
             </div>
 
             {/* Footer — Total + Acciones */}
-            <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '16px' }}>
+            <div style={{ borderTop: '1px solid #0f0f0f', padding: '16px 20px' }}>
                 <div style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
                     marginBottom: '14px',
                 }}>
-                    <span style={{
-                        color: '#888', fontSize: '14px', fontWeight: '800', textTransform: 'uppercase',
-                    }}>
+                    <span style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>
                         Total
                     </span>
-                    <span style={{
-                        color: '#f59e0b', fontSize: '28px', fontWeight: '900',
-                        fontFamily: "'Inter', sans-serif",
-                    }}>
+                    <span style={{ color: '#0f0f0f', fontSize: '32px', fontWeight: '900' }}>
                         ${total.toFixed(2)}
                     </span>
                 </div>
@@ -136,32 +130,29 @@ export function HeladeriaTicketPanel({
                         onClick={onClearCart}
                         disabled={items.length === 0}
                         style={{
-                            flex: 1, background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px',
-                            padding: '14px', color: items.length > 0 ? '#fff' : '#555',
-                            fontSize: '12px', fontWeight: '800', textTransform: 'uppercase',
-                            cursor: items.length > 0 ? 'pointer' : 'not-allowed',
+                            flex: 1, background: '#ffffff',
+                            border: '1px solid #e5e7eb', borderRadius: '8px',
+                            padding: '12px', color: items.length > 0 ? '#374151' : '#d1d5db',
+                            fontSize: '11px', fontWeight: '800', textTransform: 'uppercase',
+                            letterSpacing: '1px', cursor: items.length > 0 ? 'pointer' : 'not-allowed',
                         }}
                     >
-                        🗑 Cancelar
+                        Cancelar
                     </button>
                     <button
                         onClick={onCheckout}
                         disabled={items.length === 0}
                         style={{
                             flex: 2,
-                            background: items.length > 0
-                                ? 'linear-gradient(135deg, #16a34a, #22c55e)'
-                                : 'rgba(255,255,255,0.05)',
-                            border: 'none', borderRadius: '12px', padding: '14px',
-                            color: items.length > 0 ? '#fff' : '#555',
-                            fontSize: '14px', fontWeight: '900', textTransform: 'uppercase',
-                            letterSpacing: '1px',
+                            background: items.length > 0 ? '#0f0f0f' : '#f3f4f6',
+                            border: 'none', borderRadius: '8px', padding: '12px',
+                            color: items.length > 0 ? '#ffffff' : '#9ca3af',
+                            fontSize: '13px', fontWeight: '900', textTransform: 'uppercase',
+                            letterSpacing: '2px',
                             cursor: items.length > 0 ? 'pointer' : 'not-allowed',
-                            boxShadow: items.length > 0 ? '0 4px 20px rgba(22,163,74,0.3)' : 'none',
                         }}
                     >
-                        💰 Cobrar
+                        Cobrar
                     </button>
                 </div>
             </div>

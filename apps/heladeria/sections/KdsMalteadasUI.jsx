@@ -1,8 +1,9 @@
 /**
  * KdsMalteadasUI.jsx — Kitchen Display para estación MALTEADAS.
  * Mismo patrón que el KDS Helados pero filtrado por estación MALTEADAS.
- * Diferencias deliberadas: PENDING en púrpura y sin customer_group_name /
+ * Diferencias deliberadas: PENDING en color distinto y sin customer_group_name /
  * recipient_name / components (la estación MALTEADAS no los captura).
+ * Estética editorial B&W: fondo blanco, borde izquierdo de urgencia conservado.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { heladeriaService } from '../services/heladeriaService';
@@ -17,10 +18,11 @@ import {
     DEFAULT_URGENCY_THRESHOLDS,
 } from '../utils/kdsUrgency';
 
-const STATUS_COLORS = {
-    PENDING: { bg: 'rgba(168,85,247,0.12)', border: '#a855f7', text: '#a855f7', label: '⏳ Pendiente' },
-    IN_PROGRESS: { bg: 'rgba(59,130,246,0.12)', border: '#3b82f6', text: '#3b82f6', label: '🔥 Preparando' },
-    READY: { bg: 'rgba(34,197,94,0.12)', border: '#22c55e', text: '#22c55e', label: '✅ Listo' },
+// Diferencia deliberada vs KDS Helados: PENDING en índigo (no amarillo)
+const STATUS_META = {
+    PENDING:     { label: 'Pendiente',   bg: '#f5f3ff', border: '#ddd6fe', text: '#5b21b6' },
+    IN_PROGRESS: { label: 'Preparando', bg: '#eff6ff', border: '#bfdbfe', text: '#1e40af' },
+    READY:       { label: 'Listo',       bg: '#f0fdf4', border: '#bbf7d0', text: '#166534' },
 };
 
 export function KdsMalteadasUI({ onBack }) {
@@ -82,47 +84,51 @@ export function KdsMalteadasUI({ onBack }) {
 
     return (
         <div style={{
-            height: '100vh', background: '#0a0a0a', color: '#fff',
+            height: '100vh', background: '#ffffff', color: '#0f0f0f',
             display: 'flex', flexDirection: 'column', overflow: 'hidden',
             fontFamily: "'Inter', -apple-system, sans-serif",
         }}>
             {/* Header */}
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '16px 24px',
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(59,130,246,0.05))',
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                padding: '0 24px',
+                borderBottom: '1px solid #0f0f0f',
+                minHeight: '56px',
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <button onClick={onBack} style={{
-                        background: 'rgba(255,255,255,0.08)', border: 'none', color: '#fff',
-                        padding: '8px 16px', borderRadius: '10px', cursor: 'pointer',
-                        fontSize: '13px', fontWeight: '700',
+                        background: 'none', border: '1px solid #d1d5db', color: '#6b7280',
+                        padding: '6px 16px', borderRadius: '100px', cursor: 'pointer',
+                        fontSize: '12px', fontWeight: '700',
                     }}>← Hub</button>
-                    <h1 style={{ fontSize: '18px', fontWeight: '900', margin: 0, color: '#a855f7', letterSpacing: '1px' }}>
-                        🥤 KDS MALTEADAS
+                    <h1 style={{
+                        fontSize: '13px', fontWeight: '900', margin: 0,
+                        color: '#0f0f0f', textTransform: 'uppercase', letterSpacing: '3px',
+                    }}>
+                        🥤 KDS — Malteadas
                     </h1>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                     {/* V15 (Fase 15.3): contador de urgencia — solo color, sin animación. */}
                     {(() => {
                         const counts = countByUrgency(orders, thresholds, serverOffsetHours, nowMs);
                         return (
-                            <div style={{ display: 'flex', gap: '6px', fontSize: '11px', fontWeight: '800' }}>
-                                <span style={{ color: urgencyColor('NORMAL').text }}>{counts.NORMAL} normal</span>
-                                <span style={{ color: '#444' }}>·</span>
+                            <div style={{ display: 'flex', gap: '8px', fontSize: '11px', fontWeight: '800' }}>
+                                <span style={{ color: '#6b7280' }}>{counts.NORMAL} normal</span>
+                                <span style={{ color: '#9ca3af' }}>·</span>
                                 <span style={{ color: urgencyColor('WARNING').text }}>{counts.WARNING} atención</span>
-                                <span style={{ color: '#444' }}>·</span>
+                                <span style={{ color: '#9ca3af' }}>·</span>
                                 <span style={{ color: urgencyColor('CRITICAL').text }}>{counts.CRITICAL} crítico</span>
                             </div>
                         );
                     })()}
-                    <div style={{
-                        background: 'rgba(168,85,247,0.1)', padding: '6px 16px',
-                        borderRadius: '10px', fontSize: '12px', fontWeight: '800', color: '#a855f7',
+                    <span style={{
+                        background: '#0f0f0f', color: '#ffffff',
+                        padding: '4px 14px', borderRadius: '100px',
+                        fontSize: '12px', fontWeight: '800',
                     }}>
                         {orders.length} pedido{orders.length !== 1 ? 's' : ''}
-                    </div>
+                    </span>
                 </div>
             </div>
 
@@ -130,23 +136,25 @@ export function KdsMalteadasUI({ onBack }) {
             <div style={{
                 flex: 1, overflowY: 'auto', padding: '20px',
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
                 gap: '16px', alignContent: 'start',
             }}>
                 {loading && (
-                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#888', padding: '40px' }}>
+                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#9ca3af', padding: '40px', fontWeight: '700' }}>
                         🥤 Cargando pedidos...
                     </div>
                 )}
 
                 {!loading && orders.length === 0 && (
                     <div style={{
-                        gridColumn: '1 / -1', textAlign: 'center', color: '#444',
+                        gridColumn: '1 / -1', textAlign: 'center',
                         padding: '80px 20px', display: 'flex', flexDirection: 'column',
                         alignItems: 'center', gap: '16px',
                     }}>
-                        <span style={{ fontSize: '64px', opacity: 0.2 }}>🥤</span>
-                        <span style={{ fontSize: '16px', fontWeight: '700' }}>Sin pedidos pendientes</span>
+                        <span style={{ fontSize: '64px', opacity: 0.15 }}>🥤</span>
+                        <span style={{ fontSize: '16px', fontWeight: '900', color: '#d1d5db', textTransform: 'uppercase', letterSpacing: '2px' }}>
+                            Sin pedidos pendientes
+                        </span>
                     </div>
                 )}
 
@@ -156,69 +164,82 @@ export function KdsMalteadasUI({ onBack }) {
                     const level = classifyUrgency(elapsedSec, thresholds);
                     const uColor = urgencyColor(level);
                     return (
-                    <div key={order.ticket_id} style={{
-                        background: 'rgba(255,255,255,0.03)', borderRadius: '18px',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderLeft: `4px solid ${uColor.border}`,
-                        overflow: 'hidden',
-                    }}>
-                        <div style={{
-                            padding: '14px 18px', background: 'rgba(255,255,255,0.02)',
-                            borderBottom: '1px solid rgba(255,255,255,0.06)',
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        <div key={order.ticket_id} style={{
+                            background: '#ffffff',
+                            border: '1px solid #e5e7eb',
+                            borderLeft: `4px solid ${uColor.border}`,
+                            borderRadius: '4px',
+                            overflow: 'hidden',
                         }}>
-                            <span style={{ fontSize: '16px', fontWeight: '900', color: '#a855f7' }}>
-                                #{order.account_num}
-                            </span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                {/* V15 (Fase 15.3): badge de tiempo transcurrido. */}
-                                <span style={{
-                                    background: uColor.bg, border: `1px solid ${uColor.border}`,
-                                    borderRadius: '8px', padding: '3px 8px',
-                                    fontSize: '11px', fontWeight: '800', color: uColor.text,
-                                }}>
-                                    ⏱ {formatElapsed(elapsedSec)}
+                            <div style={{
+                                padding: '12px 16px', background: '#f9fafb',
+                                borderBottom: '1px solid #e5e7eb',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            }}>
+                                <span style={{ fontSize: '18px', fontWeight: '900', color: '#0f0f0f' }}>
+                                    #{order.account_num}
                                 </span>
-                                <span style={{ fontSize: '10px', color: '#666' }}>{order.terminal_id}</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    {/* V15 (Fase 15.3): badge de tiempo transcurrido. */}
+                                    <span style={{
+                                        background: uColor.bg || '#f3f4f6',
+                                        border: `1px solid ${uColor.border}`,
+                                        borderRadius: '100px', padding: '3px 10px',
+                                        fontSize: '11px', fontWeight: '800', color: uColor.text,
+                                    }}>
+                                        ⏱ {formatElapsed(elapsedSec)}
+                                    </span>
+                                    <span style={{ fontSize: '10px', color: '#9ca3af', fontWeight: '600' }}>
+                                        {order.terminal_id}
+                                    </span>
+                                </div>
+                            </div>
+                            <div style={{ padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {order.items.map(item => {
+                                    const s = STATUS_META[item.item_status] || STATUS_META.PENDING;
+                                    return (
+                                        <div key={item.item_id} style={{
+                                            background: s.bg,
+                                            border: `1px solid ${s.border}`,
+                                            borderRadius: '6px', padding: '12px',
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '14px', fontWeight: '800', color: '#0f0f0f' }}>
+                                                    🥤 {item.product_name} ×{item.quantity}
+                                                </span>
+                                                <span style={{
+                                                    fontSize: '10px', fontWeight: '800',
+                                                    color: s.text, textTransform: 'uppercase',
+                                                    background: '#ffffff', border: `1px solid ${s.border}`,
+                                                    padding: '3px 8px', borderRadius: '100px',
+                                                    letterSpacing: '0.5px',
+                                                }}>
+                                                    {s.label}
+                                                </span>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                                                {item.item_status === 'PENDING' && (
+                                                    <button onClick={() => handleStatusChange(item.item_id, 'IN_PROGRESS')} style={{
+                                                        flex: 1, background: '#0f0f0f', border: 'none',
+                                                        borderRadius: '6px', padding: '8px', color: '#ffffff',
+                                                        fontWeight: '800', fontSize: '11px', cursor: 'pointer',
+                                                        textTransform: 'uppercase', letterSpacing: '1px',
+                                                    }}>Preparar →</button>
+                                                )}
+                                                {item.item_status === 'IN_PROGRESS' && (
+                                                    <button onClick={() => handleStatusChange(item.item_id, 'READY')} style={{
+                                                        flex: 1, background: '#166534', border: 'none',
+                                                        borderRadius: '6px', padding: '8px', color: '#ffffff',
+                                                        fontWeight: '800', fontSize: '11px', cursor: 'pointer',
+                                                        textTransform: 'uppercase', letterSpacing: '1px',
+                                                    }}>✓ Listo</button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </div>
-                        <div style={{ padding: '12px 18px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {order.items.map(item => {
-                                const s = STATUS_COLORS[item.item_status] || STATUS_COLORS.PENDING;
-                                return (
-                                    <div key={item.item_id} style={{
-                                        background: s.bg, border: `1px solid ${s.border}40`,
-                                        borderRadius: '12px', padding: '12px',
-                                    }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                            <span style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
-                                                🥤 {item.product_name} ×{item.quantity}
-                                            </span>
-                                            <span style={{ fontSize: '10px', fontWeight: '800', color: s.text }}>
-                                                {s.label}
-                                            </span>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
-                                            {item.item_status === 'PENDING' && (
-                                                <button onClick={() => handleStatusChange(item.item_id, 'IN_PROGRESS')} style={{
-                                                    flex: 1, background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)',
-                                                    borderRadius: '8px', padding: '8px', color: '#3b82f6',
-                                                    fontWeight: '800', fontSize: '11px', cursor: 'pointer',
-                                                }}>🔥 Preparar</button>
-                                            )}
-                                            {item.item_status === 'IN_PROGRESS' && (
-                                                <button onClick={() => handleStatusChange(item.item_id, 'READY')} style={{
-                                                    flex: 1, background: 'rgba(34,197,94,0.2)', border: '1px solid rgba(34,197,94,0.3)',
-                                                    borderRadius: '8px', padding: '8px', color: '#22c55e',
-                                                    fontWeight: '800', fontSize: '11px', cursor: 'pointer',
-                                                }}>✅ ¡Listo!</button>
-                                            )}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
                     );
                 })}
             </div>

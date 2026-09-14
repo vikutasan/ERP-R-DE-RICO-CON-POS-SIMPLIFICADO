@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { resolveDisplayMode, DISPLAY_MODES } from '../utils/displayMappers';
 import { DisplayConfigPanel } from '../components/DisplayConfigPanel';
 import { DisplayPreciosOutput } from './DisplayPreciosOutput';
@@ -6,17 +6,13 @@ import { clearDisplayMenuCache } from '../services/heladeriaOfflineStore';
 
 /**
  * DisplayPreciosUI — Doble landing del Display de Precios (V17, Fase 17.3).
+ * Estética editorial B&W: fondo blanco, divisores lineales.
  *
  * DOS MODOS (resueltos por `resolveDisplayMode`):
  *   - `?mode=output`  → DisplayPreciosOutput (kiosco, solo lectura, fullscreen).
  *   - sin parámetro   → Panel de administración (DisplayConfigPanel).
  *
- * El modo se resuelve UNA vez al montar (no reacciona a cambios de URL en
- * caliente: para cambiar de modo se recarga la página, que es el flujo real
- * del kiosco).
- *
- * NOTA (Incident 16.1): se ELIMINÓ la animación `float` infinita del
- * placeholder anterior. Este componente no define ningún @keyframes.
+ * NOTA (Incident 16.1): sin animaciones infinitas.
  */
 export const DisplayPreciosUI = ({ onBack }) => {
     const [mode] = useState(() => resolveDisplayMode(window.location.search));
@@ -29,7 +25,6 @@ export const DisplayPreciosUI = ({ onBack }) => {
 
     // ── Modo admin ───────────────────────────────────────────
     const openOutput = () => {
-        // Abrimos la pantalla de precios en una pestaña/ventana nueva.
         const url = `${window.location.pathname}?mode=output`;
         window.open(url, '_blank', 'noopener');
     };
@@ -47,15 +42,10 @@ export const DisplayPreciosUI = ({ onBack }) => {
         <div style={styles.wrapper}>
             {/* ── Encabezado ── */}
             <div style={styles.header}>
-                <button
-                    onClick={onBack}
-                    style={styles.backBtn}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(56, 189, 248, 0.2)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(56, 189, 248, 0.1)'; }}
-                >
+                <button onClick={onBack} style={styles.backBtn}>
                     ← Regresar
                 </button>
-                <h1 style={styles.title}>Display Pantalla de Precios</h1>
+                <h1 style={styles.title}>Display de Precios</h1>
             </div>
 
             {/* ── Panel de configuración ── */}
@@ -81,41 +71,42 @@ export const DisplayPreciosUI = ({ onBack }) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Estilos
+// Estilos — B&W editorial
 // ─────────────────────────────────────────────────────────────
 const styles = {
     wrapper: {
         height: '100%',
-        background: 'linear-gradient(135deg, #0a0a0a 0%, #08101a 50%, #0a0a0a 100%)',
+        background: '#ffffff',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: "'Inter', sans-serif",
     },
     header: {
-        padding: '20px 30px',
+        padding: '0 30px',
         display: 'flex',
         alignItems: 'center',
         gap: '16px',
-        borderBottom: '1px solid rgba(56, 189, 248, 0.15)',
+        borderBottom: '1px solid #0f0f0f',
+        minHeight: '56px',
     },
     backBtn: {
-        background: 'rgba(56, 189, 248, 0.1)',
-        border: '1px solid rgba(56, 189, 248, 0.2)',
-        color: '#38bdf8',
-        padding: '10px 20px',
-        borderRadius: '12px',
+        background: 'none',
+        border: '1px solid #d1d5db',
+        color: '#6b7280',
+        padding: '6px 16px',
+        borderRadius: '100px',
         cursor: 'pointer',
         fontWeight: '700',
-        fontSize: '13px',
-        transition: 'background 0.2s ease',
+        fontSize: '12px',
+        letterSpacing: '0.5px',
     },
     title: {
         margin: 0,
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.5rem',
-        background: 'linear-gradient(135deg, #38bdf8, #0ea5e9)',
-        WebkitBackgroundClip: 'text',
-        WebkitTextFillColor: 'transparent',
+        fontSize: '13px',
+        fontWeight: '900',
+        color: '#0f0f0f',
+        textTransform: 'uppercase',
+        letterSpacing: '3px',
     },
     scroll: {
         flex: 1,
@@ -127,36 +118,42 @@ const styles = {
         margin: '0 auto',
         width: '100%',
         boxSizing: 'border-box',
-        padding: '18px 20px',
-        background: 'rgba(15, 23, 42, 0.6)',
-        border: '1px solid rgba(56, 189, 248, 0.15)',
-        borderRadius: '16px',
+        padding: '20px 24px',
+        background: '#f9fafb',
+        border: '1px solid #e5e7eb',
+        borderRadius: '8px',
+        marginTop: '16px',
     },
     cacheTitle: {
         margin: '0 0 10px 0',
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.1rem',
-        color: '#f9fafb',
+        fontSize: '14px',
+        fontWeight: '800',
+        color: '#0f0f0f',
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
     },
     cacheHint: {
         margin: '0 0 14px 0',
-        color: '#9ca3af',
-        fontSize: '12px',
+        color: '#6b7280',
+        fontSize: '13px',
         lineHeight: '1.6',
+        fontWeight: '400',
     },
     cacheBtn: {
-        background: 'rgba(239, 68, 68, 0.1)',
-        border: '1px solid rgba(239, 68, 68, 0.3)',
-        color: '#fca5a5',
+        background: '#ffffff',
+        border: '1px solid #0f0f0f',
+        color: '#0f0f0f',
         padding: '10px 18px',
-        borderRadius: '12px',
+        borderRadius: '100px',
         cursor: 'pointer',
-        fontWeight: '700',
-        fontSize: '13px',
+        fontWeight: '800',
+        fontSize: '12px',
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
     },
     cacheMsg: {
         marginTop: '12px',
-        color: '#7dd3fc',
+        color: '#374151',
         fontSize: '12px',
         fontWeight: '600',
     },
