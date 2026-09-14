@@ -163,7 +163,7 @@ export const HeladeriaHubUI = ({ onBack }) => {
                     lineHeight: '1.0',
                     letterSpacing: '-2px',
                 }}>
-                    Let's make<br />life sweeter.
+                    Heladería<br />R de Rico.
                 </h1>
                 <p style={{
                     margin: '16px 0 0',
