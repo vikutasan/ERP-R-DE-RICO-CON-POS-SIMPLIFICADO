@@ -5,6 +5,16 @@
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { heladeriaService } from '../services/heladeriaService';
+import {
+    computeElapsedSec,
+    classifyUrgency,
+    urgencyColor,
+    formatElapsed,
+    countByUrgency,
+    normalizeThresholds,
+    normalizeTzOffset,
+    DEFAULT_URGENCY_THRESHOLDS,
+} from '../utils/kdsUrgency';
 
 const STATUS_COLORS = {
     PENDING: { bg: 'rgba(245,158,11,0.12)', border: '#f59e0b', text: '#f59e0b', label: '⏳ Pendiente' },
@@ -15,6 +25,10 @@ const STATUS_COLORS = {
 export function KdsHeladosUI({ onBack }) {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
+    // V15 (Fase 15.3): reloj de urgencia (1 s) separado del polling de datos (5 s).
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const [thresholds, setThresholds] = useState(DEFAULT_URGENCY_THRESHOLDS);
+    const [serverOffsetHours, setServerOffsetHours] = useState(0);
 
     const loadOrders = useCallback(async () => {
         try {
@@ -33,6 +47,29 @@ export function KdsHeladosUI({ onBack }) {
         const interval = setInterval(loadOrders, 5000);
         return () => clearInterval(interval);
     }, [loadOrders]);
+
+    // V15 (Fase 15.3): reloj de urgencia — solo actualiza el timestamp, sin refetch.
+    useEffect(() => {
+        const tick = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(tick);
+    }, []);
+
+    // V15 (Fase 15.4): umbrales + offset desde system_settings, con fallback silencioso.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const cfg = await heladeriaService.getKdsUrgencyConfig();
+                if (cancelled) return;
+                setThresholds(normalizeThresholds(cfg?.thresholds));
+                setServerOffsetHours(normalizeTzOffset(cfg?.tzOffsetHours));
+            } catch (err) {
+                // Fallback: nunca bloquear el render del KDS por un fallo de settings.
+                console.warn('KDS helados: usando umbrales por defecto', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
     const handleStatusChange = async (itemId, newStatus) => {
         try {
@@ -69,11 +106,26 @@ export function KdsHeladosUI({ onBack }) {
                         🍨 KDS HELADOS
                     </h1>
                 </div>
-                <div style={{
-                    background: 'rgba(245,158,11,0.1)', padding: '6px 16px',
-                    borderRadius: '10px', fontSize: '12px', fontWeight: '800', color: '#f59e0b',
-                }}>
-                    {orders.length} pedido{orders.length !== 1 ? 's' : ''}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {/* V15 (Fase 15.3): contador de urgencia — solo color, sin animación. */}
+                    {(() => {
+                        const counts = countByUrgency(orders, thresholds, serverOffsetHours, nowMs);
+                        return (
+                            <div style={{ display: 'flex', gap: '6px', fontSize: '11px', fontWeight: '800' }}>
+                                <span style={{ color: urgencyColor('NORMAL').text }}>{counts.NORMAL} normal</span>
+                                <span style={{ color: '#444' }}>·</span>
+                                <span style={{ color: urgencyColor('WARNING').text }}>{counts.WARNING} atención</span>
+                                <span style={{ color: '#444' }}>·</span>
+                                <span style={{ color: urgencyColor('CRITICAL').text }}>{counts.CRITICAL} crítico</span>
+                            </div>
+                        );
+                    })()}
+                    <div style={{
+                        background: 'rgba(245,158,11,0.1)', padding: '6px 16px',
+                        borderRadius: '10px', fontSize: '12px', fontWeight: '800', color: '#f59e0b',
+                    }}>
+                        {orders.length} pedido{orders.length !== 1 ? 's' : ''}
+                    </div>
                 </div>
             </div>
 
@@ -101,11 +153,17 @@ export function KdsHeladosUI({ onBack }) {
                     </div>
                 )}
 
-                {orders.map(order => (
+                {orders.map(order => {
+                    // V15 (Fase 15.3): urgencia por tiempo transcurrido (solo color).
+                    const elapsedSec = computeElapsedSec(order.created_at, serverOffsetHours, nowMs);
+                    const level = classifyUrgency(elapsedSec, thresholds);
+                    const uColor = urgencyColor(level);
+                    return (
                     <div key={order.ticket_id} style={{
                         background: 'rgba(255,255,255,0.03)',
                         borderRadius: '18px',
                         border: '1px solid rgba(255,255,255,0.08)',
+                        borderLeft: `4px solid ${uColor.border}`,
                         overflow: 'hidden',
                     }}>
                         {/* Order Header */}
@@ -128,9 +186,19 @@ export function KdsHeladosUI({ onBack }) {
                                     </span>
                                 )}
                             </div>
-                            <span style={{ fontSize: '10px', color: '#666' }}>
-                                {order.terminal_id}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {/* V15 (Fase 15.3): badge de tiempo transcurrido. */}
+                                <span style={{
+                                    background: uColor.bg, border: `1px solid ${uColor.border}`,
+                                    borderRadius: '8px', padding: '3px 8px',
+                                    fontSize: '11px', fontWeight: '800', color: uColor.text,
+                                }}>
+                                    ⏱ {formatElapsed(elapsedSec)}
+                                </span>
+                                <span style={{ fontSize: '10px', color: '#666' }}>
+                                    {order.terminal_id}
+                                </span>
+                            </div>
                         </div>
 
                         {/* Items */}
@@ -205,7 +273,8 @@ export function KdsHeladosUI({ onBack }) {
                             })}
                         </div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );

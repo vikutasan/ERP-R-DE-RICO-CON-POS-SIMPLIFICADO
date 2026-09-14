@@ -70,6 +70,31 @@ class HeladeriaService {
     }
 
     // ═══════════════════════════════════════════════════
+    // V15 (Fase 15.4): CONFIGURACIÓN DE URGENCIA DEL KDS
+    // ═══════════════════════════════════════════════════
+    // Lee el setting `heladeria_kds_urgency_config` desde system_settings.
+    // El backend SIEMPRE devuelve un objeto válido (con defaults si la fila
+    // no existe o el JSON está corrupto), por lo que aquí no se valida de
+    // nuevo: la normalización final la hace kdsUrgency.js en el componente.
+
+    async getKdsUrgencyConfig() {
+        return withRetries(async () => {
+            const res = await fetch(`${CONFIG.API_BASE_URL}/settings/heladeria_kds_urgency_config`, { cache: 'no-store' });
+            if (!res.ok) throw new Error('Error cargando configuración de urgencia del KDS');
+            const data = await res.json();
+            // El endpoint devuelve { key, value } donde value es un string JSON.
+            if (data && typeof data.value === 'string') {
+                try {
+                    return JSON.parse(data.value);
+                } catch {
+                    return null;
+                }
+            }
+            return data;
+        }, { label: 'getKdsUrgencyConfig' });
+    }
+
+    // ═══════════════════════════════════════════════════
     // DISPLAY DATA
     // ═══════════════════════════════════════════════════
 
