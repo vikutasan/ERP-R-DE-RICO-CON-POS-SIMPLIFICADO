@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime
 from core.database import Base
-from datetime import datetime
+from core.timestamps import utcnow
 
 class NetworkIncident(Base):
     __tablename__ = "network_incidents"
@@ -10,4 +10,4 @@ class NetworkIncident(Base):
     incident_type = Column(String, nullable=False)  # disconnect, slow, reconnect
     user_logged = Column(String, nullable=True)
     details = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.now, index=True)
+    created_at = Column(DateTime, default=utcnow, index=True)

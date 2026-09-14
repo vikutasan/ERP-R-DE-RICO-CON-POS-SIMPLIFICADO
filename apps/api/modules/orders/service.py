@@ -6,8 +6,8 @@ Cada función hace UNA sola cosa (SRP).
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime
 
+from core.timestamps import utcnow
 from .models import Order
 from .schemas import OrderCreate, OrderUpdate
 from modules.pos.models import Ticket, TicketItem
@@ -114,7 +114,7 @@ async def update_order(db: AsyncSession, order_id: int, data: OrderUpdate) -> Or
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(order, field, value)
 
-    order.updated_at = datetime.now()
+    order.updated_at = utcnow()
     await db.commit()
     await db.refresh(order)
     return order

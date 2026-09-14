@@ -5,8 +5,8 @@ Un pedido es una venta diferida con fecha de entrega compromiso.
 """
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, JSON, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from core.database import Base
+from core.timestamps import utcnow
 
 
 class Order(Base):
@@ -49,8 +49,8 @@ class Order(Base):
     delivery_fee = Column(Float, nullable=True, default=0.0)
 
     # Metadata
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     notes = Column(Text, nullable=True)
 
     ticket = relationship("Ticket", backref="order", uselist=False)

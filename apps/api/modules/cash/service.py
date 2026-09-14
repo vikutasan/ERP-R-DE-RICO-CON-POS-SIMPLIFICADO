@@ -2,8 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
-from datetime import datetime
 
+from core.timestamps import utcnow
 from . import models, schemas
 from modules.pos.models import Ticket, TerminalSession
 
@@ -151,7 +151,7 @@ async def cerrar_sesion(
     resumen = await calcular_resumen(db, session_id)
 
     sesion.status = "CLOSED"
-    sesion.closed_at = datetime.now()
+    sesion.closed_at = utcnow()
     sesion.physical_cash = datos.physical_cash
     sesion.physical_credit = datos.physical_credit
     sesion.physical_debit = datos.physical_debit
