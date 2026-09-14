@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CONFIG } from '../pos/config';
+import { useTimezone } from '../shared/TimezoneContext';
+import { todayLocal, formatLocalTime, parseUtc } from '../shared/timezone';
 import {
     classifyTerminalStatus,
     classifyEvents,
     summarizeSuspiciousIncidents,
-    normalizeUtcString,
 } from './utils/networkClassifiers';
 
 /**
@@ -30,20 +31,14 @@ const STATUS_CONFIG = {
 };
 
 
-// Helper: fecha local en formato YYYY-MM-DD (evita desfase UTC)
-const getLocalDateString = (d = new Date()) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-};
-
 export const NetworkMonitorUI = () => {
+    // v20 (Fase 20.4): la zona horaria del negocio viene del TimezoneProvider.
+    const { timezone } = useTimezone();
     const [serverLatency, setServerLatency] = useState(null);
     const [serverStatus, setServerStatus] = useState('offline');
     const [terminalData, setTerminalData] = useState({});
     const [eventLog, setEventLog] = useState([]);
-    const [selectedDate, setSelectedDate] = useState(getLocalDateString());
+    const [selectedDate, setSelectedDate] = useState(() => todayLocal(timezone));
     const [incidentSummary, setIncidentSummary] = useState({});
     const [showInfoModal, setShowInfoModal] = useState(false);
     const [uptimeStart, setUptimeStart] = useState(null);
@@ -102,7 +97,7 @@ export const NetworkMonitorUI = () => {
 
                     if (wasOccupied && !isOccupied) {
                         const evt = {
-                            time: now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                            time: formatLocalTime(now, timezone),
                             timestamp: now.getTime(),
                             terminal: tid,
                             type: 'disconnect',
@@ -125,7 +120,7 @@ export const NetworkMonitorUI = () => {
                         }).catch(() => {});
                     } else if (!wasOccupied && isOccupied) {
                         const evt = {
-                            time: now.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                            time: formatLocalTime(now, timezone),
                             timestamp: now.getTime(),
                             terminal: tid,
                             type: 'connect',
@@ -164,13 +159,12 @@ export const NetworkMonitorUI = () => {
             if (!res.ok) return;
             const data = await res.json();
 
-            // Mapear eventos base — agregar 'Z' para que JS interprete como UTC y convierta a hora local
+            // v20 (Fase 20.4): formateo delegado a formatLocalTime (zona del negocio).
             const mapped = data.map(inc => {
-                const utcStr = normalizeUtcString(inc.created_at);
-                const localDate = new Date(utcStr);
+                const localDate = parseUtc(inc.created_at);
                 return {
-                    time: localDate.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                    timestamp: localDate.getTime(),
+                    time: formatLocalTime(inc.created_at, timezone),
+                    timestamp: localDate ? localDate.getTime() : 0,
                     terminal: inc.terminal_id,
                     rawType: inc.incident_type,
                     type: inc.incident_type === 'disconnect' ? 'disconnect' : 'connect',
@@ -277,8 +271,8 @@ export const NetworkMonitorUI = () => {
                                 onChange={(e) => setSelectedDate(e.target.value)}
                                 className="bg-black/40 border border-gray-700 rounded-xl px-3 py-1.5 text-sm text-white font-bold focus:border-orange-500 outline-none"
                             />
-                            {selectedDate !== getLocalDateString() && (
-                                <button onClick={() => setSelectedDate(getLocalDateString())}
+                            {selectedDate !== todayLocal(timezone) && (
+                                <button onClick={() => setSelectedDate(todayLocal(timezone))}
                                     className="text-xs font-bold text-orange-400 hover:text-orange-300 uppercase tracking-widest">
                                     Hoy
                                 </button>

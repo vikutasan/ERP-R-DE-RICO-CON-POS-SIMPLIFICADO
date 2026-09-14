@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { CONFIG } from '../shared/config.js';
+// v20 (Fase 20.4): fecha local del negocio para nombres de archivo exportados.
+import { todayLocal } from '../shared/timezone.js';
 
 /**
  * R DE RICO - PRODUCT MASTER & CATALOG MANAGER (API SYNC)
@@ -388,7 +390,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
         const url = URL.createObjectURL(dataBlob);
         const link = document.createElement('a');
         link.href = url;
-        const dateStr = new Date().toISOString().split('T')[0];
+        const dateStr = todayLocal();
         link.download = `productos_rderico_${dateStr}.json`;
         document.body.appendChild(link);
         link.click();

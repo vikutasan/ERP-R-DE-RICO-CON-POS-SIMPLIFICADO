@@ -4,6 +4,8 @@ import axios from 'axios';
 import REAL_PRODUCTS from '../../importar_productos_AQUI.json';
 import { PROVIDERS_MASTER } from './PurchaseManagerUI';
 import { CONFIG } from '../pos/config';
+// v20 (Fase 20.4): formateo de timestamps UTC en la zona del negocio.
+import { formatLocal } from '../shared/timezone';
 // v7 (Fase 3.2): mapeadores y validadores puros, cubiertos por Vitest.
 import {
     resolveUserId,
@@ -2231,7 +2233,7 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                             return (
                                                 <tr key={mov.id || idx} className="bg-slate-800/40 hover:bg-slate-700/50 transition-all">
                                                     <td className="px-4 py-3 rounded-l-xl text-[10px] text-slate-300 font-mono">
-                                                        {mov.timestamp ? new Date(mov.timestamp).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                        {mov.timestamp ? formatLocal(mov.timestamp, undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
                                                     </td>
                                                     <td className="px-4 py-3">
                                                         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider ${meta.bg} ${meta.color} border border-current/20`}>
@@ -3342,7 +3344,7 @@ export const WarehouseManagerUI = ({ currentUser = null }) => {
                                                         SKU: {item.sku}
                                                     </span>
                                                     <span className="text-[9px] font-black text-gray-600 uppercase">
-                                                        Archivado el: {new Date(item.archiveDate).toLocaleDateString()}
+                                                        Archivado el: {formatLocal(item.archiveDate, undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: undefined, minute: undefined, second: undefined })}
                                                     </span>
                                                 </div>
                                                 <h4 className="text-xl font-black uppercase italic text-white">{item.name}</h4>
