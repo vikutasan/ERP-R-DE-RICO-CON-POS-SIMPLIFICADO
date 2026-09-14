@@ -1,5 +1,17 @@
 # 🌐 PLAN TRANSVERSAL V19 — DEUDA TÉCNICA SISTÉMICA (2.1 + 2.2)
 
+> ## ⚠️ ADVERTENCIA CRÍTICA — LEER ANTES DE IMPLEMENTAR (añadida tras revisión)
+>
+> **El selector de Zona Horaria de "Visión General"**
+> ([`ExperimentCenterUI.jsx:424`](apps/ExperimentCenterUI.jsx:424)) **cambia el
+> comportamiento de TODO el ERP** y **NO está contemplado en las fases 19.0–19.6**.
+>
+> **La Fase 19.4, tal como estaba escrita, ROMPERÍA la coherencia con ese selector.**
+> Ver **Sección 16** (al final de este documento) para el análisis completo y la
+> corrección obligatoria antes de implementar.
+>
+> **Estado:** 🔴 **BLOQUEANTE.** No implementar 19.4 sin resolver la Sección 16.
+
 > **Objetivo:** Resolver de una sola vez las **dos deudas técnicas sistémicas** que hoy se
 > parchan módulo por módulo, con una sola decisión arquitectónica cada una.
 >
@@ -410,12 +422,17 @@ def utcnow() -> datetime.datetime:
 
 **Migrar los `default=datetime.now` a `default=utcnow`** en los módulos **NO-POS**:
 
-| Módulo | Archivo | Columnas |
-|---|---|---|
-| `network` | [`models.py:13`](apps/api/modules/network/models.py:13) | 1 |
-| `cash` | [`models.py:44`](apps/api/modules/cash/models.py:44) | 1 |
-| `grandeza` | [`models.py:23,45,82,116,179,250,291`](apps/api/modules/grandeza/models.py:23) | 7 |
-| `orders` | [`models.py:52,53`](apps/api/modules/orders/models.py:52) | 2 |
+| Módulo | Archivo | Columnas | Decisión |
+|---|---|---|---|
+| `network` | [`models.py:13`](apps/api/modules/network/models.py:13) | 1 | ✅ Migrar (metadata técnica) |
+| `cash` | [`models.py:44`](apps/api/modules/cash/models.py:44) | 1 | ✅ Migrar (metadata técnica) |
+| `orders` | [`models.py:52,53`](apps/api/modules/orders/models.py:52) | 2 | ✅ Migrar (metadata técnica) |
+| `grandeza` | [`models.py:23,45,82,116,179,250,291`](apps/api/modules/grandeza/models.py:23) | 7 | ❌ **NO migrar** — ver Sección 16 |
+
+> 🔴 **CORRECCIÓN DE LA REV. 2 (ver Sección 16):** `grandeza` **NO se migra**. Usa
+> `local_now()` **deliberadamente** para respetar el selector de Zona Horaria de
+> "Visión General". Migrarlo a UTC **rompería** esa intención y causaría un desfase de
+> 6 horas en las fechas de negocio de Grandeza.
 
 **`pos/models.py:34` se DEJA INTACTO** (Restricción A). Se documenta como deuda contenida.
 
@@ -613,4 +630,138 @@ V19 Fase 19.5: pos/config.js re-export (SOLO si la verificacion de 3 entornos pa
 
 ---
 
-**FIN DEL PLAN — V19 (Revisión 1)**
+## 16. 🔴 HALLAZGO CRÍTICO — EL SELECTOR DE ZONA HORARIA DE "VISIÓN GENERAL"
+
+> **Esta sección fue añadida DESPUÉS de la Revisión 1, al descubrir que la Fase 19.4
+> entraba en conflicto con un mecanismo ya existente que no había sido contemplado.**
+
+### 16.1 Qué es el selector y dónde vive
+
+En **"Visión General"** ([`ExperimentCenterUI.jsx:424`](apps/ExperimentCenterUI.jsx:424))
+existe un `<select>` de **Zona Horaria** que guarda el setting `business_timezone` en
+`system_settings` (vía `PATCH /settings/business_timezone`).
+
+Opciones disponibles: México Central (UTC-6), Cancún (UTC-5), Mazatlán (UTC-7),
+Tijuana (UTC-8), Colombia, Perú, Chile, Argentina, EEUU (3 zonas), España.
+
+Al cambiarlo, muestra una **advertencia explícita** ([`ExperimentCenterUI.jsx:463-469`](apps/ExperimentCenterUI.jsx:463)):
+> *"Esto afectará todo el sistema: Horas mostradas en TODO el ERP · Check-in / Check-out
+> de empleados · Reportes y estadísticas · Regla de día de negocio (5 AM)"*
+
+### 16.2 Cómo funciona HOY (el mecanismo real)
+
+El backend tiene **DOS mecanismos de zona horaria distintos**, y **NO son lo mismo**:
+
+| Mecanismo | Setting | Quién lo usa | Qué hace |
+|---|---|---|---|
+| **A — Zona del negocio** | `business_timezone` | `analytics`, `grandeza`, `hr` vía [`core/timezone.py`](apps/api/core/timezone.py:21) | Convierte UTC → hora local del negocio con `ZoneInfo` (soporta DST) |
+| **B — Offset de red** | `network_tz_offset_hours` | `network/router.py` vía `_get_tz_offset()` | Suma un offset fijo de horas para filtrar incidentes por día |
+
+**El selector de "Visión General" controla el mecanismo A** (`business_timezone`).
+
+**El KDS de Heladería usa un TERCER mecanismo** (`heladeria_kds_urgency_config.tzOffsetHours`,
+sembrado en [`settings/service.py:131`](apps/api/modules/settings/service.py:131) con valor `6`).
+
+### 16.3 🔴 El conflicto con la Fase 19.4
+
+**La Fase 19.4, tal como estaba escrita, es INCOMPATIBLE con el selector.**
+
+**El problema:** la Fase 19.4 propone que `network`, `cash`, `grandeza` y `orders`
+guarden **UTC** en sus columnas. Pero:
+
+1. **`grandeza` HOY guarda hora LOCAL a propósito.** Ver
+   [`grandeza/service.py:15-20`](apps/api/modules/grandeza/service.py:15):
+   ```python
+   # que los timestamps se guarden en hora local de México sin depender del SO.
+   from core.timezone import get_business_tz, local_now
+   def _now_local(db):
+       return local_now(await get_business_tz(db))
+   ```
+   **`grandeza` NO usa `datetime.now()` por descuido — lo usa DELIBERADAMENTE** para
+   respetar el selector de zona horaria. **Migrarlo a UTC rompería esa intención.**
+
+2. **`hr` guarda UTC (`timezone=True`) pero MUESTRA local** vía `local_now()`. Es el
+   patrón correcto: **almacenar UTC, mostrar local**. El selector funciona porque la
+   **conversión ocurre al mostrar**, no al guardar.
+
+3. **`network` usa un offset FIJO (`network_tz_offset_hours = 6`)**, que **NO se actualiza**
+   cuando el usuario cambia `business_timezone`. Si el usuario cambia a Cancún (UTC-5),
+   el filtrado de red **sigue restando 6 horas**. **Ya es un bug latente hoy.**
+
+### 16.4 La pregunta correcta
+
+> **¿Qué debe pasar con el selector de zona horaria si implementamos V19?**
+
+**Respuesta honesta:** el selector **debe seguir funcionando igual**, y para eso la
+Fase 19.4 **debe reformularse**. Hay dos caminos:
+
+#### ❌ Camino incorrecto (lo que decía la Rev. 1)
+Migrar `grandeza` a `default=utcnow`. **Rompe la intención deliberada** de guardar hora
+local y **desincroniza** los datos históricos de Grandeza (que están en local) con los
+nuevos (en UTC). **NO hacer.**
+
+#### ✅ Camino correcto (corrección de la Rev. 2)
+**Distinguir dos tipos de columna:**
+
+| Tipo | Convención | Módulos | Acción V19 |
+|---|---|---|---|
+| **Timestamp técnico** (auditoría, logs, `created_at` de eventos) | **UTC** | `network`, `cash`, `orders` | Migrar a `utcnow` ✅ |
+| **Timestamp de negocio** (fechas operativas que el usuario ve) | **Hora local del negocio** | `grandeza` | **NO migrar.** Ya es correcto. |
+
+**Regla de decisión:**
+> Si la columna se **muestra al usuario como fecha de negocio** → hora local (vía
+> `core/timezone.py`). Si es **metadata técnica** → UTC.
+
+### 16.5 Corrección obligatoria de la Fase 19.4
+
+**La Fase 19.4 se reformula así:**
+
+| Módulo | Columna | Decisión REVISADA |
+|---|---|---|
+| `network` | `created_at` | ✅ Migrar a `utcnow` (metadata técnica) |
+| `cash` | `created_at` | ✅ Migrar a `utcnow` (metadata técnica) |
+| `orders` | `created_at`, `updated_at` | ✅ Migrar a `utcnow` (metadata técnica) |
+| `grandeza` | 7 columnas | ❌ **NO migrar.** Usa `local_now()` deliberadamente. |
+| `pos` | `created_at` | ❌ **NO tocar** (Restricción A) |
+
+**Además, se añade una Fase 19.4b (opcional, recomendada):**
+> **Sincronizar `network_tz_offset_hours` con `business_timezone`.** Hoy son dos settings
+> independientes que pueden contradecirse. La corrección: que `_get_tz_offset()` **derive**
+> el offset de `business_timezone` en vez de leer un número fijo. Esto **elimina un bug
+> latente** y hace que el selector de "Visión General" **realmente** afecte al módulo de red.
+
+### 16.6 Impacto en el KDS de Heladería
+
+El KDS usa `heladeria_kds_urgency_config.tzOffsetHours = 6` (hardcodeado en el seed).
+**V18 ya lo neutralizó** para datos nuevos (el backend envía `Z`, y
+[`kdsUrgency.js:100`](apps/heladeria/utils/kdsUrgency.js:100) detecta el sufijo).
+
+**Con V19:** si el usuario cambia `business_timezone` a Cancún (UTC-5), el KDS **seguiría
+usando 6** para datos históricos. **Es aceptable** (los datos históricos son de Toluca),
+pero **debe documentarse** que `tzOffsetHours` es un valor **histórico**, no una
+configuración viva.
+
+### 16.7 Verificación añadida al checklist
+
+- [ ] **Cambiar `business_timezone` a `America/Cancun`** en "Visión General" → verificar
+      que `analytics`, `hr` y `grandeza` reflejan UTC-5
+- [ ] **Verificar que `network` sigue filtrando con offset 6** (bug latente documentado)
+- [ ] **Verificar que el KDS de Heladería NO se rompe** al cambiar la zona
+- [ ] **Revertir `business_timezone` a `America/Mexico_City`** tras la prueba
+
+### 16.8 Conclusión
+
+**El selector de zona horaria de "Visión General" NO se rompe con V19 — SIEMPRE QUE la
+Fase 19.4 se reformule para NO migrar `grandeza`.**
+
+La Rev. 1 de este plan **habría introducido un bug silencioso**: Grandeza habría empezado
+a guardar UTC mientras el resto del sistema esperaba hora local, causando un **desfase de
+6 horas** en las fechas de negocio de Grandeza. **Este hallazgo justifica la autocrítica
+preventiva.**
+
+> **Lección:** antes de "unificar" una convención, hay que preguntarse **por qué** existen
+> dos. A veces la segunda convención **no es deuda — es una decisión de negocio.**
+
+---
+
+**FIN DEL PLAN — V19 (Revisión 2 — con hallazgo crítico de zona horaria)**
