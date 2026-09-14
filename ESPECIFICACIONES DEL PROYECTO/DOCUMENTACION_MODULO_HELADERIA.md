@@ -483,6 +483,7 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 | **IndexedDB para offline** | Patrón ya probado en el POS. Permite operar sin red y sincronizar después |
 | **`CONFIG.API_BASE_URL`** | Prohibido `window.location.hostname`. Todas las URLs centralizadas |
 | **Precio = recipiente + extras** (sabores incluidos) | Modelo de precios simple y predecible para el cajero |
+| **(V18 Fase 18.1) Normalizar timestamps en serialización, no en la columna** | `core/serialization.py::iso_utc()` añade `Z` a los naive. Evita una migración de alto riesgo sobre `tickets` (compartida con el POS IA) y unifica el contrato con el POS (v12 Fase 12.4) |
 
 ---
 
@@ -521,6 +522,23 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 
 **Regla de Oro:** *Un `DateTime` sin `timezone=True` es hora local naive: NUNCA pasarlo a `Date.parse()` sin corregir el offset.*
 
+### 🐛 BUG 4: La API serializaba `created_at` sin sufijo `Z` (V18 Fase 18.1)
+
+**Síntoma:** El frontend del KDS necesitaba un parche frágil (`endsWith('Z')`) para interpretar `created_at` como UTC. El mismo problema ya había sido resuelto en el POS de Panadería (v12 Fase 12.4) con un helper local `_iso_utc()`, pero Heladería lo desconocía y duplicaba el parche.
+
+**Causa Raíz:** El problema de BUG 3 **no es exclusivo de Heladería**: es **sistémico**. Conviven dos convenciones de timestamp en el backend:
+
+| Convención | Módulos | Definición |
+|---|---|---|
+| ✅ Correcta | `hr`, `warehouse`, `security` | `DateTime(timezone=True)` + `server_default=func.now()` |
+| ⚠️ Naive local | `pos`, `network`, `cash`, `grandeza`, `orders` | `DateTime(default=datetime.now)` |
+
+[`pos/models.py:34`](apps/api/modules/pos/models.py:34) es naive. La solución del POS fue **normalizar en la capa de serialización**, NO migrar la columna: [`pos/router.py:215`](apps/api/modules/pos/router.py:215) define `_iso_utc()` (usado en la línea 306) que añade `Z` a los naive. Heladería serializaba con `.isoformat()` crudo.
+
+**Solución (V18 Fase 18.1):** Se extrajo el helper a un módulo compartido [`core/serialization.py`](apps/api/core/serialization.py:1) (`iso_utc()`). Heladería lo usa en [`heladeria/service.py:180`](apps/api/modules/heladeria/service.py:180) (`created_at=iso_utc(ticket.created_at) or ""`). El POS **no se alteró**: [`pos/router.py:218`](apps/api/modules/pos/router.py:218) conserva el alias `from core.serialization import iso_utc as _iso_utc` (comportamiento idéntico). 8 tests en [`test_heladeria_serialization.py`](apps/api/tests/test_heladeria_serialization.py:1).
+
+**Regla de Oro:** *Un datetime naive se asume UTC y SIEMPRE se serializa con sufijo `Z`. La normalización va en la capa de serialización, no en la columna (evita migraciones de alto riesgo).*
+
 ### Estado actual: 🟢 Sin bugs abiertos
 
 El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme se presentan.
@@ -537,6 +555,7 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 | **Display Precios** | V17 (Fases 17.0–17.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), config persistida en `system_settings`, offline-first con caché 24 h, `displayMappers.js` puro con 43 tests |
 | **Display Tótem** | V16 (Fases 16.0–16.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), manifiesto persistido en `system_settings` (`heladeria_totem_content`), subida/borrado de imágenes con validación de MIME + tamaño (8 MB), servido estático en `/media/totem/`, offline-first con caché en `localStorage`, `totemSequencer.js` puro con 36 tests. **Sin animaciones infinitas** (Incidente 16.1) |
 | **KDS Inteligente** | V15 (Fases 15.1–15.5) | 🟢 Funcional — urgencia visual por color (NORMAL/WARNING/CRITICAL) en ambos KDS, umbrales configurables en `system_settings` (`heladeria_kds_urgency_config`), `kdsUrgency.js` puro con 25 tests. **Solo color, sin animación** (Incidente 16.1). El asistente de lotes se eliminó (D1: no existen alérgenos en el sistema) |
+| **Contrato de serialización UTC** | V18 (Fase 18.1) | 🟢 Funcional — `core/serialization.py::iso_utc()` compartido con el POS. Heladería serializa `created_at` con sufijo `Z`; el POS conserva su alias `_iso_utc` sin cambios. 8 tests. Cierra BUG 4 |
 
 ### Oleada 2 (pendiente de revisión)
 
