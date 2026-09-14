@@ -6,7 +6,7 @@
 >
 > **Estado:** 📋 **PLANIFICADO.** No implementado. Depende de V19 (Fase 19.4).
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 4
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 5
 >
 > **Cambios de la Rev. 2:** se incorpora la **Sección 6.5 — Arreglo de zona horaria
 > del POS IA**, tras auditar el módulo a fondo. Se documenta el **bug del `+6h`**
@@ -27,6 +27,14 @@
 > (`Column(Date)`, se quedan locales) de los **instantes reales**
 > (`Column(DateTime)`, pasan a UTC). Se elimina `_now_mexico()` como fuente de
 > hora local y se corrigen 2 anti-patrones de frontend.
+>
+> **Cambios de la Rev. 5:** se incorpora la **Sección 6.8 — Corrección de los tres
+> bugs cerrados (vista consolidada)**, que reúne en **una sola lista de
+> verificación** los arreglos que las Secciones 6.5, 6.6 y 6.7 describían por
+> separado. Se añade la **autocrítica #14** (los tres bugs comparten una causa raíz
+> única) y el **riesgo #6** (migrar `pos` sin `analytics` desfasa los reportes).
+> Esta sección es la respuesta formal a *"¿qué tendríamos que hacer para corregir
+> los tres bugs cerrados?"*.
 
 ---
 
@@ -51,6 +59,7 @@ corregir mi propio diseño inicial):
 | 11 | "Migrar `pos` a UTC solo afecta a `pos`" | **FALSO.** `analytics/service.py` filtra `Ticket.created_at` con fronteras naive local (12 usos). Migrar `pos` sin tocar `analytics` **desfasa los reportes 6h** | ✅ Sí |
 | 12 | "`analytics` ya sigue al selector" | **MATIZ.** Lo sigue para **formatear** (frontend), pero **NO** para **filtrar** (SQL). Su filtro ignora el selector | ✅ Sí |
 | 13 | "`grandeza` debe quedar excluido" | **FALSO (Rev. 4).** El dueño ordenó incluirlo. Sus `Column(Date)` (`journey_date`, `route_date`) se quedan locales; sus `Column(DateTime)` se migran a UTC | ✅ Sí |
+| 14 | "Los tres bugs cerrados son independientes" | **FALSO (Rev. 5).** Comparten **una causa raíz única**: el ERP tiene 3 convenciones de timestamp conviviendo. Se corrigen con **un helper compartido** (`local_day_bounds_utc`) y **un orden de ejecución estricto**, no uno por uno | ✅ Sí |
 
 **Conclusión de la autocrítica:** este plan **NO es "activar" algo que ya existe**.
 Es **corregir desviaciones reales** en **5 módulos backend** (`network`, `cash`,
@@ -60,6 +69,12 @@ fechas en 49 puntos del frontend. Cualquier plan que diga lo contrario está min
 **Nota de la Rev. 4:** `grandeza` **ya no es una excepción**. Se migra como los
 demás, con la única salvedad de que sus **fechas de negocio** (`Column(Date)`)
 permanecen en calendario local por definición — no son instantes.
+
+**Nota de la Rev. 5:** los **tres bugs cerrados** (el `+6h` del POS IA, el
+acoplamiento `analytics` ↔ `pos`, y el `_now_mexico()` de `grandeza`) **no son
+tres problemas distintos**: son **tres síntomas de la misma enfermedad**. La
+Sección 6.8 los presenta como una **lista de verificación única** con sus
+**criterios de aceptación** medibles.
 
 ---
 
@@ -900,6 +915,190 @@ cambien de zona.
 
 ---
 
+## 6.8 CORRECCIÓN DE LOS TRES BUGS CERRADOS (Rev. 5) — vista consolidada
+
+> **Por qué existe esta sección.** Las Secciones 6.5, 6.6 y 6.7 describen los
+> arreglos **desde la perspectiva de cada módulo**. Esta sección los presenta
+> **desde la perspectiva de los tres bugs**, para que quien implemente tenga una
+> **lista de verificación única** y no tenga que saltar entre secciones. Es la
+> respuesta formal a la pregunta *"¿qué tendríamos que hacer para corregir los
+> tres bugs cerrados?"*.
+
+### 6.8.1 Los tres bugs y su causa raíz común
+
+| # | Bug | Archivo / línea | Naturaleza real |
+|---|---|---|---|
+| 1 | El `+6h` del POS IA | [`pos/service.py:573-584`](apps/api/modules/pos/service.py:573) | **NO es un bug: es un parche funcional.** Compensa que `created_at` es naive local. Se vuelve bug **solo si** se migra `created_at` a UTC sin generalizarlo |
+| 2 | Acoplamiento `analytics` ↔ `pos` | [`analytics/service.py`](apps/api/modules/analytics/service.py:54) — **12 usos** | Filtra y agrupa `Ticket.created_at` con fronteras naive local. Funciona **por coincidencia**; al migrar `pos` a UTC **desfasa los reportes 6h** |
+| 3 | `_now_mexico()` de `grandeza` | [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) | **Funcionalmente idéntico al `+6h` del POS.** 3 call sites escriben hora local en columnas `DateTime` |
+
+**Causa raíz única:** el ERP tiene **tres convenciones de timestamp conviviendo**
+(UTC real, naive local, naive local con parche) y **tres mecanismos de zona horaria
+distintos**. Los tres bugs son **síntomas de la misma enfermedad**. Por eso no se
+corrigen "uno por uno": se corrigen con **un helper compartido** y **un orden de
+ejecución estricto**.
+
+### 6.8.2 El helper compartido que corrige los tres
+
+Todo se resuelve con **dos funciones nuevas** en `core/timestamps.py` (Fase 20.0),
+que **ya están especificadas** en las Secciones 4.1, 6.6.3 y 6.7.4:
+
+```python
+# apps/api/core/timestamps.py (NUEVO — Fase 20.0)
+
+async def local_day_bounds_utc(db, start_date: date, end_date: date):
+    """Convierte un rango de dias LOCALES a un rango UTC [start, end).
+    Corrige el Bug #1 (POS) y el Bug #2 (analytics) a la vez."""
+    tz = await get_business_tz(db)
+    start_local = datetime.combine(start_date, time.min, tzinfo=tz)
+    end_local   = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=tz)
+    start_utc = start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc   = end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    return start_utc, end_utc
+
+
+async def to_local_date_str(db, dt_utc) -> str | None:
+    """Convierte un instante UTC naive a 'YYYY-MM-DD' en la zona del negocio.
+    Corrige el Bug #3 (grandeza, strftime sobre created_at)."""
+    if dt_utc is None:
+        return None
+    tz = await get_business_tz(db)
+    return utc_to_local(dt_utc, tz).strftime("%Y-%m-%d")
+```
+
+**Regla de oro:** estos dos helpers son la **única** forma autorizada de convertir
+entre local y UTC en el backend. Cualquier `+ timedelta(hours=6)` o
+`datetime.combine(...)` nuevo queda **prohibido** por revisión de código.
+
+### 6.8.3 Bug #1 — El `+6h` del POS IA: generalizar, nunca borrar
+
+**Código actual** ([`pos/service.py:573-584`](apps/api/modules/pos/service.py:573)):
+
+```python
+if search_date:
+    try:
+        from datetime import datetime, timedelta
+        # Los timestamps están en UTC. Hora local México es UTC-6.   ← FALSO
+        target_date = datetime.strptime(search_date, "%Y-%m-%d")
+        start_utc = target_date + timedelta(hours=6)
+        end_utc = target_date + timedelta(days=1, hours=6)
+        query = query.where(models.Ticket.created_at >= start_utc).where(models.Ticket.created_at < end_utc)
+```
+
+**Qué hacer (3 pasos, en el MISMO commit que la migración de `pos`):**
+
+1. Reemplazar las líneas 573-584 por:
+   ```python
+   if search_date:
+       try:
+           target_date = datetime.strptime(search_date, "%Y-%m-%d").date()
+           start_utc, end_utc = await local_day_bounds_utc(db, target_date, target_date)
+           query = query.where(models.Ticket.created_at >= start_utc).where(models.Ticket.created_at < end_utc)
+       except Exception as e:
+           logging.error(f"Error parsing date {search_date}: {e}")
+   ```
+2. **NO borrar el `+6h` sin migrar `created_at`.** Si se borra solo, el rango pasa a
+   00:00→00:00 UTC = 18:00→18:00 local → **la Auditoría POS se rompe**.
+3. **NO migrar `created_at` sin tocar el `+6h`.** Si se migra solo, el `+6h` produce
+   06:00→06:00 UTC = 00:00→00:00 local → **correcto por accidente**, pero el número
+   mágico queda y no soporta DST.
+
+**Test de regresión (Bug #1):** crear un ticket con `created_at` a las **02:00 hora
+local**, consultar auditoría con `search_date` de ese día → **debe aparecer**. Hoy
+**no aparece** (bug existente que nadie había reportado).
+
+### 6.8.4 Bug #2 — El acoplamiento `analytics` ↔ `pos`: los 12 usos
+
+**Tabla de reemplazo exacta** (ver Sección 6.6.2 para el detalle):
+
+| Línea | Función | Patrón actual | Reemplazo |
+|---|---|---|---|
+| [`54-55`](apps/api/modules/analytics/service.py:54) | `get_product_rankings` | `dt_cls.combine(start_date, dt_cls.min.time())` | `await local_day_bounds_utc(db, start_date, end_date)` |
+| [`89-90`](apps/api/modules/analytics/service.py:89) | `get_ticket_metrics` | `dt_cls.combine(...)` | `await local_day_bounds_utc(db, start_date, end_date)` |
+| [`104,111-115`](apps/api/modules/analytics/service.py:104) | `get_time_series_metrics` | `func.date(Ticket.created_at)` | `func.date(func.timezone(tz_name, Ticket.created_at))` |
+| [`121`](apps/api/modules/analytics/service.py:121) | histograma por hora | `func.extract('hour', Ticket.created_at)` | `func.extract('hour', func.timezone(tz_name, Ticket.created_at))` |
+| [`126-128`](apps/api/modules/analytics/service.py:126) | filtro por fecha | `func.date(Ticket.created_at)` | `func.date(func.timezone(tz_name, Ticket.created_at))` |
+| [`156,158`](apps/api/modules/analytics/service.py:156) | `execute_custom_query` | `func.date(Ticket.created_at)` | `func.date(func.timezone(tz_name, Ticket.created_at))` |
+| [`217-218`](apps/api/modules/analytics/service.py:217) | post-filtro Python | `ticket.created_at.date()` / `.weekday()` | `utc_to_local(ticket.created_at, tz).date()` / `.weekday()` |
+| [`272-273`](apps/api/modules/analytics/service.py:272) | `get_product_daily_sales` | `func.date(Ticket.created_at)` | `func.date(func.timezone(tz_name, Ticket.created_at))` |
+| [`281`](apps/api/modules/analytics/service.py:281) | día de la semana | `extract('dow', Ticket.created_at)` | `extract('dow', func.timezone(tz_name, Ticket.created_at))` |
+| [`288,297,299`](apps/api/modules/analytics/service.py:288) | agrupación | `func.date(Ticket.created_at)` | `func.date(func.timezone(tz_name, Ticket.created_at))` |
+
+donde `tz_name` se obtiene una sola vez por request con
+`tz_name = str(await get_business_tz(db))`.
+
+**Test de paridad (Bug #2):** el total de ventas del día en el **POS IA** debe
+**coincidir exactamente** con el de **Estadísticas de Ventas** para la misma fecha.
+Hoy coinciden por casualidad; tras la migración deben coincidir **por diseño**.
+
+### 6.8.5 Bug #3 — `_now_mexico()` de `grandeza`: eliminar el parche
+
+**Código actual** ([`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18)):
+
+```python
+async def _now_mexico(db):
+    """Retorna datetime naive en hora del negocio (configurable via system_settings)."""
+    return local_now(await get_business_tz(db))
+```
+
+**Qué hacer (commit propio, DESPUÉS de la Fase 20.3):**
+
+1. Convertir `_now_mexico()` en **alias de `utcnow()`** (se conserva el nombre para
+   no romper las 3 llamadas):
+   ```python
+   async def _now_mexico(db):
+       """DEPRECADO (Rev. 5): alias de utcnow() para no romper las 3 llamadas.
+       Se conserva el nombre por compatibilidad; el valor ya es UTC."""
+       return utcnow()
+   ```
+2. **NO tocar** las columnas `Column(Date)` (`journey_date`, `route_date`) — son
+   **fechas de calendario de negocio** y se quedan locales.
+3. Reemplazar [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614)
+   `v.created_at.strftime("%Y-%m-%d")` por `await to_local_date_str(db, v.created_at)`.
+4. **Migración Alembic:** convertir los valores históricos de naive-local a UTC
+   (`UPDATE ... SET dispatched_at = dispatched_at + interval '6 hours'` o equivalente
+   con `ZoneInfo`), en el mismo commit que el cambio de código.
+
+**Test de regresión (Bug #3):** `dispatched_at` de una jornada recién creada debe
+estar a menos de 5s de `utcnow()`, y `journey_date` **NO debe cambiar**.
+
+### 6.8.6 Orden de ejecución de los tres arreglos (no negociable)
+
+```
+Fase 20.0  → crear core/timestamps.py (local_day_bounds_utc, to_local_date_str, utcnow)
+Fase 20.1  → sincronizar los 3 mecanismos de TZ
+Fase 20.3  → frontend listo (shared/timezone.js + TimezoneProvider)
+Fase 20.2  → migrar timestamps a UTC:
+   20.2.b → Bug #1: POS IA  (+6h → local_day_bounds_utc)   ┐
+   20.2.c → Bug #2: analytics (12 usos → tz-aware)          ├─ MISMO COMMIT ATÓMICO
+   20.2   → pos/models.py:34 → default=utcnow               ┘
+   20.2.d → Bug #3: grandeza (_now_mexico → utcnow)         ← COMMIT PROPIO
+Fase 20.4  → migrar los 49 puntos de frontend
+Fase 20.5  → unificación total (DIFERIDA)
+```
+
+**Por qué el orden importa:** `core/timestamps.py` debe existir **antes** de tocar
+POS/analytics/grandeza, porque los tres lo consumen. Y `pos` + `analytics` deben
+migrarse **juntos**, porque `analytics` lee `Ticket.created_at` que escribe `pos`.
+Si se migra uno solo, el ERP queda en un estado intermedio donde **los reportes
+mienten**.
+
+### 6.8.7 Criterios de aceptación de los tres arreglos
+
+- [ ] **Bug #1:** un ticket vendido a las 02:00 local aparece en la Auditoría POS del
+  día correcto (hoy no aparece).
+- [ ] **Bug #2:** el total de ventas del POS IA coincide **exactamente** con el de
+  Estadísticas de Ventas para la misma fecha.
+- [ ] **Bug #3:** `dispatched_at` está en UTC y se muestra en hora local en
+  `GrandezaDailyUI.jsx` / `GrandezaDriverUI.jsx`; `journey_date` no cambió.
+- [ ] **Cero** ocurrencias de `timedelta(hours=6)` en el backend.
+- [ ] **Cero** ocurrencias de `datetime.combine(` en `analytics/service.py`.
+- [ ] **Cero** ocurrencias de `local_now(` en `grandeza/service.py`.
+- [ ] `pytest` verde (baseline 58 + los tests nuevos de `core/timestamps.py`).
+- [ ] `vitest` verde (baseline 293).
+
+---
+
 ## 7. FASE 20.3 — FRONTEND: CONTEXTO GLOBAL DE ZONA HORARIA
 
 **Objetivo:** que el frontend **sepa** la zona del negocio y formatee con ella.
@@ -1097,6 +1296,7 @@ ambos `_utcnow` hacen exactamente lo mismo).
 | **20.2.b** | 🔴 **ALTO** | **Auditoría POS desfasada 6h** | **Commit atómico con 20.2 (ver 6.5.2)** |
 | **20.2.c** | 🔴 **ALTO** | **Reportes de ventas desfasados 6h** | **Commit atómico con 20.2 (ver 6.6.4)** |
 | **20.2.d** | 🟡 **Medio** | **Reparto con horas desfasadas 6h** | **Commit propio, DESPUÉS de 20.3 (ver 6.7.7)** |
+| **6.8** | 🔴 **ALTO** | **Los 3 bugs cerrados siguen abiertos** | **Vista consolidada + criterios de aceptación (ver 6.8)** |
 | 20.3 | 🟢 Bajo | Ninguno (solo añade contexto) | Degradación elegante |
 | 20.4 | 🔴 **ALTO** | Fechas mal mostradas | Oleadas + smoke por pantalla |
 | 20.5 | 🟡 Medio | Tests de warehouse/security | **DIFERIR** |
@@ -1192,6 +1392,27 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
 6. **Test de frontera:** `journey_date` de un viaje creado a las **23:30 local** debe
    seguir siendo el día local, no el día UTC.
 
+### 10.6 El riesgo #6: los tres bugs cerrados siguen abiertos (Rev. 5)
+
+**El riesgo de "creer que ya está resuelto"**, porque **el plan ya los describe**:
+
+> Las Secciones 6.5, 6.6 y 6.7 **documentan** los tres arreglos, pero **documentar
+> no es corregir**. Si el implementador lee solo una de las tres secciones y aplica
+> solo ese arreglo, el ERP queda en un **estado intermedio peor que el actual**:
+> `pos` migrado a UTC pero `analytics` filtrando en local → **reportes desfasados
+> 6 horas** (hoy funcionan por coincidencia).
+
+**Mitigación obligatoria:**
+1. **Usar la Sección 6.8 como lista de verificación única** (no las 6.5/6.6/6.7 por
+   separado): tiene los 7 criterios de aceptación medibles.
+2. **Commit atómico `pos` + `analytics`** (Sección 6.8.6): indivisible.
+3. **Verificar los 3 criterios de aceptación** antes de cerrar la Fase 20.2:
+   - Bug #1: ticket de las 02:00 local aparece en el día correcto.
+   - Bug #2: total POS IA == total Estadísticas de Ventas.
+   - Bug #3: `dispatched_at` en UTC, `journey_date` sin cambio.
+4. **Grep de control:** cero `timedelta(hours=6)`, cero `datetime.combine(` en
+   `analytics/service.py`, cero `local_now(` en `grandeza/service.py`.
+
 ---
 
 ## 11. ORDEN DE EJECUCIÓN
@@ -1204,11 +1425,13 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
 20.3    Frontend: shared/timezone.js + TimezoneProvider  ← ANTES de 20.2
   ↓     vitest ~305/305
 20.2    Migrar timestamps a UTC (network, cash, orders, pos)
-20.2.b  Arreglar el +6h del POS IA (generalizar con ZoneInfo)  ← MISMO COMMIT que 20.2
-20.2.c  Arreglar el filtro de fechas de analytics (UTC vs local) ← MISMO COMMIT que 20.2
+20.2.b  Bug #1: arreglar el +6h del POS IA (generalizar con ZoneInfo)  ← MISMO COMMIT que 20.2
+20.2.c  Bug #2: arreglar el filtro de fechas de analytics (UTC vs local) ← MISMO COMMIT que 20.2
   ↓     pytest ~76/76 + smoke POS + smoke KDS + smoke Auditoría POS + smoke Estadísticas
-20.2.d  Migrar grandeza a UTC (Date local / DateTime UTC)  ← COMMIT PROPIO, tras 20.3
+  ↓     ✅ Criterios de aceptación Bug #1 y Bug #2 (Sección 6.8.7)
+20.2.d  Bug #3: migrar grandeza a UTC (Date local / DateTime UTC)  ← COMMIT PROPIO, tras 20.3
   ↓     pytest ~80/80 + smoke Reparto Grandeza + smoke App Repartidor
+  ↓     ✅ Criterios de aceptación Bug #3 (Sección 6.8.7)
 20.4    Migrar los 49 puntos de formateo (4 oleadas)
   ↓     vitest ~305/305 + build + smoke por pantalla
 20.5    Unificación y limpieza → DIFERIDA
@@ -1320,6 +1543,15 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 - [ ] Smoke Reparto Grandeza: horas de despacho/llegada correctas
 - [ ] Smoke App Repartidor: horas correctas en el móvil
 
+### Sección 6.8 — Corrección de los 3 bugs cerrados (Rev. 5, vista consolidada)
+- [ ] **Bug #1:** ticket vendido a las **02:00 local** aparece en la Auditoría POS del día correcto
+- [ ] **Bug #2:** total de ventas del POS IA == total de Estadísticas de Ventas (misma fecha)
+- [ ] **Bug #3:** `dispatched_at` en UTC y `journey_date` sin cambio
+- [ ] **Grep de control:** cero `timedelta(hours=6)` en el backend
+- [ ] **Grep de control:** cero `datetime.combine(` en `analytics/service.py`
+- [ ] **Grep de control:** cero `local_now(` en `grandeza/service.py`
+- [ ] Los 3 arreglos están en **2 commits** (atómico `pos`+`analytics`, propio `grandeza`)
+
 ### Fase 20.4
 - [ ] Oleada 1 (analytics, inventory, network) migrada + smoke
 - [ ] Oleada 2 (production) migrada + smoke
@@ -1355,6 +1587,7 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 | 12 | Quitar el parche `+ 'Z'` de [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) | Defensa redundante inofensiva |
 | 13 | **Migrar `pos` sin migrar `analytics`** | **El filtro de fechas de `analytics` asume misma zona que `created_at`. Van juntos o se rompen los reportes** |
 | 14 | Reescribir el filtro de `analytics` con lógica Python en vez de SQL | Traer filas a Python para agrupar por día local es O(n) y rompe el rendimiento |
+| 15 | **Corregir los 3 bugs "uno por uno"** | **Comparten causa raíz. Se corrigen con un helper compartido y un orden estricto (Sección 6.8), no aislados** |
 
 ---
 
@@ -1386,6 +1619,14 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 14. **"Excluir un módulo" es una decisión, no un olvido.** `grandeza` se había excluido
     por comodidad; el usuario lo detectó. **Si un módulo tiene `DateTime`, entra al
     esquema global.** La única excepción legítima son las `Column(Date)` de negocio.
+15. **Documentar un arreglo no es aplicarlo.** Las Secciones 6.5/6.6/6.7 describían los
+    tres bugs, pero **faltaba la vista consolidada** que impidiera aplicarlos por
+    separado. La Sección 6.8 existe para eso: **una lista de verificación única con
+    criterios de aceptación medibles**.
+16. **Los síntomas múltiples suelen tener una causa raíz única.** El `+6h` del POS, el
+    `func.date` de analytics y el `_now_mexico` de grandeza parecían tres bugs; son
+    **tres manifestaciones de "el ERP tiene 3 convenciones de timestamp"**. Buscar la
+    causa raíz antes de contar los bugs.
 
 ---
 
@@ -1400,6 +1641,7 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 | **20.2.b** | **~6 edits** | 🔴 **Alta** | **1** |
 | **20.2.c** | **~3 edits** | 🔴 **Alta** | **1** |
 | **20.2.d** | **~5 edits** | 🟡 **Media** | **1** |
+| **6.8** | **0 (vista consolidada)** | 🟢 **Baja** | **0** |
 | 20.4 | ~22 edits | 🔴 Alta | 3 |
 | 20.5 | — | ⏸️ Diferida | 0 |
 | **Total** | **~58 archivos** | — | **~11 sesiones** |
@@ -1427,6 +1669,11 @@ La Fase 20.2.d de V20 (Rev. 4) migra `grandeza`, que V19 dejó fuera.
 **No hay conflicto:** si V19 ya migró `network`/`cash`/`orders`, la Fase 20.2 solo
 hace `pos` y verifica los demás.
 
+**Nota de la Rev. 5:** la Sección 6.8 **no añade trabajo nuevo** — es una **vista
+consolidada** de los arreglos de las Secciones 6.5, 6.6 y 6.7. Su valor es que
+**impide aplicarlos por separado**, que es el error más probable de un implementador
+que lea el plan por partes.
+
 ---
 
 ## 17. CONCLUSIÓN
@@ -1444,9 +1691,17 @@ industria** ("Store UTC, Display Local") de forma **completa y verificable**:
   y utilitarios (Sección 6.5), respetando la Restricción A.
 - **Analytics:** su filtro de fechas deja de asumir la zona de `created_at` y pasa
   a convertir "día local → rango UTC" con el mismo helper del POS (Sección 6.6).
+- **Los 3 bugs cerrados:** quedan **corregidos y verificables** con la lista única de
+  la Sección 6.8 — el `+6h` generalizado, los 12 usos de `analytics` conscientes de
+  zona, y `_now_mexico()` convertido en alias de `utcnow()`.
 
 **El resultado:** reportes que cuadran, cero bugs de horario de verano, una sola
 fuente de verdad para la hora en todo el sistema, y un POS IA que —sin cambiar una
 sola línea de su interfaz— deja de depender de un parche de `+6h` para funcionar.
+
+**Cierre de la Rev. 5:** los tres bugs cerrados **no se corrigen por separado**. La
+Sección 6.8 los presenta como **una sola unidad de trabajo** con **7 criterios de
+aceptación medibles** y **3 greps de control**. Si los 7 criterios pasan, los tres
+bugs están cerrados de verdad — no solo documentados.
 
 **FIN DEL PLAN V20**
