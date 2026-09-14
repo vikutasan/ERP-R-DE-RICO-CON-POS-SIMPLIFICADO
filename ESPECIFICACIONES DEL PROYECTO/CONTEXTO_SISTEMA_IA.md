@@ -604,11 +604,43 @@ Variables que cambian frecuentemente provienen de la tabla `SystemSetting`, no d
 | **Vista General** | Modal "Editar Info" | Selector de zona horaria con modal de advertencia |
 
 **Reglas de programacion:**
-1. **PROHIBIDO** usar `datetime.utcnow()` — usar `datetime.now()` (que en Docker = UTC).
+1. **PROHIBIDO** usar `datetime.utcnow()` — usar `utcnow()` de `core/timestamps.py` (naive UTC) o `datetime.now()` (que en Docker = UTC).
 2. **PROHIBIDO** hardcodear `ZoneInfo('America/Mexico_City')` o `timedelta(hours=-6)` — usar `core/timezone.py`.
 3. Para logica que necesite hora local (puntualidad HR, regla 5 AM analytics), usar `local_now(await get_business_tz(db))`.
 4. Todo timestamp mostrado al usuario pasa por conversion UTC -> local usando el setting configurado.
 5. Cambiar la zona horaria en el setting NO modifica datos historicos, solo cambia la presentacion.
+
+### 12.2 Utilidad Centralizada de Timestamps — `core/timestamps.py` (V20)
+
+**Principio:** Un unico helper `utcnow()` produce el timestamp naive en UTC que se persiste en todas las columnas `DateTime`.
+
+```python
+# apps/api/core/timestamps.py
+from datetime import datetime, timezone
+
+def utcnow() -> datetime:
+    """Devuelve la hora actual en UTC como datetime NAIVE (sin tzinfo).
+
+    Se usa naive porque PostgreSQL almacena en columnas TIMESTAMP WITHOUT TIME ZONE
+    y todo el sistema asume UTC. La conversion a hora local se hace en presentacion.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+```
+
+**Helpers de conversion (`core/timezone.py`):**
+
+| Helper | Firma | Proposito |
+|--------|-------|-----------|
+| `get_business_tz(db)` | `async -> ZoneInfo` | Lee `business_timezone` de `system_settings` (cache 5 min, fallback `America/Mexico_City`) |
+| `local_now(tz)` | `-> datetime` | Hora actual en la zona del negocio |
+| `utc_to_local(dt, tz)` | `-> datetime` | Convierte un timestamp UTC naive a hora local |
+| `tz_offset_hours(tz, at=None)` | `-> int` | Offset en horas (NEGATIVO para Mexico: `-6`) |
+| `local_day_bounds_utc(tz, target_date=None)` | `-> (start_utc, end_utc)` | Limites `[inicio, fin)` del dia LOCAL expresados en UTC naive (fin EXCLUSIVO) |
+| `to_local_date_str(dt, tz)` | `-> str` | Fecha local `'YYYY-MM-DD'` de un timestamp UTC |
+
+**Regla de oro del offset:** `tz_offset_hours` devuelve **negativo** para Mexico (`-6`). El router de red y el KDS usan la convencion **positiva** (suman 6 a la medianoche local para obtener UTC), por lo que al derivar de `tz_offset_hours` se requiere `abs()`.
+
+**Regla de oro de las fechas de negocio:** Un string de solo fecha (`YYYY-MM-DD`) parseado con `new Date(dateStr + 'T12:00:00')` es **parseo de fecha de negocio**, NO un timestamp UTC. No debe migrarse a `formatLocal`. Solo los timestamps genuinos de backend (`created_at`, `timestamp`, etc.) se convierten con `formatLocal`.
 ---
 
 ## 13. SISTEMA DE ROLES Y PERMISOS (RBAC)
@@ -987,6 +1019,66 @@ Se verificaron los **40 archivos** que usan `CONFIG.API_BASE_URL` para confirmar
 - **OBLIGATORIO** ante una pÃ¡gina en blanco, **capturar la consola del navegador con evidencia real** (Chrome headless `--dump-dom` + `--enable-logging=stderr`) **antes** de proponer correcciones. Prohibido "adivinar" la causa (ej. culpar al cachÃ© del Service Worker sin evidencia).
 - **REGLA DE DIAGNÃ“STICO:** Si el `<div id="root">` estÃ¡ vacÃ­o â†’ error en evaluaciÃ³n de mÃ³dulo (import/referencia). Si el `<div id="root">` tiene contenido de error â†’ error de render (lo atrapa el `ErrorBoundary`).
 - **OBLIGATORIO** que todo archivo que use `CONFIG.API_BASE_URL` importe `CONFIG` desde `apps/shared/config.js` (o desde `apps/pos/config.js` segÃºn corresponda). Verificable con: `findstr /S /M /C:"CONFIG.API_BASE_URL" apps\*.jsx apps\*.js`.
+
+### 16.9 MigraciÃ³n Global a UTC y CorrecciÃ³n de los 3 Bugs de Zona Horaria (V20) (14/Septiembre/2026)
+
+**Plan ejecutado:** `plans/HOJA_DE_RUTA_V19_V20.md` (Rev. 4) â€” Bloque 9.
+**Commits clave:** `3655b9a` (POS + analytics), `6858b03` (grandeza), `559bc9e` (aceptaciÃ³n conjunta).
+
+**Contexto del Problema:**
+El sistema declaraba el principio "Store UTC, Display Local" (SecciÃ³n 4.6 y 12.1), pero en la prÃ¡ctica existÃan **tres mecanismos de zona horaria desincronizados** que producÃ­an cÃ¡lculos de dÃ­a local incorrectos en ventas nocturnas. El sÃ­ntoma visible: una venta a las 23:30 hora local aparecÃ­a en el dÃ­a siguiente en la AuditorÃ­a POS y en los reportes de analytics.
+
+**Los 3 Bugs (corregidos JUNTOS â€” nunca uno solo):**
+
+| # | Bug | UbicaciÃ³n | Causa raÃ­z | CorrecciÃ³n |
+|---|-----|-----------|-----------|-----------|
+| 1 | `+6h` hardcodeado en el filtro de dÃ­a del POS | `modules/pos/service.py:573-584` | El filtro `search_date` sumaba 6 horas fijas para convertir a UTC, ignorando el setting `business_timezone` | Generalizado con `local_day_bounds_utc(tz, search_date)` â€” **NO se borrÃ³**, se generalizÃ³ con `ZoneInfo` |
+| 2 | Acoplamiento `analytics` â†” `pos` | `modules/analytics/service.py` (`get_product_rankings`, `get_ticket_metrics`) | Analytics replicaba la lÃ³gica de lÃ­mites de dÃ­a del POS (bug latente: si uno cambiaba, el otro no) | Ambos usan `local_day_bounds_utc` desde `core/timezone.py` (fuente Ãºnica) |
+| 3 | `_now_mexico()` en `grandeza` | `modules/grandeza/service.py:18-20` + call-sites `:344`, `:484`, `:692` + `strftime` en `:614` | Generaba timestamps en hora local de MÃ©xico en lugar de UTC | `_now_mexico()` es ahora **alias de `utcnow()`**; el `strftime` de fecha se reemplazÃ³ por `to_local_date_str` |
+
+**Orden de EjecuciÃ³n Obligatorio (dependencias):**
+1. Crear `local_day_bounds_utc()` (Bloque 6) â€” infraestructura.
+2. Crear `to_local_date_str()` (Bloque 6) â€” infraestructura.
+3. Generalizar el `+6h` del POS (9.a).
+4. Migrar `analytics` (9.b) â€” **en el MISMO commit** que el paso 3 (commit atÃ³mico `3655b9a`).
+5. Migrar `grandeza` (9.c) â€” **commit propio** (`6858b03`).
+
+**La Trampa `Date` â‰ `DateTime` (crÃ­tica):**
+En `grandeza`, las columnas `journey_date` y `route_date` son `Column(Date)` = **fecha LOCAL** (no se tocan). Las columnas `dispatched_at`, `arrived_at`, `completed_at`, `recorded_at`, `created_at`, `updated_at` son `Column(DateTime)` = **UTC** (sÃ­ se migran). Confundir ambas rompe la lÃ³gica de rutas por dÃ­a de la semana.
+
+**La AsimetrÃ­a del POS IA (RestricciÃ³n A):**
+- **Backend** `modules/pos/service.py:573` âœ… **SÃ se toca** (es el borde que calcula el dÃ­a local).
+- **Frontend** `apps/pos/RetailVisionPOS.jsx:29` â›” **NO se toca** (ni una lÃ­nea). Es un **consumidor**, no un sujeto del cambio.
+- **VerificaciÃ³n obligatoria:** `git diff --name-only <base>..HEAD` NO debe incluir `RetailVisionPOS.jsx`. AdemÃ¡s, smoke obligatorio del POS IA (Bloque 9.e) para confirmar que sigue funcionando contra el backend migrado.
+
+**Evidencia de AceptaciÃ³n (Bloque 9.d):**
+- Archivo `apps/api/tests/test_bloque9d_3bugs.py` (10 tests) que prueban **conjuntamente** los 3 bugs:
+  - Ticket a las 23:30 local cae en el dÃ­a local correcto (no D+1).
+  - Ticket a las 00:30 local cae en el dÃ­a local correcto (no D-1).
+  - LÃ­mites del dÃ­a local = `[06:00 UTC, 06:00 UTC)` (fin exclusivo).
+  - El ranking de productos y el filtro de tickets coinciden en el mismo dÃ­a local.
+  - `_now_mexico()` es UTC (delta < 5s); `journey_date` es `Column(Date)`; los timestamps son `Column(DateTime)`.
+- **pytest:** 84/84 âœ… | **vitest:** 315/315 âœ… | **build:** 1436 mÃ³dulos, exit 0 âœ….
+
+**Smoke del Borde POS IA (Bloque 9.e â€” sin commit):**
+5/5 endpoints que consume el POS IA responden **200**:
+`settings/timezone` (devuelve `{'timezone': 'America/Mexico_City', 'offset_hours': -6}`), `settings/`, `pos/tickets`, `pos/tickets/open`, `pos/terminals/status`.
+
+**Gotchas de Testing Descubiertos:**
+- **Mapper SQLAlchemy:** importar `modules.pos.models` en aislamiento falla con `KeyError: 'CashSession'` porque la relaciÃ³n `Ticket.cash_session` necesita `modules.cash.models` cargado. SoluciÃ³n: `from modules.cash import models as _cash_models  # noqa: F401`.
+- **`get_tickets` devuelve objetos ORM:** no dicts. Acceder con `t.account_num` (atributo), no `t["account_num"]`.
+- **Smoke async:** `httpx.ASGITransport` requiere `httpx.AsyncClient` (no sÃ­ncrono). El endpoint real de tickets abiertos es `/pos/tickets/open`, **no** `/pos/open-tickets`.
+
+**Deuda TÃ©cnica Aceptada (Bloque 10 â€” V20 Fase 20.5, DIFERIDA):**
+La duplicaciÃ³n de `_utcnow` en los mÃ³dulos `warehouse` y `security` es **inocua** (hacen exactamente lo mismo que `core/timestamps.utcnow`). El riesgo de tocar esos mÃ³dulos supera el beneficio. Se documenta como deuda tÃ©cnica aceptada; **no se implementa**.
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo cÃ¡lculo de "dÃ­a local" use `local_day_bounds_utc(tz, fecha)` de `core/timezone.py`. **PROHIBIDO** sumar/restar horas fijas (`+6h`, `timedelta(hours=-6)`) para convertir dÃ­as.
+- **OBLIGATORIO** que los mÃ³dulos que comparten lÃ³gica de lÃ­mites de dÃ­a (POS, analytics) usen la **misma** funciÃ³n de `core/timezone.py` (DRY). Un cambio en la definiciÃ³n del dÃ­a local debe propagarse a todos automÃ¡ticamente.
+- **OBLIGATORIO** distinguir `Column(Date)` (fecha local de negocio) de `Column(DateTime)` (timestamp UTC) al migrar. Solo los `DateTime` se convierten.
+- **OBLIGATORIO** que los 3 mecanismos de zona horaria se corrijan **JUNTOS**. Corregir solo uno deja el ERP inconsistente (una venta aparecerÃ­a en un dÃ­a en un reporte y en otro dÃ­a en otro reporte).
+- **PROHIBIDO** "aprovechar que estamos ahÃ­" para refactorizar el POS IA durante un smoke. El POS IA es un consumidor intocable (RestricciÃ³n A).
+- **OBLIGATORIO** que todo smoke de un cambio de borde incluya la verificaciÃ³n de que el archivo restringido NO aparece en el diff (`git diff --name-only`).
 
 ---
 
