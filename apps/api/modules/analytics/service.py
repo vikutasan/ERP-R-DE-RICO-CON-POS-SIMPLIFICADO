@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, desc, asc, extract, and_
+from sqlalchemy import select, update, func, desc, asc, extract, and_, literal_column
 from datetime import date, datetime as dt_cls, timedelta
 from decimal import Decimal
 from typing import List, Optional
@@ -9,6 +9,32 @@ from modules.analytics.schemas import DailyContextCreate, CustomQueryPayload
 from modules.pos.models import Ticket, TicketItem
 from modules.catalog.models import Product, Category
 from core.timezone import get_business_tz, local_day_bounds_utc, utc_to_local
+
+
+def _sql_str(value: str) -> str:
+    """Escapa un string para incrustarlo como literal SQL seguro (comillas simples)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _local_ts(tz_name: str, col):
+    """v20 (Fase 20.2.b): convierte una columna DateTime naive-UTC a timestamp
+    LOCAL del negocio para agrupar/filtrar por fecha-hora de negocio.
+
+    Doble timezone(): la interna declara que el valor es UTC (lo promueve a
+    timestamptz, instante absoluto correcto), la externa aplica la zona del
+    negocio.
+
+    IMPORTANTE: la zona se incrusta como LITERAL SQL (no como bind param).
+    Si se pasa como parametro, cada ocurrencia de _local_ts() genera un
+    placeholder distinto ($1, $10, $12...) y PostgreSQL no puede probar que
+    la expresion del SELECT es igual a la del GROUP BY -> GroupingError:
+    'column "tickets.created_at" must appear in the GROUP BY clause'.
+    Con el literal, todas las ocurrencias renderizan identicas y el GROUP BY
+    coincide. tz_name proviene de str(ZoneInfo) (valor controlado).
+    """
+    tz_lit = literal_column(_sql_str(tz_name))
+    return func.timezone(tz_lit, func.timezone(literal_column("'UTC'"), col))
+
 
 async def get_or_create_daily_context(db: AsyncSession, target_date: date) -> DailyContext:
     result = await db.execute(select(DailyContext).where(DailyContext.target_date == target_date))
@@ -117,30 +143,30 @@ async def get_time_series_metrics(db: AsyncSession, start_date: date, end_date: 
     # Ventas por fecha exacta cronológica
     date_query = (
         select(
-            func.date(func.timezone(tz_name, Ticket.created_at)).label("exact_date"),
+            func.date(_local_ts(tz_name, Ticket.created_at)).label("exact_date"),
             func.sum(TicketItem.subtotal).label("revenue"),
             func.sum(TicketItem.quantity).label("quantity")
         )
         .join(Ticket, Ticket.id == TicketItem.ticket_id)
         .where(
             Ticket.status == "PAID",
-            func.date(func.timezone(tz_name, Ticket.created_at)) >= start_date,
-            func.date(func.timezone(tz_name, Ticket.created_at)) <= end_date
+            func.date(_local_ts(tz_name, Ticket.created_at)) >= start_date,
+            func.date(_local_ts(tz_name, Ticket.created_at)) <= end_date
         )
-        .group_by(func.date(func.timezone(tz_name, Ticket.created_at)))
-        .order_by(func.date(func.timezone(tz_name, Ticket.created_at)))
+        .group_by(func.date(_local_ts(tz_name, Ticket.created_at)))
+        .order_by(func.date(_local_ts(tz_name, Ticket.created_at)))
     )
     
     # Ventas por hora del día (0-23)
     hour_query = (
         select(
-            func.extract('hour', func.timezone(tz_name, Ticket.created_at)).label("hour"),
+            func.extract('hour', _local_ts(tz_name, Ticket.created_at)).label("hour"),
             func.sum(Ticket.total).label("revenue")
         )
         .where(
             Ticket.status == "PAID",
-            func.date(func.timezone(tz_name, Ticket.created_at)) >= start_date,
-            func.date(func.timezone(tz_name, Ticket.created_at)) <= end_date
+            func.date(_local_ts(tz_name, Ticket.created_at)) >= start_date,
+            func.date(_local_ts(tz_name, Ticket.created_at)) <= end_date
         )
         .group_by("hour")
     )
@@ -172,9 +198,9 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
     conditions = [Ticket.status == "PAID"]
 
     if payload.start_date:
-        conditions.append(func.date(func.timezone(tz_name, Ticket.created_at)) >= payload.start_date)
+        conditions.append(func.date(_local_ts(tz_name, Ticket.created_at)) >= payload.start_date)
     if payload.end_date:
-        conditions.append(func.date(func.timezone(tz_name, Ticket.created_at)) <= payload.end_date)
+        conditions.append(func.date(_local_ts(tz_name, Ticket.created_at)) <= payload.end_date)
         
     if payload.product_ids and len(payload.product_ids) > 0:
         conditions.append(TicketItem.product_id.in_(payload.product_ids))
@@ -229,7 +255,10 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
         atypical_dates = {row[0] for row in ctx_res.all()}
 
     summary = {}
-    total_sales = 0
+    # v20 (Fase 20.2.b): item.subtotal es Numeric -> Decimal. Acumular en Decimal
+    # (no en float) para evitar TypeError: unsupported operand type(s) for +=:
+    # 'float' and 'decimal.Decimal'. Se convierte a float solo al serializar.
+    total_sales = Decimal("0")
     total_tickets = set()
 
     for ticket, item, product in records:
@@ -249,7 +278,7 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
             summary[product.id] = {
                 "product_name": product.name,
                 "quantity": 0,
-                "revenue": 0.0
+                "revenue": Decimal("0")
             }
         
         summary[product.id]["quantity"] += item.quantity
@@ -258,14 +287,14 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
         total_tickets.add(ticket.id)
 
     return {
-        "filtered_total_revenue": total_sales,
+        "filtered_total_revenue": float(total_sales),
         "filtered_total_tickets": len(total_tickets),
         "products": [
             {
                 "product_id": pid,
                 "product_name": data["product_name"],
                 "quantity": data["quantity"],
-                "revenue": data["revenue"]
+                "revenue": float(data["revenue"])
             }
             for pid, data in summary.items()
         ]
@@ -294,8 +323,8 @@ async def get_product_daily_sales(
         _tz_name = str(_tz)
         conditions = [
             Ticket.status == "PAID",
-            func.date(func.timezone(_tz_name, Ticket.created_at)) >= date_start,
-            func.date(func.timezone(_tz_name, Ticket.created_at)) <= date_end
+            func.date(_local_ts(_tz_name, Ticket.created_at)) >= date_start,
+            func.date(_local_ts(_tz_name, Ticket.created_at)) <= date_end
         ]
         # Filtrar por día de la semana directamente en SQL
         # PostgreSQL DOW: 0=Domingo, 1=Lunes ... 6=Sábado
@@ -303,14 +332,14 @@ async def get_product_daily_sales(
         # Conversión: pg_dow = (python_weekday + 1) % 7
         if filter_weekday is not None:
             pg_dow = (filter_weekday + 1) % 7
-            conditions.append(extract('dow', func.timezone(_tz_name, Ticket.created_at)) == pg_dow)
+            conditions.append(extract('dow', _local_ts(_tz_name, Ticket.created_at)) == pg_dow)
 
         query = (
             select(
                 Product.id.label("product_id"),
                 Product.name.label("product_name"),
                 Category.name.label("category_name"),
-                func.date(func.timezone(_tz_name, Ticket.created_at)).label("sale_date"),
+                func.date(_local_ts(_tz_name, Ticket.created_at)).label("sale_date"),
                 func.sum(TicketItem.quantity).label("total_quantity")
             )
             .join(TicketItem, TicketItem.product_id == Product.id)
@@ -319,9 +348,9 @@ async def get_product_daily_sales(
             .where(*conditions)
             .group_by(
                 Product.id, Product.name,
-                Category.name, func.date(func.timezone(_tz_name, Ticket.created_at))
+                Category.name, func.date(_local_ts(_tz_name, Ticket.created_at))
             )
-            .order_by(Product.name, func.date(func.timezone(_tz_name, Ticket.created_at)))
+            .order_by(Product.name, func.date(_local_ts(_tz_name, Ticket.created_at)))
         )
         result = await db_session.execute(query)
         return result.all()
