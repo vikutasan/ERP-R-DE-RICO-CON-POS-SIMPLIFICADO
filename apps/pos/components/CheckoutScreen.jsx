@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { formatLocal } from '../../shared/timezone';
 
 export const CheckoutScreen = ({ cart = [], total, onConfirm, onClose, orderData = null }) => {
     const [payments, setPayments] = useState([]);
@@ -339,7 +340,7 @@ export const CheckoutScreen = ({ cart = [], total, onConfirm, onClose, orderData
                                 <OrderDetailRow
                                     label="Entrega Compromiso"
                                     value={orderData.committed_at
-                                        ? new Date(orderData.committed_at).toLocaleString('es-MX', {
+                                        ? formatLocal(orderData.committed_at, undefined, {
                                             weekday: 'short', day: '2-digit', month: 'short',
                                             hour: '2-digit', minute: '2-digit'
                                           })

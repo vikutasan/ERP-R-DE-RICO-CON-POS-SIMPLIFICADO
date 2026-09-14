@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatLocalTime } from '../shared/timezone';
 
 /**
  * R DE RICO - PIZARRÓN DE CUENTAS ABIERTAS
@@ -108,7 +109,7 @@ export const OpenAccountsCorkboard = ({ openAccounts, onSelectAccount, onClose }
                                         📝 {acc.capturedByName}
                                     </p>
                                     <p className="text-[11px] font-bold italic uppercase flex items-center gap-2">
-                                        🕒 {new Date(acc.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        🕒 {formatLocalTime(acc.timestamp)}
                                     </p>
                                 </div>
                             </div>

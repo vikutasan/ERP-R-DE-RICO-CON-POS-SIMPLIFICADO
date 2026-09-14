@@ -9,6 +9,8 @@ from . import models, schemas
 from modules.catalog.models import Product
 from modules.security.models import Employee, SecurityProfile
 from modules.orders.models import Order
+from core.timestamps import utcnow
+from core.timezone import get_business_tz, local_day_bounds_utc
 
 class POSService:
     _last_gc_time = None  # Throttle para garbage collection (1x por minuto máximo)
@@ -572,12 +574,11 @@ class POSService:
             query = query.where(models.Ticket.account_num.ilike(f"%{search}%"))
         if search_date:
             try:
-                from datetime import datetime, timedelta
-                # Los timestamps están en UTC. Hora local México es UTC-6.
-                # Calculamos el inicio y el fin del día en UTC para que el rango abarque correctamente la noche.
-                target_date = datetime.strptime(search_date, "%Y-%m-%d")
-                start_utc = target_date + timedelta(hours=6)
-                end_utc = target_date + timedelta(days=1, hours=6)
+                # v20 (Fase 20.2): los timestamps están en UTC. Calculamos los
+                # límites [inicio, fin) del día LOCAL del negocio en UTC usando
+                # la zona configurada (business_timezone), sin hardcodear +6h.
+                tz = await get_business_tz(db)
+                start_utc, end_utc = local_day_bounds_utc(tz, search_date)
                 query = query.where(models.Ticket.created_at >= start_utc).where(models.Ticket.created_at < end_utc)
             except Exception as e:
                 import logging
@@ -655,7 +656,7 @@ class POSService:
         reciclado por el POS de Panadería (y viceversa). Los tickets legacy con
         channel NULL se tratan como 'PANADERIA' (COALESCE).
         """
-        cutoff = datetime.now() - timedelta(minutes=5)
+        cutoff = utcnow() - timedelta(minutes=5)
         result = await db.execute(
             select(models.Ticket)
             .options(selectinload(models.Ticket.items))
@@ -682,7 +683,7 @@ class POSService:
         """
         import logging
         logger = logging.getLogger("pos.gc")
-        now = datetime.now()
+        now = utcnow()
         if POSService._last_gc_time and (now - POSService._last_gc_time) < timedelta(minutes=1):
             return  # Throttle: no ejecutar mas de 1x por minuto
         POSService._last_gc_time = now
@@ -959,7 +960,7 @@ class POSService:
         tickets = result.scalars().all()
         populated = [self._populate_flat_fields(t) for t in tickets]
         # Inyectar edad en horas para que el frontend muestre "X horas sin enviarse"
-        now = datetime.now()
+        now = utcnow()
         for t in populated:
             if t.created_at:
                 age = now - t.created_at
@@ -981,7 +982,7 @@ class POSService:
         except Exception:
             pass
 
-        now = datetime.now()
+        now = utcnow()
         # Proximos a expirar = creados hace mas de (TTL - 2h)
         warn_cutoff = now - timedelta(days=draft_ttl_days) + timedelta(hours=2)
         hard_cutoff = now - timedelta(days=draft_ttl_days)

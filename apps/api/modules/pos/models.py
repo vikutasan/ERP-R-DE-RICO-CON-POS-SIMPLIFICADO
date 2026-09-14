@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from core.database import Base
+from core.timestamps import utcnow
 
 class TerminalLock(Base):
     """Candado persistente de terminal. Reemplaza el diccionario en RAM que se perdía con reinicios."""
@@ -11,14 +12,14 @@ class TerminalLock(Base):
     terminal_id = Column(String, unique=True, index=True, nullable=False)
     occupier_id = Column(Integer, nullable=False)
     occupier_name = Column(String, nullable=False)
-    locked_at = Column(DateTime, default=datetime.now)
+    locked_at = Column(DateTime, default=utcnow)
 
 class TerminalSession(Base):
     __tablename__ = "terminal_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
     terminal_id = Column(String, index=True, nullable=False)
-    opened_at = Column(DateTime, default=datetime.now)
+    opened_at = Column(DateTime, default=utcnow)
     closed_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
 
@@ -31,7 +32,7 @@ class Ticket(Base):
     account_num = Column(String, unique=True, index=True, nullable=False)
     total = Column(Numeric(12, 2), nullable=False, default=0)
     payment_details = Column(JSON, nullable=True) # Almacena lista de pagos mixtos
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
     status = Column(String, default="OPEN") # OPEN, PAID, CANCELLED
     version = Column(Integer, default=1, nullable=False)  # Bloqueo optimista: se incrementa en cada update
     

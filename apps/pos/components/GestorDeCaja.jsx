@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { cashService, securityService } from '../services/cashService';
 import { CorteTicketTemplate } from './CorteTicketTemplate';
 import { CONFIG } from '../config';
+import { formatLocalTime } from '../../shared/timezone';
 
 // ─── Componentes de UI reutilizables ─────────────────────────────────────────
 
@@ -406,7 +407,7 @@ export const GestorDeCaja = ({ terminalId, onCajaHabilitada, onCajaDeshabilitada
 
     const formatHora = (iso) => {
         if (!iso) return '';
-        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return formatLocalTime(iso);
     };
 
     // ── Render ────────────────────────────────────────────────────────────────

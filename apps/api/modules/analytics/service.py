@@ -8,6 +8,7 @@ from modules.analytics.models import DailyContext
 from modules.analytics.schemas import DailyContextCreate, CustomQueryPayload
 from modules.pos.models import Ticket, TicketItem
 from modules.catalog.models import Product, Category
+from core.timezone import get_business_tz, local_day_bounds_utc, utc_to_local
 
 async def get_or_create_daily_context(db: AsyncSession, target_date: date) -> DailyContext:
     result = await db.execute(select(DailyContext).where(DailyContext.target_date == target_date))
@@ -35,6 +36,12 @@ async def get_product_rankings(db: AsyncSession, start_date: date, end_date: dat
     Lista todos los productos vendidos en el periodo, ordenados por métricas 
     para poder sacar Top/Bottom Volumen y Top/Bottom Margen.
     """
+    # v20 (Fase 20.2): los timestamps están en UTC. Calculamos los límites
+    # [inicio, fin) del rango de días LOCALES del negocio en UTC.
+    tz = await get_business_tz(db)
+    _start_utc, _ = local_day_bounds_utc(tz, start_date)
+    _, _end_utc = local_day_bounds_utc(tz, end_date)
+
     # En PostgreSQL y SQLite podemos usar func.sum()
     query = (
         select(
@@ -51,8 +58,8 @@ async def get_product_rankings(db: AsyncSession, start_date: date, end_date: dat
         .outerjoin(Category, Product.category_id == Category.id)
         .where(
             Ticket.status == "PAID",
-            Ticket.created_at >= dt_cls.combine(start_date, dt_cls.min.time()),
-            Ticket.created_at < dt_cls.combine(end_date + timedelta(days=1), dt_cls.min.time())
+            Ticket.created_at >= _start_utc,
+            Ticket.created_at < _end_utc
         )
         .group_by(Product.id, Product.name, Category.name, Product.price, Product.cost)
     )
@@ -82,12 +89,16 @@ async def get_ticket_metrics(db: AsyncSession, start_date: date, end_date: date)
     """
     Retorna métricas generales de tickets para el periodo (total tickets, etc).
     """
+    tz = await get_business_tz(db)
+    _start_utc, _ = local_day_bounds_utc(tz, start_date)
+    _, _end_utc = local_day_bounds_utc(tz, end_date)
+
     query = (
         select(func.count(func.distinct(Ticket.id)))
         .where(
             Ticket.status == "PAID",
-            Ticket.created_at >= dt_cls.combine(start_date, dt_cls.min.time()),
-            Ticket.created_at < dt_cls.combine(end_date + timedelta(days=1), dt_cls.min.time())
+            Ticket.created_at >= _start_utc,
+            Ticket.created_at < _end_utc
         )
     )
     result = await db.execute(query)
@@ -98,33 +109,38 @@ async def get_time_series_metrics(db: AsyncSession, start_date: date, end_date: 
     """
     Retorna métricas agrupadas por día de la semana y por hora del día.
     """
+    # v20 (Fase 20.2): agrupamos por día/hora LOCAL del negocio. Convertimos
+    # el timestamp UTC a la zona configurada antes de extraer fecha/hora.
+    tz = await get_business_tz(db)
+    tz_name = str(tz)
+
     # Ventas por fecha exacta cronológica
     date_query = (
         select(
-            func.date(Ticket.created_at).label("exact_date"),
+            func.date(func.timezone(tz_name, Ticket.created_at)).label("exact_date"),
             func.sum(TicketItem.subtotal).label("revenue"),
             func.sum(TicketItem.quantity).label("quantity")
         )
         .join(Ticket, Ticket.id == TicketItem.ticket_id)
         .where(
             Ticket.status == "PAID",
-            func.date(Ticket.created_at) >= start_date,
-            func.date(Ticket.created_at) <= end_date
+            func.date(func.timezone(tz_name, Ticket.created_at)) >= start_date,
+            func.date(func.timezone(tz_name, Ticket.created_at)) <= end_date
         )
-        .group_by(func.date(Ticket.created_at))
-        .order_by(func.date(Ticket.created_at))
+        .group_by(func.date(func.timezone(tz_name, Ticket.created_at)))
+        .order_by(func.date(func.timezone(tz_name, Ticket.created_at)))
     )
     
     # Ventas por hora del día (0-23)
     hour_query = (
         select(
-            func.extract('hour', Ticket.created_at).label("hour"),
+            func.extract('hour', func.timezone(tz_name, Ticket.created_at)).label("hour"),
             func.sum(Ticket.total).label("revenue")
         )
         .where(
             Ticket.status == "PAID",
-            func.date(Ticket.created_at) >= start_date,
-            func.date(Ticket.created_at) <= end_date
+            func.date(func.timezone(tz_name, Ticket.created_at)) >= start_date,
+            func.date(func.timezone(tz_name, Ticket.created_at)) <= end_date
         )
         .group_by("hour")
     )
@@ -150,12 +166,15 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
     Resuelve preguntas como: "¿Cuántos churros hemos vendido los viernes de este mes?"
     Si exclude_atypical=True, omite los días marcados en DailyContext.
     """
+    tz = await get_business_tz(db)
+    tz_name = str(tz)
+
     conditions = [Ticket.status == "PAID"]
 
     if payload.start_date:
-        conditions.append(func.date(Ticket.created_at) >= payload.start_date)
+        conditions.append(func.date(func.timezone(tz_name, Ticket.created_at)) >= payload.start_date)
     if payload.end_date:
-        conditions.append(func.date(Ticket.created_at) <= payload.end_date)
+        conditions.append(func.date(func.timezone(tz_name, Ticket.created_at)) <= payload.end_date)
         
     if payload.product_ids and len(payload.product_ids) > 0:
         conditions.append(TicketItem.product_id.in_(payload.product_ids))
@@ -214,8 +233,11 @@ async def execute_custom_query(db: AsyncSession, payload: CustomQueryPayload):
     total_tickets = set()
 
     for ticket, item, product in records:
-        t_date = ticket.created_at.date()
-        t_weekday = ticket.created_at.weekday() # 0-6 (Lunes a Domingo)
+        # v20 (Fase 20.2): convertir el timestamp UTC a hora LOCAL antes de
+        # derivar la fecha/día de semana de negocio.
+        local_dt = utc_to_local(ticket.created_at, tz)
+        t_date = local_dt.date()
+        t_weekday = local_dt.weekday() # 0-6 (Lunes a Domingo)
 
         if payload.weekdays and t_weekday not in payload.weekdays:
             continue
@@ -267,10 +289,13 @@ async def get_product_daily_sales(
     include_prev_year: incluir datos del mismo rango del año anterior
     """
     async def _fetch_daily_data(db_session, date_start, date_end, filter_weekday=None):
+        # v20 (Fase 20.2): agrupamos por día LOCAL del negocio.
+        _tz = await get_business_tz(db_session)
+        _tz_name = str(_tz)
         conditions = [
             Ticket.status == "PAID",
-            func.date(Ticket.created_at) >= date_start,
-            func.date(Ticket.created_at) <= date_end
+            func.date(func.timezone(_tz_name, Ticket.created_at)) >= date_start,
+            func.date(func.timezone(_tz_name, Ticket.created_at)) <= date_end
         ]
         # Filtrar por día de la semana directamente en SQL
         # PostgreSQL DOW: 0=Domingo, 1=Lunes ... 6=Sábado
@@ -278,14 +303,14 @@ async def get_product_daily_sales(
         # Conversión: pg_dow = (python_weekday + 1) % 7
         if filter_weekday is not None:
             pg_dow = (filter_weekday + 1) % 7
-            conditions.append(extract('dow', Ticket.created_at) == pg_dow)
+            conditions.append(extract('dow', func.timezone(_tz_name, Ticket.created_at)) == pg_dow)
 
         query = (
             select(
                 Product.id.label("product_id"),
                 Product.name.label("product_name"),
                 Category.name.label("category_name"),
-                func.date(Ticket.created_at).label("sale_date"),
+                func.date(func.timezone(_tz_name, Ticket.created_at)).label("sale_date"),
                 func.sum(TicketItem.quantity).label("total_quantity")
             )
             .join(TicketItem, TicketItem.product_id == Product.id)
@@ -294,9 +319,9 @@ async def get_product_daily_sales(
             .where(*conditions)
             .group_by(
                 Product.id, Product.name,
-                Category.name, func.date(Ticket.created_at)
+                Category.name, func.date(func.timezone(_tz_name, Ticket.created_at))
             )
-            .order_by(Product.name, func.date(Ticket.created_at))
+            .order_by(Product.name, func.date(func.timezone(_tz_name, Ticket.created_at)))
         )
         result = await db_session.execute(query)
         return result.all()

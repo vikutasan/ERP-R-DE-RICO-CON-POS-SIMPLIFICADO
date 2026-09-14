@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { terminals, loadTerminalsConfig, saveTerminalsConfig } from '../utils/posConstants';
 import { posService } from '../services/POSService';
 import { resolveCardState } from '../utils/terminalCardState';
+import { parseUtc } from '../../shared/timezone';
 
 const PRESET_ICONS = [
     { label: 'Monitor', value: '🖥️' },
@@ -41,10 +42,10 @@ export const TerminalSelector = ({ currentUser, terminalStatuses, setTerminalSta
         const info = terminalStatuses[tid];
         if (!info || !info.occupier_id) return { color: '#555', label: 'DISPONIBLE' }; // gris
         if (info.stale_session) return { color: '#ef4444', label: 'SESIÓN EXPIRADA' }; // rojo
-        // v12 (Fase 12.4): la API ya normaliza con 'Z'; el parche queda defensivo
-        // por si algun dia serializa con offset (+00:00).
-        const safeDate = (info.locked_at.endsWith('Z') || info.locked_at.includes('+')) ? info.locked_at : info.locked_at + 'Z';
-        const lockAge = info.locked_at ? (Date.now() - new Date(safeDate).getTime()) / 60000 : 999;
+        // v20 (Fase 20.2): parseUtc normaliza el timestamp UTC naive del backend
+        // (agrega 'Z' si falta) de forma centralizada y robusta.
+        const safeDate = parseUtc(info.locked_at);
+        const lockAge = info.locked_at ? (Date.now() - safeDate.getTime()) / 60000 : 999;
         if (lockAge < 25) return { color: '#4ade80', label: 'EN LÍNEA' }; // verde
         return { color: '#f59e0b', label: 'INACTIVA' }; // amarillo
     }, [terminalStatuses]);

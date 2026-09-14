@@ -1,13 +1,14 @@
 import React, { forwardRef } from 'react';
+import { formatLocal } from '../../shared/timezone';
 
 export const CorteTicketTemplate = forwardRef(({ resumen, sesion, capturado }, ref) => {
     if (!resumen || !sesion) return <div ref={ref} className="hidden">No hay datos de corte</div>;
 
     const formatHora = (iso) => {
         if (!iso) return '---';
-        return new Date(iso).toLocaleString('es-MX', { 
+        return formatLocal(iso, undefined, {
             day: '2-digit', month: '2-digit', year: '2-digit',
-            hour: '2-digit', minute:'2-digit' 
+            hour: '2-digit', minute: '2-digit'
         });
     };
 
