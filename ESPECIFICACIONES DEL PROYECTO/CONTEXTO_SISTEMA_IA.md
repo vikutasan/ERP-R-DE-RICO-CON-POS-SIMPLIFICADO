@@ -931,6 +931,63 @@ T+55min    ERP operativo en todas las terminales.
 - **IMPORTANTE:** La IP estÃ¡tica `192.168.1.124` estÃ¡ configurada en el adaptador Ethernet de Windows (no en el router). Si se reinstala Windows o se resetea la configuraciÃ³n de red, se debe restaurar manualmente (ver secciÃ³n 3.4.5).
 - **NOTA:** `curl.exe` (el binario real) es la herramienta confiable para verificar conectividad HTTP en Windows. PowerShell `Invoke-WebRequest` puede dar falsos negativos (reportar 404) debido a diferencias en la resoluciÃ³n de IPv4/IPv6.
 
+### 16.8 PÃ¡gina en Blanco Total por Import Faltante tras MigraciÃ³n Masiva a `CONFIG` (14/Septiembre/2026)
+
+**Archivo afectado:** `apps/production/DoughManagerUI.jsx` (lÃ­nea 84)
+**Fecha del incidente:** 14 de Septiembre de 2026
+**Commit de la correcciÃ³n:** `4f95cc1` â€” `fix(v19.4): agregar import faltante de CONFIG en DoughManagerUI`
+
+**Contexto del Problema:**
+Durante la ejecuciÃ³n del plan transversal V19 (Fase 19.2, commit `90438aa`), se migraron 11 archivos no-POS para que derivaran su URL de API desde la fuente Ãºnica de verdad `CONFIG.API_BASE_URL` (ver SecciÃ³n 3.3.6 y Regla CrÃ­tica de `config.js`). En `DoughManagerUI.jsx` se aÃ±adiÃ³ el uso de `CONFIG.API_BASE_URL` **a nivel de mÃ³dulo** (constantes `API_BASE` y `API_ORIGIN`, lÃ­neas 84-86), pero **se omitiÃ³ el `import` de `CONFIG`**.
+
+**SÃ­ntoma:**
+Al abrir el ERP desde el acceso directo del navegador (`http://localhost:5000/`), la pantalla quedaba **completamente en blanco**. El sÃ­ntoma persistÃ­a incluso tras un refresco forzado (`Ctrl+Shift+R`).
+
+**DiagnÃ³stico â€” Evidencia Real del Navegador (no suposiciones):**
+Se usÃ³ **Chrome headless** para capturar el DOM renderizado y la consola del navegador, en lugar de adivinar la causa:
+
+```cmd
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --disable-gpu ^
+  --no-sandbox --enable-logging=stderr --v=1 --virtual-time-budget=12000 ^
+  --dump-dom "http://localhost:5000/" > chrome_dom.txt 2> chrome_console.txt
+```
+
+1. **El `<div id="root">` estaba VACÃO** en el DOM volcado. Esto descartÃ³ el `ErrorBoundary` de `main.jsx` (que sÃ­ renderiza una UI de error visible) y confirmÃ³ que el fallo ocurrÃ­a en **tiempo de evaluaciÃ³n de mÃ³dulo**, antes de que React pudiera montar.
+2. **La consola del navegador revelÃ³ el error exacto:**
+   ```
+   Uncaught ReferenceError: CONFIG is not defined
+   source: http://localhost:5000/apps/production/DoughManagerUI.jsx (114)
+   ```
+3. Al ser una referencia a nivel de mÃ³dulo, el `ReferenceError` se lanzaba durante la evaluaciÃ³n del mÃ³dulo, **matando toda la cadena de imports** (`main.jsx` â†’ `ExperimentCenterUI.jsx` â†’ `DoughManagerUI.jsx`) antes de que React pudiera montar â†’ pÃ¡gina en blanco.
+
+**Falsas Pistas Descartadas (importante para futuros diagnÃ³sticos):**
+Antes de encontrar la causa raÃ­z, se intentaron dos correcciones que **NO** resolvieron el problema, porque atacaban una causa equivocada (el cachÃ© del Service Worker):
+- **v19.2 (`ff73393`):** bump de `CACHE_VERSION` del Service Worker a `v2`.
+- **v19.3 (`5bd5e55`):** Service Worker "dev-aware" con auto-desregistro y purga de cachÃ©s en desarrollo.
+
+Ambas fueron inÃºtiles porque el problema **no era cachÃ©**, sino un import faltante. **LecciÃ³n:** un `Ctrl+Shift+R` que no resuelve una pÃ¡gina en blanco es seÃ±al de que el problema **no estÃ¡ en el cachÃ© HTTP/SW**, sino en el cÃ³digo servido.
+
+**SoluciÃ³n Aplicada:**
+Se agregÃ³ el import faltante en `apps/production/DoughManagerUI.jsx`:
+```javascript
+import { CONFIG } from '../shared/config';
+```
+
+**AuditorÃ­a Preventiva:**
+Se verificaron los **40 archivos** que usan `CONFIG.API_BASE_URL` para confirmar que ninguno mÃ¡s tuviera el mismo defecto de import faltante. `DoughManagerUI.jsx` era el Ãºnico caso.
+
+**VerificaciÃ³n (evidencia real):**
+- **Chrome headless (post-fix):** el `<div id="root">` ahora contiene la pantalla de login completa renderizada ("R de Rico / Bienvenido / Ingrese su clave de acceso") y la consola del navegador estÃ¡ **limpia** (cero `Uncaught`, cero `SyntaxError`, cero `Failed to resolve`).
+- **`npm run build`:** 1434 mÃ³dulos transformados, exit 0.
+- **`npx vitest run`:** 293/293 tests pasando (8 archivos).
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que toda migraciÃ³n masiva que introduzca el uso de un sÃ­mbolo importado (`CONFIG`, `logger`, etc.) **agregue el `import` correspondiente en el mismo commit**. Un `ReferenceError` a nivel de mÃ³dulo no lo atrapa el `ErrorBoundary` y produce una pÃ¡gina en blanco total.
+- **OBLIGATORIO** que `npm run build` **no es suficiente** para detectar este tipo de error: Vite/Rollup no falla en build por un identificador global no definido en un mÃ³dulo ESM. La verificaciÃ³n real requiere **cargar la app en un navegador** (o Chrome headless) y revisar la consola.
+- **OBLIGATORIO** ante una pÃ¡gina en blanco, **capturar la consola del navegador con evidencia real** (Chrome headless `--dump-dom` + `--enable-logging=stderr`) **antes** de proponer correcciones. Prohibido "adivinar" la causa (ej. culpar al cachÃ© del Service Worker sin evidencia).
+- **REGLA DE DIAGNÃ“STICO:** Si el `<div id="root">` estÃ¡ vacÃ­o â†’ error en evaluaciÃ³n de mÃ³dulo (import/referencia). Si el `<div id="root">` tiene contenido de error â†’ error de render (lo atrapa el `ErrorBoundary`).
+- **OBLIGATORIO** que todo archivo que use `CONFIG.API_BASE_URL` importe `CONFIG` desde `apps/shared/config.js` (o desde `apps/pos/config.js` segÃºn corresponda). Verificable con: `findstr /S /M /C:"CONFIG.API_BASE_URL" apps\*.jsx apps\*.js`.
+
 ---
 
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
