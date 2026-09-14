@@ -16,7 +16,12 @@
  * El scope de este SW se limita estrictamente al módulo de almacenes.
  */
 
-const CACHE_VERSION = 'rderico-warehouse-v1';
+// v19.2 (14 Sep 2026): bump de version para invalidar caches stale del app shell.
+// El hotfix v19.1 corrigio la URL del API en apps/shared/config.js, pero los
+// navegadores que ya tenian el SW instalado seguian sirviendo los modulos JS
+// ANTIGUOS (cache-first) -> pagina en blanco. Al subir la version, el handler
+// 'activate' borra las caches viejas y el navegador vuelve a pedir los modulos.
+const CACHE_VERSION = 'rderico-warehouse-v2';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
