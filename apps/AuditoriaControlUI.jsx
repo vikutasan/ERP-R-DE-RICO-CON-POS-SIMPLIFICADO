@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { generateTicketHTML } from './pos/utils/ticketGenerator';
 import { CONFIG } from './pos/config';
+import { useTimezone } from './shared/TimezoneContext';
+import { formatLocal, todayLocal } from './shared/timezone';
 
 const API_BASE = CONFIG.API_BASE_URL; // Corregido: usar CONFIG en lugar de window.location.hostname
 
 export const AuditoriaUI = () => {
+    const { timezone } = useTimezone();
     const [activeTab, setActiveTab] = useState('ventas'); // 'ventas', 'cortes' o 'reporte_diario'
     const [tickets, setTickets] = useState([]);
     const [cortes, setCortes] = useState([]);
@@ -13,7 +16,7 @@ export const AuditoriaUI = () => {
     const [searchDate, setSearchDate] = useState('');
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [selectedCorte, setSelectedCorte] = useState(null);
-    const [reporteDate, setReporteDate] = useState(new Date().toISOString().split('T')[0]);
+    const [reporteDate, setReporteDate] = useState(() => todayLocal(timezone));
     const [reporteData, setReporteData] = useState(null);
     const [reporteLoading, setReporteLoading] = useState(false);
 
@@ -165,7 +168,7 @@ export const AuditoriaUI = () => {
                                             <tr key={t.id} className="hover:bg-gray-50/80 transition-colors group">
                                                 <td className="px-6 py-4 font-black">{t.account_num}</td>
                                                 <td className="px-6 py-4 font-bold text-gray-500">{t.terminal_id}</td>
-                                                <td className="px-6 py-4 text-xs font-bold text-gray-400">{new Date(t.created_at + 'Z').toLocaleString()}</td>
+                                                <td className="px-6 py-4 text-xs font-bold text-gray-400">{formatLocal(t.created_at, timezone)}</td>
                                                 <td className="px-6 py-4">
                                                     <span className="text-[10px] font-black uppercase text-gray-600 truncate max-w-[80px] block">{t.captured_by_name || '---'}</span>
                                                 </td>
@@ -206,7 +209,7 @@ export const AuditoriaUI = () => {
                                             </div>
                                             <div className="flex justify-between text-xs font-bold text-gray-500">
                                                 <span>Cierre:</span>
-                                                <span className="text-black">{new Date(c.closed_at + 'Z').toLocaleString()}</span>
+                                                <span className="text-black">{formatLocal(c.closed_at, timezone)}</span>
                                             </div>
                                         </div>
                                         <div className="border-t border-dashed border-gray-100 pt-4 flex justify-between items-end">
@@ -233,7 +236,7 @@ export const AuditoriaUI = () => {
                                 <div className="text-center">
                                     <div className="text-6xl mb-4">🧾</div>
                                     <h2 className="text-2xl font-black italic uppercase tracking-tighter">Venta {selectedTicket.account_num}</h2>
-                                    <p className="text-gray-400 text-xs font-bold">{new Date(selectedTicket.created_at + 'Z').toLocaleString()}</p>
+                                    <p className="text-gray-400 text-xs font-bold">{formatLocal(selectedTicket.created_at, timezone)}</p>
                                 </div>
 
                                 <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
@@ -382,7 +385,7 @@ export const AuditoriaUI = () => {
 
                                 <div className="text-center">
                                     <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Cajere: {selectedCorte.employee_name}</p>
-                                    <p className="text-[8px] text-gray-300 mt-1">{new Date(selectedCorte.closed_at + 'Z').toLocaleString()}</p>
+                                    <p className="text-[8px] text-gray-300 mt-1">{formatLocal(selectedCorte.closed_at, timezone)}</p>
                                 </div>
                             </div>
                         )}

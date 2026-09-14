@@ -18,6 +18,7 @@ import { EstadisticasVentasUI } from './analytics/EstadisticasVentasUI';
 import { WarehouseHubUI } from './inventory/WarehouseHubUI';
 import { PurchasingHubUI } from './inventory/PurchasingHubUI';
 import { TableServicePOS } from './pos/TableServicePOS';
+import { useTimezone } from './shared/TimezoneContext';
 import { RetailVisionPOS } from './pos/RetailVisionPOS';
 import { VisionTrainingUI } from './pos/VisionTrainingUI';
 import { ProductMasterUI as ProductCatalogUI } from './inventory/ProductCatalogUI';
@@ -65,6 +66,7 @@ const INITIAL_CATEGORIES = [
 ];
 
 export const ExperimentCenterUI = () => {
+    const { timezone } = useTimezone();
     const initialTerminal = new URLSearchParams(window.location.search).get('terminal');
     const defaultModule = initialTerminal === 'DRIVER' ? 'reparto_grandeza' : 'overview';
     const defaultSidebar = initialTerminal === 'DRIVER' || window.innerWidth < 768;
@@ -365,7 +367,7 @@ export const ExperimentCenterUI = () => {
 
                 <div className="relative z-10 h-full">
                     {activeModule === 'overview' && (() => {
-                        const mxOpts = { timeZone: 'America/Mexico_City' };
+                        const mxOpts = { timeZone: timezone };
                         const fechaLarga = clockNow.toLocaleDateString('es-MX', { ...mxOpts, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
                         const horaStr = clockNow.toLocaleTimeString('es-MX', { ...mxOpts, hour: '2-digit', minute: '2-digit', hour12: false });
                         const startOfYear = new Date(clockNow.getFullYear(), 0, 1);
