@@ -119,6 +119,19 @@ async def seed_settings(db: AsyncSession):
             "description": "Manifiesto de contenido del Display Tótem de Heladería (V16).",
             "category": "heladeria",
             "input_type": "json"
+        },
+        # V15 (Fase 15.4): umbrales de urgencia visual del KDS de Heladería.
+        # Entrada ADITIVA: el bucle de abajo solo inserta si la clave no existe,
+        # por lo que no altera ninguna clave que lea el POS de Panadería.
+        # warningSec/criticalSec son segundos transcurridos desde created_at.
+        # tzOffsetHours es el offset local respecto a UTC (CST México = 6); si se
+        # omite o es inválido, el frontend cae a 0 (created_at es naive local).
+        {
+            "key": "heladeria_kds_urgency_config",
+            "value": '{"warningSec":180,"criticalSec":420,"tzOffsetHours":6}',
+            "description": "Umbrales de urgencia visual del KDS de Heladería (V15).",
+            "category": "heladeria",
+            "input_type": "json"
         }
     ]
     
