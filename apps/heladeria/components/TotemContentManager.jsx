@@ -411,9 +411,10 @@ const styles = {
         fontWeight: 700,
     },
     subtitle: {
-        margin: '4px 0 0',
-        fontSize: '14px',
+        margin: '6px 0 0',
+        fontSize: '28px',
         color: '#94a3b8',
+        fontWeight: 500,
     },
     outputBtn: {
         padding: '10px 16px',

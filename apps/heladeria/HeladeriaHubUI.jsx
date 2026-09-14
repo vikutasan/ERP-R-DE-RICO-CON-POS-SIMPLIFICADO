@@ -211,7 +211,7 @@ const GestorSuiteUI = ({ gestor, onBack, onSelectTool }) => {
                 </h1>
                 <p style={{
                     margin: '16px 0 0',
-                    fontSize: '14px', color: '#6b7280', fontWeight: '500',
+                    fontSize: '28px', color: '#6b7280', fontWeight: '500',
                 }}>
                     {gestor.descripcion}
                 </p>
@@ -378,7 +378,7 @@ export const HeladeriaHubUI = ({ onBack }) => {
                 </h1>
                 <p style={{
                     margin: '16px 0 0',
-                    fontSize: '14px', color: '#6b7280', fontWeight: '500',
+                    fontSize: '28px', color: '#6b7280', fontWeight: '500',
                 }}>
                     Haciendo tu vida más dulce.
                 </p>
