@@ -2,7 +2,7 @@
 
 > **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Heladería **DEBE** leer este documento. Aquí se detalla la arquitectura, el flujo de datos, las reglas de negocio y las decisiones técnicas del módulo.
 >
-> **Última actualización:** 2026-09-07
+> **Última actualización:** 2026-09-14 (V15 KDS Inteligente — cierre de la Oleada 1)
 > **Archivos gobernados:**
 > - Backend: `apps/api/modules/heladeria/*` (models, schemas, service, router)
 > - Frontend: `apps/heladeria/*` (Hub, secciones, hooks, services, components)
@@ -16,11 +16,11 @@ El Módulo de Heladería extiende el ERP R de Rico para gestionar la operación 
 
 ### Capacidades
 - **POS Heladería** — Punto de venta rápido para el personal de mostrador
-- **KDS Helados** — Pantalla de preparación para estación de helados
-- **KDS Malteadas** — Pantalla de preparación para estación de malteadas/aguas frescas
-- **Tienda Interactiva** — (Futuro) Interfaz táctil para clientes en mostrador
-- **Display Tótem** — (Futuro) Contenido visual para atraer clientes
-- **Display Precios** — (Futuro) Menú digital con precios en tiempo real
+- **KDS Helados** — Pantalla de preparación para estación de helados (con urgencia visual V15)
+- **KDS Malteadas** — Pantalla de preparación para estación de malteadas/aguas frescas (con urgencia visual V15)
+- **Tienda Interactiva** — 🟢 Interfaz táctil para clientes en mostrador (V14)
+- **Display Tótem** — 🟢 Contenido visual para atraer clientes (V16)
+- **Display Precios** — 🟢 Menú digital con precios en tiempo real (V17)
 - **Reporte Consolidado** — Ventas de heladería aparecen separadas en el reporte diario de Auditoría
 
 ---
@@ -292,7 +292,7 @@ Forma del `value` (JSON serializado):
 | `sections/KdsHeladosUI.jsx` | KDS estación HELADOS: polling 5s, estados con colores, botones Preparar/Listo. **(V15 Fase 15.3)** urgencia visual: reloj propio de 1 s (separado del polling de 5 s), borde izquierdo por nivel, badge `⏱` de tiempo transcurrido y contador NORMAL/atención/crítico en el header. **Solo color, sin animación** |
 | `sections/KdsMalteadasUI.jsx` | KDS estación MALTEADAS: mismo patrón de urgencia que Helados (V15 Fase 15.3), preservando sus diferencias deliberadas: PENDING en púrpura y sin `customer_group_name` / `recipient_name` / `components` |
 | `sections/TiendaInteractivaUI.jsx` | 🟢 **Funcional (V14)**. Monta `TiendaConfigurator` (doble columna) cableado a `usePreComanda`. Sin animaciones infinitas |
-| `sections/DisplayTotemUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
+| `sections/DisplayTotemUI.jsx` | 🟢 **Funcional (V16)**. Doble landing: sin parámetro → panel de administración del manifiesto; `?mode=output` → kiosco fullscreen con secuencia macro/hero. Transiciones **finitas** (Incidente 16.1) |
 | `sections/DisplayPreciosUI.jsx` | 🟢 **Funcional (V17)**. Doble landing: sin parámetro → panel de administración (`DisplayConfigPanel` + utilidades de caché); `?mode=output` → `DisplayPreciosOutput` (kiosco fullscreen). Se eliminó la animación `float` infinita del placeholder (Incident 16.1) |
 | `sections/DisplayPreciosOutput.jsx` | **(V17 Fase 17.3)** Pantalla de precios para clientes. Offline-first (red → caché 24 h → estado vacío), refresco cada 5 min, temas LIGHT/DARK, grid de columnas configurable. Sin animaciones infinitas |
 
