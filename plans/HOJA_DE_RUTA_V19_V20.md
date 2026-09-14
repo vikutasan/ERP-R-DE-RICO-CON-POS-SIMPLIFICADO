@@ -5,7 +5,7 @@
 >
 > **Estado:** 📋 **LISTA PARA EJECUTAR.** Ningún bloque iniciado.
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 2
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 3
 >
 > **Cambios de la Rev. 2 (alineada con el plan V20 Rev. 4):**
 > 1. **`grandeza` SÍ se migra** (Fase 20.2.d) — ya no es excepción. Solo sus
@@ -17,6 +17,18 @@
 >    se generaliza con `ZoneInfo`, **no se borra**.
 > 4. **Nuevo Bloque 9.c — migrar `grandeza`** (Fase 20.2.d), commit propio tras 20.3.
 > 5. Total: **~58 archivos** / **~11 sesiones** (antes ~53 / ~10).
+>
+> **Cambios de la Rev. 3 (alineada con el plan V20 Rev. 5):**
+> 1. **Nuevo Bloque 9.d — corrección de los 3 bugs cerrados** (Sección 6.8 del
+>    plan): consolida en un solo lugar los tres arreglos que ya estaban dispersos
+>    en 9.a/9.b/9.c, con su **orden de ejecución obligatorio** y su **criterio de
+>    aceptación conjunto**.
+> 2. **Regla de oro #9:** los 3 bugs se corrigen en el **mismo commit atómico**
+>    que `pos` (20.2 + 20.2.b + 20.2.c); `grandeza` (20.2.d) va en su commit propio.
+> 3. **Riesgo #8:** si se corrige uno solo de los 3 bugs, el ERP queda
+>    **inconsistente** (POS en UTC, reportes en local, o viceversa).
+> 4. Total: **~58 archivos** / **~11 sesiones** (sin cambio; 9.d no añade archivos,
+>    solo consolida y ordena).
 
 ---
 
@@ -390,6 +402,73 @@ Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 
 ---
 
+### BLOQUE 9.d — Corrección de los 3 bugs cerrados (Sección 6.8 del plan) 🔴
+
+**Riesgo:** **ALTO.** Este bloque **no añade archivos nuevos**: consolida y ordena
+los tres arreglos que ya viven en 9.a, 9.b y 9.c. Existe porque los tres bugs
+están **acoplados**: corregir uno solo deja el ERP inconsistente.
+
+**Los 3 bugs (confirmados con código real):**
+
+| # | Bug | Ubicación exacta | Naturaleza |
+|---|---|---|---|
+| 1 | `+6h` del POS IA | [`pos/service.py:573-584`](apps/api/modules/pos/service.py:573) | **NO es bug**: es un parche funcional. Se **generaliza** con `ZoneInfo`, **nunca se borra** |
+| 2 | Acoplamiento `analytics` ↔ `pos` | [`analytics/service.py:54-55,89-90,104,111-115,121,126-128,156-158,217-218,272-273,281,288,297-299`](apps/api/modules/analytics/service.py:54) | **Bug latente**: hoy funciona por coincidencia (ambos naive local). Tras migrar `pos` a UTC, **todos los reportes se desplazan 6h** |
+| 3 | `_now_mexico()` de `grandeza` | [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) + call sites `:344`, `:484`, `:692` + `strftime` en `:614` | **Bug latente**: idéntico al `+6h`. Tras migrar `pos`, `grandeza` queda como el único módulo en hora local |
+
+**⚠️ ORDEN DE EJECUCIÓN OBLIGATORIO (no invertir):**
+
+| Paso | Acción | Dónde | Por qué en este orden |
+|---|---|---|---|
+| 1 | Crear `local_day_bounds_utc()` en `core/timestamps.py` | Bloque 6 (infra) | Es el helper compartido por POS y Analytics |
+| 2 | Crear `to_local_date_str()` en `core/timestamps.py` | Bloque 6 (infra) | Lo consume `grandeza` en el paso 5 |
+| 3 | Generalizar el `+6h` del POS IA con `ZoneInfo` | Bloque 9.a (20.2.b) | **Primero el POS**: es el origen de los datos |
+| 4 | Migrar `analytics` a `local_day_bounds_utc()` + `func.timezone()` | Bloque 9.b (20.2.c) | **Mismo commit que el paso 3**: si no, reportes desfasados |
+| 5 | Migrar `grandeza` (`_now_mexico` → alias de `utcnow()`) | Bloque 9.c (20.2.d) | **Commit propio**, después de que el frontend esté listo |
+
+**⚠️ COMMIT ATÓMICO (los 3 bugs, indivisibles):**
+
+Los pasos 3 y 4 van en **UN SOLO commit**. El paso 5 va en **su propio commit**
+(porque toca `grandeza`, que tiene su propia UI y su propio smoke test).
+
+```
+Commit A (Bloque 9, atómico):  pos + analytics   → 20.2 + 20.2.b + 20.2.c
+Commit B (Bloque 9.c, propio): grandeza          → 20.2.d
+```
+
+**Criterio de aceptación conjunto (los 3 bugs a la vez):**
+
+- [ ] **Bug #1:** un ticket creado a las **23:30 local** aparece en la Auditoría POS
+      del **día local correcto** (no del día siguiente).
+- [ ] **Bug #1:** un ticket creado a las **00:30 local** aparece en el día local
+      correcto (no del día anterior).
+- [ ] **Bug #2:** el reporte de ventas del día local `D` incluye exactamente los
+      tickets vendidos entre `00:00` y `23:59:59` **hora local** de `D`.
+- [ ] **Bug #2:** el histograma por hora muestra el pico a la **hora local** real
+      (no desplazado 6h).
+- [ ] **Bug #2:** el ranking de productos por día coincide con el filtro de tickets.
+- [ ] **Bug #3:** `dispatched_at` de un viaje nuevo está a **< 5s** de `utcnow()`.
+- [ ] **Bug #3:** `journey_date` de un viaje creado a las **23:30 local** sigue
+      siendo el **día local** (no se convierte a UTC).
+- [ ] **Bug #3:** `get_client_statistics` devuelve la fecha **local** de la visita.
+- [ ] **Los 3 juntos:** POS, Analytics y Grandeza reportan la **misma hora local**
+      para el mismo instante.
+
+**Verificación:**
+- [ ] `docker restart rderico-api-dev`
+- [ ] pytest **~80/80** (incluye los tests nuevos de `local_day_bounds_utc`)
+- [ ] vitest **~305/305**
+- [ ] **Smoke cruzado:** crear un ticket a las 23:30 local → verificar que aparece
+      en Auditoría POS, en Estadísticas de Ventas y en Grandeza el **mismo día local**.
+
+**Commit A:** `fix(v20): corregir los 3 bugs de zona horaria (POS + analytics)`
+**Commit B:** `fix(v20): migrar grandeza a UTC (Date local / DateTime UTC)`
+
+**⛔ SI SOLO SE CORRIGE UNO DE LOS 3:** el ERP queda inconsistente. No se avanza
+con rojo parcial. Se revierte el commit y se reintenta completo.
+
+---
+
 ### BLOQUE 10 — V20 Fase 20.5 (unificación) ⏸️ DIFERIDA
 
 **Decisión:** **NO se implementa.** La duplicación de `_utcnow` en `warehouse` y
@@ -400,7 +479,7 @@ Se documenta como **deuda técnica aceptada**.
 
 ---
 
-## 4. LAS 8 REGLAS DE ORO
+## 4. LAS 9 REGLAS DE ORO
 
 1. **Un bloque = un commit verificado.** Nunca dos bloques sin verificar.
 2. **`docker restart rderico-api-dev`** después de CADA cambio de Python.
@@ -412,10 +491,12 @@ Se documenta como **deuda técnica aceptada**.
 7. **El `+6h` del POS IA no se borra: se generaliza** con `ZoneInfo`. Es el parche
    que sostiene la Auditoría POS.
 8. **Si pytest o vitest fallan, se revierte el bloque.** No se avanza con rojo.
+9. **Los 3 bugs cerrados se corrigen JUNTOS** (Bloque 9.d): `pos` + `analytics` en
+   un commit atómico, `grandeza` en su commit propio. **Nunca uno solo.**
 
 ---
 
-## 5. LOS 7 PUNTOS DE MAYOR RIESGO
+## 5. LOS 8 PUNTOS DE MAYOR RIESGO
 
 | # | Punto | Síntoma si falla | Prevención |
 |---|---|---|---|
@@ -426,6 +507,7 @@ Se documenta como **deuda técnica aceptada**.
 | 5 | `analytics` ↔ `pos` (Bloque 9.b) | Reportes de ventas desfasados 6h | **Mismo commit que `pos`** |
 | 6 | `grandeza` `Date` ≠ `DateTime` (Bloque 9.c) | Calendario roto o reparto desfasado | **`Date` local, `DateTime` UTC** |
 | 7 | Frontera de datos | Reportes con salto de 6h | Documentar fecha/hora del deploy |
+| 8 | Los 3 bugs corregidos por separado (Bloque 9.d) | POS en UTC, reportes en local (o viceversa) | **Corregir los 3 JUNTOS** (commit atómico + commit propio) |
 
 ---
 
@@ -437,14 +519,15 @@ Se documenta como **deuda técnica aceptada**.
 | **2** | Bloques 2 + 3 | Migración `window.location.hostname` |
 | **3** | Bloque 4 | Timestamps UTC (network/cash/orders) |
 | **4** | Bloque 5 | Cierre V19 ✅ |
-| **5** | Bloque 6 | Infraestructura backend V20 |
+| **5** | Bloque 6 | Infraestructura backend V20 (incluye `local_day_bounds_utc` + `to_local_date_str`) |
 | **6** | Bloque 7 | Sincronizar 3 mecanismos |
 | **7** | Bloque 8 | TimezoneProvider |
-| **8-10** | Bloque 9 (9.1-9.4) | Migración datos + formateo (4 sub-oleadas) |
-| **11** | Bloque 9.c | Migrar `grandeza` a UTC |
+| **8-10** | Bloque 9 (9.1-9.4) + 9.d | Migración datos + formateo + **corrección de los 3 bugs (commit atómico)** |
+| **11** | Bloque 9.c | Migrar `grandeza` a UTC (commit propio) |
 | — | Bloque 10 | Diferido |
 
-**Total:** ~11 sesiones. **V19 se completa en 4. V20 en 7.**
+**Total:** ~11 sesiones. **V19 se completa en 4. V20 en 7.** El Bloque 9.d **no
+añade sesiones**: consolida y ordena lo que ya estaba en 9.a/9.b/9.c.
 
 ---
 
@@ -464,8 +547,15 @@ Se documenta como **deuda técnica aceptada**.
 - [ ] Los 3 mecanismos de zona están sincronizados
 - [ ] El `+6h` del POS IA generalizado con `ZoneInfo` (no borrado)
 - [ ] `analytics` filtra con `local_day_bounds_utc()` (mismo commit que `pos`)
+- [ ] **Rev. 3 — los 3 bugs cerrados corregidos JUNTOS** (Bloque 9.d):
+      - [ ] Bug #1: ticket a las 23:30 local → día local correcto en Auditoría POS
+      - [ ] Bug #2: reporte de ventas del día `D` = tickets 00:00-23:59 local de `D`
+      - [ ] Bug #3: `dispatched_at` a < 5s de `utcnow()`; `journey_date` sigue local
+      - [ ] Los 3: POS, Analytics y Grandeza reportan la **misma hora local**
 - [ ] pytest ~80/80 + vitest ~305/305
 - [ ] Smoke POS + KDS + Auditoría + Estadísticas + Grandeza en verde
+- [ ] Smoke cruzado: un ticket a las 23:30 local aparece el **mismo día local** en
+      Auditoría POS, Estadísticas de Ventas y Grandeza
 
 ---
 
@@ -486,7 +576,9 @@ Se documenta como **deuda técnica aceptada**.
 
 **V19 primero (Bloques 1-5, riesgo bajo/medio), V20 después (Bloques 6-9, riesgo
 alto concentrado en el Bloque 9). Un commit verificado por bloque. El POS IA nunca
-se toca; `grandeza` SÍ se migra (Bloque 9.c) salvo sus `Column(Date)`. Si algo
-falla, se revierte el bloque y no se avanza.**
+se toca; `grandeza` SÍ se migra (Bloque 9.c) salvo sus `Column(Date)`. Los 3 bugs
+cerrados se corrigen **juntos** (Bloque 9.d): `pos` + `analytics` en un commit
+atómico, `grandeza` en su commit propio. Si algo falla, se revierte el bloque y no
+se avanza.**
 
 **FIN DE LA HOJA DE RUTA**
