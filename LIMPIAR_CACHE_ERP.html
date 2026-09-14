@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Limpiar Cache ERP | R de Rico</title>
+    <style>
+        body {
+            background-color: #0A0A0B;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 40px;
+            border-radius: 24px;
+            border: 1px solid rgba(212, 175, 55, 0.3);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            max-width: 560px;
+            width: 100%;
+        }
+        h1 { color: #D4AF37; margin-bottom: 10px; letter-spacing: 2px; font-size: 24px; }
+        h2 { color: #fff; font-size: 16px; font-weight: 400; margin-top: 0; margin-bottom: 28px; }
+        .btn {
+            display: block;
+            width: 100%;
+            background: #D4AF37;
+            color: black;
+            text-decoration: none;
+            padding: 16px 30px;
+            margin: 14px 0;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-sizing: border-box;
+        }
+        .btn:hover { background: white; transform: scale(1.03); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .secondary {
+            background: transparent;
+            color: #D4AF37;
+            border: 1px solid #D4AF37;
+        }
+        .secondary:hover { background: rgba(212, 175, 55, 0.15); color: #D4AF37; }
+        .log {
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 14px;
+            margin-top: 20px;
+            text-align: left;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+            color: #4ade80;
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .log .err { color: #f87171; }
+        .log .info { color: #60a5fa; }
+        p.hint { color: #888; font-size: 13px; margin-top: 22px; line-height: 1.6; }
+        .step { color: #D4AF37; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LIMPIAR CACHE DEL ERP</h1>
+        <h2>R de Rico — Reparador de Página en Blanco</h2>
+
+        <button id="btnLimpiar" class="btn" onclick="limpiarTodo()">🧹 LIMPIAR CACHE Y SERVICE WORKER</button>
+        <a href="http://localhost:5000" class="btn secondary" id="btnAbrir" target="_blank">🚀 ABRIR EL ERP (puerto 5000)</a>
+
+        <div class="log" id="log">Listo. Presiona el botón dorado para limpiar.</div>
+
+        <p class="hint">
+            <span class="step">¿Qué hace?</span> Desregistra el Service Worker viejo, borra todas las
+            cachés del navegador y elimina el almacenamiento local del ERP.<br><br>
+            <span class="step">Después:</span> presiona "ABRIR EL ERP". Si aún sale en blanco,
+            cierra TODAS las pestañas del ERP y vuelve a abrir este archivo.
+        </p>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+
+        function log(msg, cls = '') {
+            const line = document.createElement('div');
+            if (cls) line.className = cls;
+            line.textContent = msg;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function limpiarTodo() {
+            const btn = document.getElementById('btnLimpiar');
+            btn.disabled = true;
+            logEl.innerHTML = '';
+            log('=== INICIANDO LIMPIEZA ===', 'info');
+
+            // 1. Desregistrar Service Workers
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(regs => {
+                    if (regs.length === 0) {
+                        log('Service Worker: ninguno registrado.');
+                    }
+                    regs.forEach(reg => {
+                        reg.unregister().then(ok => {
+                            log('Service Worker desregistrado: ' + (reg.scope || '?') + ' -> ' + ok);
+                        });
+                    });
+                }).catch(e => log('Error SW: ' + e.message, 'err'));
+            } else {
+                log('Service Worker no soportado en este navegador.');
+            }
+
+            // 2. Borrar todas las cachés
+            if ('caches' in window) {
+                caches.keys().then(keys => {
+                    if (keys.length === 0) {
+                        log('Cachés: ninguna encontrada.');
+                    }
+                    keys.forEach(k => {
+                        caches.delete(k).then(ok => {
+                            log('Caché borrada: ' + k + ' -> ' + ok);
+                        });
+                    });
+                }).catch(e => log('Error caches: ' + e.message, 'err'));
+            } else {
+                log('Cache API no soportada.');
+            }
+
+            // 3. Borrar localStorage y sessionStorage
+            try {
+                const nLocal = localStorage.length;
+                localStorage.clear();
+                log('localStorage borrado (' + nLocal + ' claves).');
+            } catch (e) { log('Error localStorage: ' + e.message, 'err'); }
+
+            try {
+                sessionStorage.clear();
+                log('sessionStorage borrado.');
+            } catch (e) { log('Error sessionStorage: ' + e.message, 'err'); }
+
+            // 4. Borrar IndexedDB (offlineQueue del ERP)
+            if (window.indexedDB && indexedDB.databases) {
+                indexedDB.databases().then(dbs => {
+                    dbs.forEach(db => {
+                        if (db.name) {
+                            indexedDB.deleteDatabase(db.name);
+                            log('IndexedDB borrada: ' + db.name);
+                        }
+                    });
+                }).catch(e => log('IndexedDB: ' + e.message, 'err'));
+            } else {
+                log('IndexedDB: enumeración no soportada (se ignora).');
+            }
+
+            setTimeout(() => {
+                log('=== LIMPIEZA COMPLETA ===', 'info');
+                log('Ahora presiona "ABRIR EL ERP".', 'info');
+                btn.disabled = false;
+                btn.textContent = '✅ LIMPIAR OTRA VEZ';
+            }, 1500);
+        }
+    </script>
+</body>
+</html>
