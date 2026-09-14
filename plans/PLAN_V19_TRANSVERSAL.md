@@ -21,8 +21,19 @@
 > **Restricción Suprema (B):** [`apps/api/modules/catalog/`](apps/api/modules/catalog/models.py:1) es la
 > **única fuente de verdad** de productos y categorías. Cero precios hardcodeados.
 >
-> **Fecha:** 2026-09-14 · **Estado:** Revisión 1 — pendiente de autocrítica
-> **Baseline verificado:** vitest **293/293** · pytest **58/58** · build **1433 módulos** · HEAD `5448426`
+> **Fecha:** 2026-09-14 · **Estado:** ✅ **COMPLETO** (Bloques 1-5 cerrados)
+> **Baseline verificado:** vitest **293/293** · pytest **58/58** · build **1434 módulos** · HEAD `d3ad9c6`
+>
+> **Cierre V19 (14 Sep 2026):** Bloques 1-5 implementados y verificados.
+> - Bloque 1 (`12ed1d3`): infraestructura `VITE_API_URL` + `apps/shared/config.js`
+> - Bloque 2 (`90438aa`): 11 archivos no-POS migrados a `CONFIG.API_BASE_URL`
+> - Bloque 3 (`afe314d`): 4 archivos POS no-IA migrados
+> - Hotfix v19.1 (`7475d53`): prioridad al hostname del navegador (corrige POS sin conexión y fotos)
+> - Bloque 4 (`d3ad9c6`): `core/timestamps.py` + network/cash/orders a UTC
+> - Bloque 5: documentación y cierre
+>
+> **⏳ Diferido a V20 Bloque 9.c:** migración de `grandeza` a UTC (deuda técnica programada,
+> ya NO documentada como "local deliberado permanente").
 
 ---
 

@@ -1,7 +1,7 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.2.0
-> **Ultima actualizacion:** 13 de septiembre de 2026
+> **Version:** 1.3.0
+> **Ultima actualizacion:** 14 de septiembre de 2026
 > **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py)
 
 ---
@@ -271,4 +271,89 @@ GET /api/v1/settings/  ->  200
 
 ---
 
-> **Esta documentacion refleja el estado del sistema al 13 de septiembre de 2026.**
+## 7. PLAN TRANSVERSAL V19 — FUENTE UNICA DE VERDAD DE LA API (14 Sep 2026)
+
+### 7.1 Problema resuelto
+
+Antes de V19, cada archivo del frontend construia la URL de la API por su cuenta con
+`http://${window.location.hostname}:5001/api/v1`. Esto generaba **27 puntos de duplicacion**
+y hacia imposible desplegar en un dominio publico sin editar archivo por archivo.
+
+### 7.2 Solucion: `apps/shared/config.js`
+
+Se creo un unico modulo que resuelve la URL base de la API con **prioridad explicita**:
+
+| Prioridad | Fuente | Uso |
+|-----------|--------|-----|
+| 1 | `window.location.hostname` | **Comportamiento historico LAN** (compatibilidad total) |
+| 2 | `import.meta.env.VITE_API_URL` | Override explicito (solo si no hay `window`, p.ej. SSR/build) |
+| 3 | `http://localhost:5001/api/v1` | Fallback final |
+
+```javascript
+// apps/shared/config.js
+export const CONFIG = {
+    API_BASE_URL: resolveApiBaseUrl(),
+    ITEMS_PER_PAGE: 12,
+    TASA_IVA_MEXICO: 0.16
+};
+```
+
+> **⚠️ LECCION CRITICA (hotfix v19.1):** La primera version daba **prioridad** a
+> `VITE_API_URL`. Al fijarlo a una IP LAN concreta (`192.168.1.117`) en `docker-compose.yml`,
+> **cualquier cliente en otro host perdia la conexion** y las fotografias de producto no
+> cargaban (el POS mostraba "Sin conexion al servidor"). El hostname del navegador **debe**
+> ser la fuente primaria. `VITE_API_URL` es solo un override opcional para despliegues con
+> dominio publico.
+
+### 7.3 Archivos migrados
+
+- **11 archivos no-POS** (commit `90438aa`): `PerfilesAccessSuite`, `SystemSettingsUI`,
+  `GestorRepartosUI`, `PedidosProduccionUI`, `GestorPickupUI`, `PedidosPendientesUI`,
+  `ProcesoProduccionMasaUI`, `GlobalAgentSettingsUI`, `ProductCatalogUI`, `DoughManagerUI`,
+  `ProductionEquipmentUI`.
+- **4 archivos POS no-IA** (commit `afe314d`): `posConstants.js`, `ProgramacionPedidoModal.jsx`,
+  `GrandezaDriverUI.jsx`, `pos/config.js`.
+- **Patron `API_ORIGIN`:** para reescribir URLs de imagenes se deriva el origen sin `/api/v1`
+  con `CONFIG.API_BASE_URL.replace(/\/api\/v1\/?$/, '')`.
+
+> **NO migrado (intocable):** `apps/pos/RetailVisionPOS.jsx` (Punto de Venta IA) es un
+> **consumidor verificado por smoke**, no sujeto de cambio (Restriccion A).
+
+---
+
+## 8. PLAN TRANSVERSAL V19 — TIMESTAMPS TECNICOS EN UTC (14 Sep 2026)
+
+### 8.1 Utilidad centralizada `apps/api/core/timestamps.py`
+
+```python
+from datetime import datetime, timezone
+
+def utcnow() -> datetime:
+    """Retorna la hora actual en UTC como datetime NAIVE."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+```
+
+### 8.2 Modulos migrados (commit `d3ad9c6`)
+
+| Modulo | Archivos | Cambio |
+|--------|----------|--------|
+| Network | `network/models.py` | `created_at` default `utcnow` |
+| Cash | `cash/models.py`, `cash/service.py` | `opened_at`, `created_at`, `closed_at` en UTC |
+| Orders | `orders/models.py`, `orders/service.py` | `created_at`, `updated_at` en UTC |
+
+### 8.3 Distincion tecnico vs negocio (Rev. 2)
+
+- **Timestamps TECNICOS** (network, cash, orders): se almacenan en **UTC**. Son marcas de
+  auditoria, no dependen de la hora local del negocio.
+- **Timestamps de NEGOCIO** (grandeza): usan `local_now()` de forma **deliberada** porque
+  representan eventos de ruta que el operador lee en hora local.
+
+> **⏳ PENDIENTE — V20 Bloque 9.c:** El modulo `grandeza` **aun NO se migra a UTC**.
+> Queda **pendiente** para la Fase 20.2.d del plan V20 (Zona Horaria Global). En Rev. 2
+> **ya NO se documenta como "local deliberado permanente"**, sino como deuda tecnica
+> programada. Ver `plans/PLAN_V20_ZONA_HORARIA_GLOBAL.md`.
+
+---
+
+> **Esta documentacion refleja el estado del sistema al 14 de septiembre de 2026.**
+> **V19 (Plan Transversal) — COMPLETO.** Bloques 1-5 cerrados. `grandeza` diferido a V20 Bloque 9.c.
