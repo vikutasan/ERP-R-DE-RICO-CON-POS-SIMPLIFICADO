@@ -113,12 +113,15 @@ async def test_bug1_ticket_0030_local_aparece_en_dia_local_correcto(db):
     await _crear_ticket(db, f"{ACC_PREFIX}0030", created_utc)
 
     svc = pos_service.POSService()
-    tickets_d = await svc.get_tickets(db, search_date="2026-09-14")
+    # Aislamiento: filtrar por el prefijo de prueba para que el resultado no
+    # dependa del volumen de tickets reales del día (get_tickets aplica
+    # limit=100 + created_at DESC, y el ticket de prueba es el más antiguo).
+    tickets_d = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
     accs_d = [t.account_num for t in tickets_d]
     assert f"{ACC_PREFIX}0030" in accs_d, "El ticket de las 00:30 local debe estar en D"
 
     # NO debe aparecer en D-1 (2026-09-13)
-    tickets_dm1 = await svc.get_tickets(db, search_date="2026-09-13")
+    tickets_dm1 = await svc.get_tickets(db, search_date="2026-09-13", search=ACC_PREFIX)
     accs_dm1 = [t.account_num for t in tickets_dm1]
     assert f"{ACC_PREFIX}0030" not in accs_dm1, "El ticket NO debe estar en D-1"
 
@@ -136,7 +139,8 @@ async def test_bug1_limites_del_dia_local_son_0600_utc(db):
     await _crear_ticket(db, f"{ACC_PREFIX}LIMITE_OUT", datetime(2026, 9, 15, 6, 0, 0))
 
     svc = pos_service.POSService()
-    tickets = await svc.get_tickets(db, search_date="2026-09-14")
+    # Aislamiento: ver nota en test_bug1_ticket_0030_local_aparece_en_dia_local_correcto.
+    tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
     accs = [t.account_num for t in tickets]
     assert f"{ACC_PREFIX}LIMITE_IN" in accs
     assert f"{ACC_PREFIX}LIMITE_OUT" not in accs
