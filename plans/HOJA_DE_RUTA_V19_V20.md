@@ -5,7 +5,7 @@
 >
 > **Estado:** 📋 **LISTA PARA EJECUTAR.** Ningún bloque iniciado.
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 3
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 4
 >
 > **Cambios de la Rev. 2 (alineada con el plan V20 Rev. 4):**
 > 1. **`grandeza` SÍ se migra** (Fase 20.2.d) — ya no es excepción. Solo sus
@@ -29,6 +29,18 @@
 >    **inconsistente** (POS en UTC, reportes en local, o viceversa).
 > 4. Total: **~58 archivos** / **~11 sesiones** (sin cambio; 9.d no añade archivos,
 >    solo consolida y ordena).
+>
+> **Cambios de la Rev. 4 (afinación de la Restricción A):**
+> 1. **El POS IA es un CONSUMIDOR, no un sujeto del cambio.** "No se toca" no es
+>    una exención: es una **obligación de verificación por smoke**. El módulo queda
+>    fuera del *cambio* pero dentro del *smoke*.
+> 2. **Regla de oro #5 ampliada:** el POS IA no se toca **y** se verifica por smoke
+>    obligatorio tras el Bloque 9 (es el consumidor más crítico del backend).
+> 3. **Nuevo Bloque 9.e — Smoke obligatorio del POS IA** (verificación, no cambio):
+>    checklist explícito de lo que hay que probar a mano tras migrar `pos` a UTC.
+> 4. **Riesgo #9:** un backend correcto puede romper una caja que funcionaba. El
+>    bug no nace en el POS IA; nace en su **frontera** con la API y se manifiesta
+>    en él.
 
 ---
 
@@ -345,6 +357,12 @@ antigüedad entre un commit y el otro.
 Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
 6 horas entre commits.
 
+**⚠️ EL POS IA ES UN CONSUMIDOR (Restricción A):** [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29)
+**no se modifica**, pero **sí se verifica por smoke** (Bloque 9.e). No produce
+fechas: las **consume** de la API. Si el backend cambia la forma de prepararlas,
+el POS IA puede romperse **sin que se le haya tocado una línea**. El riesgo no
+está en el archivo: está en su **frontera** con el backend.
+
 ---
 
 ### BLOQUE 9.c — V20 Fase 20.2.d (migrar `grandeza` a UTC) 🟡
@@ -469,6 +487,62 @@ con rojo parcial. Se revierte el commit y se reintenta completo.
 
 ---
 
+### BLOQUE 9.e — Smoke obligatorio del POS IA (verificación, NO cambio) 🔴
+
+**Riesgo:** **ALTO.** Este bloque **no modifica ni una línea**. Existe porque el
+POS IA es el **consumidor más crítico** del backend y su fallo no se ve en un
+reporte: se ve en la caja.
+
+**⚠️ POR QUÉ EXISTE ESTE BLOQUE:** "no tocar el POS IA" (Restricción A) **no
+significa "no importa"**. Significa que el módulo deja de ser **sujeto** del cambio
+y se convierte en **objeto** de la verificación.
+
+| Antes del plan | Durante el plan |
+|---|---|
+| El POS IA es un módulo que se **modifica** | El POS IA es un módulo que se **observa** |
+| Se verifica con tests unitarios | Se verifica con **smoke test** (usarlo de verdad) |
+| Si falla, se arregla el código | Si falla, se arregla **lo que lo rodea** (la frontera) |
+
+**⚠️ LA ASIMETRÍA CLAVE:**
+
+| Capa | ¿Se toca? | Por qué |
+|---|---|---|
+| **Backend** ([`pos/service.py`](apps/api/modules/pos/service.py:573)) | ✅ **SÍ** | Ahí vive el `+6h` que se generaliza |
+| **Frontend** ([`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29)) | ⛔ **NO** | Solo muestra lo que el backend le da |
+
+**Checklist de smoke (manual, con el POS IA abierto):**
+
+- [ ] **Abrir el POS IA** → carga sin errores en consola.
+- [ ] **Crear un ticket** con productos → se guarda correctamente.
+- [ ] **Verificar la hora del ticket recién creado** → debe ser la **hora local real**
+      (no 6 horas corridas).
+- [ ] **Abrir la Auditoría POS** → los tickets del día aparecen en el **día local
+      correcto**.
+- [ ] **Ticket a las 23:30 local** (o simulado) → aparece en el **día local correcto**,
+      no en el siguiente.
+- [ ] **Ticket a las 00:30 local** (o simulado) → aparece en el **día local correcto**,
+      no en el anterior.
+- [ ] **Cobrar un ticket** → el flujo de pago completa sin errores.
+- [ ] **Imprimir un ticket** → la hora impresa es la **hora local real**.
+- [ ] **Los terminales abren** → [`TerminalSelector.jsx:63`](apps/pos/TerminalSelector.jsx:63)
+      **no se tocó** (es la URL de la app).
+
+**⛔ SI EL SMOKE FALLA:** el problema **no está en el POS IA** (no se tocó). Está en
+la **frontera**: el backend, la serialización o el `formatLocal`. Se corrige ahí,
+**nunca** en el archivo intocable.
+
+**⛔ PROHIBIDO:** "aprovechar que estamos ahí" para mejorar, refactorizar o
+"dejar consistente" el POS IA. Ni una línea. Aunque parezca trivial.
+
+**Verificación:**
+- [ ] Los 9 puntos del checklist de smoke, en verde.
+- [ ] `git diff` del Bloque 9 **no** incluye `RetailVisionPOS.jsx`.
+
+**Commit:** **ninguno.** Este bloque no produce cambios de código; produce
+**evidencia de verificación** (capturas o notas en el registro de ejecución).
+
+---
+
 ### BLOQUE 10 — V20 Fase 20.5 (unificación) ⏸️ DIFERIDA
 
 **Decisión:** **NO se implementa.** La duplicación de `_utcnow` en `warehouse` y
@@ -485,7 +559,10 @@ Se documenta como **deuda técnica aceptada**.
 2. **`docker restart rderico-api-dev`** después de CADA cambio de Python.
 3. **pytest vía `docker exec`** (Python no está en el PATH del host).
 4. **Nunca `docker compose down`.** Solo `restart`.
-5. **El POS IA (`RetailVisionPOS.jsx`) no se toca.** Ni una línea.
+5. **El POS IA (`RetailVisionPOS.jsx`) no se toca — y se verifica por smoke.**
+   Ni una línea de código (Restricción A), **pero** smoke obligatorio tras el
+   Bloque 9 (Bloque 9.e). Es un **consumidor**, no un sujeto del cambio: el
+   módulo queda fuera del *cambio* pero dentro del *smoke*.
 6. **`grandeza` SÍ se migra** (Bloque 9.c). Solo sus `Column(Date)`
    (`journey_date`, `route_date`) quedan locales. **Rev. 2: ya no es excepción.**
 7. **El `+6h` del POS IA no se borra: se generaliza** con `ZoneInfo`. Es el parche
@@ -496,7 +573,7 @@ Se documenta como **deuda técnica aceptada**.
 
 ---
 
-## 5. LOS 8 PUNTOS DE MAYOR RIESGO
+## 5. LOS 9 PUNTOS DE MAYOR RIESGO
 
 | # | Punto | Síntoma si falla | Prevención |
 |---|---|---|---|
@@ -508,6 +585,7 @@ Se documenta como **deuda técnica aceptada**.
 | 6 | `grandeza` `Date` ≠ `DateTime` (Bloque 9.c) | Calendario roto o reparto desfasado | **`Date` local, `DateTime` UTC** |
 | 7 | Frontera de datos | Reportes con salto de 6h | Documentar fecha/hora del deploy |
 | 8 | Los 3 bugs corregidos por separado (Bloque 9.d) | POS en UTC, reportes en local (o viceversa) | **Corregir los 3 JUNTOS** (commit atómico + commit propio) |
+| 9 | El POS IA como consumidor (Bloque 9.e) | Un backend correcto rompe una caja que funcionaba | **Smoke obligatorio** tras el Bloque 9; el bug está en la **frontera**, no en el archivo |
 
 ---
 
@@ -522,12 +600,13 @@ Se documenta como **deuda técnica aceptada**.
 | **5** | Bloque 6 | Infraestructura backend V20 (incluye `local_day_bounds_utc` + `to_local_date_str`) |
 | **6** | Bloque 7 | Sincronizar 3 mecanismos |
 | **7** | Bloque 8 | TimezoneProvider |
-| **8-10** | Bloque 9 (9.1-9.4) + 9.d | Migración datos + formateo + **corrección de los 3 bugs (commit atómico)** |
+| **8-10** | Bloque 9 (9.1-9.4) + 9.d + 9.e | Migración datos + formateo + **corrección de los 3 bugs (commit atómico)** + **smoke del POS IA** |
 | **11** | Bloque 9.c | Migrar `grandeza` a UTC (commit propio) |
 | — | Bloque 10 | Diferido |
 
-**Total:** ~11 sesiones. **V19 se completa en 4. V20 en 7.** El Bloque 9.d **no
-añade sesiones**: consolida y ordena lo que ya estaba en 9.a/9.b/9.c.
+**Total:** ~11 sesiones. **V19 se completa en 4. V20 en 7.** Los Bloques 9.d y 9.e
+**no añaden sesiones**: 9.d consolida lo que ya estaba en 9.a/9.b/9.c, y 9.e es
+verificación (smoke), no cambio de código.
 
 ---
 
@@ -556,6 +635,11 @@ añade sesiones**: consolida y ordena lo que ya estaba en 9.a/9.b/9.c.
 - [ ] Smoke POS + KDS + Auditoría + Estadísticas + Grandeza en verde
 - [ ] Smoke cruzado: un ticket a las 23:30 local aparece el **mismo día local** en
       Auditoría POS, Estadísticas de Ventas y Grandeza
+- [ ] **Rev. 4 — el POS IA verificado por smoke** (Bloque 9.e), los 9 puntos en verde:
+      - [ ] El POS IA carga, crea tickets y cobra sin errores
+      - [ ] La hora del ticket recién creado es la **hora local real**
+      - [ ] La Auditoría POS muestra los tickets en el **día local correcto**
+      - [ ] `git diff` del Bloque 9 **no** incluye `RetailVisionPOS.jsx`
 
 ---
 
@@ -568,6 +652,8 @@ añade sesiones**: consolida y ordena lo que ya estaba en 9.a/9.b/9.c.
 | `/settings/timezone` da 404 | Revisar el orden de rutas en `settings/router.py` |
 | El POS no carga productos | Verificar `CONFIG.API_BASE_URL` en `apps/shared/config.js` |
 | Los terminales no abren | Revisar que `TerminalSelector.jsx:63` **no** se tocó |
+| **El POS IA muestra horas corridas** | **NO tocar el POS IA.** El bug está en la **frontera**: revisar el `+6h` generalizado, la serialización o el `formatLocal` |
+| **El POS IA falla el smoke** | **NO tocar el POS IA.** Revisar el backend y la API; el archivo intocable no es la causa |
 | Duda sobre un archivo | **Detenerse y preguntar.** No adivinar. |
 
 ---
@@ -576,9 +662,10 @@ añade sesiones**: consolida y ordena lo que ya estaba en 9.a/9.b/9.c.
 
 **V19 primero (Bloques 1-5, riesgo bajo/medio), V20 después (Bloques 6-9, riesgo
 alto concentrado en el Bloque 9). Un commit verificado por bloque. El POS IA nunca
-se toca; `grandeza` SÍ se migra (Bloque 9.c) salvo sus `Column(Date)`. Los 3 bugs
-cerrados se corrigen **juntos** (Bloque 9.d): `pos` + `analytics` en un commit
-atómico, `grandeza` en su commit propio. Si algo falla, se revierte el bloque y no
-se avanza.**
+se toca — **pero siempre se verifica por smoke** (Bloque 9.e): es un consumidor, no
+un sujeto del cambio. `grandeza` SÍ se migra (Bloque 9.c) salvo sus `Column(Date)`.
+Los 3 bugs cerrados se corrigen **juntos** (Bloque 9.d): `pos` + `analytics` en un
+commit atómico, `grandeza` en su commit propio. Si algo falla, se revierte el bloque
+y no se avanza.**
 
 **FIN DE LA HOJA DE RUTA**
