@@ -169,7 +169,7 @@ export const HeladeriaHubUI = ({ onBack }) => {
                     margin: '16px 0 0',
                     fontSize: '14px', color: '#6b7280', fontWeight: '500',
                 }}>
-                    Centro de control — selecciona una sección para comenzar
+                    Haciendo tu vida más dulce.
                 </p>
             </div>
 
