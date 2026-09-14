@@ -6,12 +6,20 @@
 >
 > **Estado:** 📋 **PLANIFICADO.** No implementado. Depende de V19 (Fase 19.4).
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 2
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 3
 >
 > **Cambios de la Rev. 2:** se incorpora la **Sección 6.5 — Arreglo de zona horaria
 > del POS IA**, tras auditar el módulo a fondo. Se documenta el **bug del `+6h`**
 > ([`pos/service.py:579-580`](apps/api/modules/pos/service.py:579)) y se establece la
 > regla del **commit atómico** para `pos`.
+>
+> **Cambios de la Rev. 3:** se incorpora la **Sección 6.6 — Acoplamiento `analytics`
+> ↔ `pos`**, tras verificar la cobertura ERP-wide. Se detectó que
+> [`analytics/service.py`](apps/api/modules/analytics/service.py:54) filtra
+> `Ticket.created_at` con fronteras naive local: migrar `pos` sin tocar `analytics`
+> **desfasa todos los reportes de ventas 6 horas**. Se amplía la regla del commit
+> atómico a `pos` + `analytics` y se añade el helper compartido
+> `local_day_bounds_utc()`.
 
 ---
 
@@ -33,6 +41,8 @@ corregir mi propio diseño inicial):
 | 8 | "`pos` guarda UTC" | **FALSO.** `pos/models.py:34` usa `datetime.now()` (hora local) | ✅ Sí |
 | 9 | "El POS IA maneja zona horaria" | **FALSO.** No tiene **ninguna** lógica de timezone. Solo `setLastSaveTime(new Date())` ×3 | ✅ Sí |
 | 10 | "El `+6h` de `pos/service.py` es un bug" | **MATIZ.** Hoy es un **parche funcional** que compensa el naive local. Se vuelve bug **solo si** se migra `created_at` a UTC sin quitarlo | ✅ Sí |
+| 11 | "Migrar `pos` a UTC solo afecta a `pos`" | **FALSO.** `analytics/service.py` filtra `Ticket.created_at` con fronteras naive local (12 usos). Migrar `pos` sin tocar `analytics` **desfasa los reportes 6h** | ✅ Sí |
+| 12 | "`analytics` ya sigue al selector" | **MATIZ.** Lo sigue para **formatear** (frontend), pero **NO** para **filtrar** (SQL). Su filtro ignora el selector | ✅ Sí |
 
 **Conclusión de la autocrítica:** este plan **NO es "activar" algo que ya existe**.
 Es **corregir desviaciones reales** en 4 módulos backend + reescribir la capa de
@@ -200,6 +210,13 @@ comentario. Ver la Sección 6.5 para el código exacto.
 
 **Bug latente confirmado:** si el dueño cambia el selector a "Tijuana (UTC-8)",
 el Monitor de Red y el KDS **siguen calculando con UTC-6**. Esto ya es un bug hoy.
+
+**⚠️ Matiz crítico (Rev. 2):** `analytics` **lee** `business_timezone` para
+**formatear** (frontend), pero su **filtro SQL** de fechas
+([`analytics/service.py:54`](apps/api/modules/analytics/service.py:54)) usa
+fronteras naive **sin** consultar el selector. Es decir: `analytics` sigue al
+selector en la **presentación**, pero **NO** en el **filtrado**. Ese acoplamiento
+oculto con `Ticket.created_at` es el que se corrige en la **Sección 6.6**.
 
 ### 3.3 Frontend — Los 49 puntos de formateo de fecha
 
@@ -581,6 +598,128 @@ componente de caja modificable.
 
 ---
 
+## 6.6 FASE 20.2.c — ACOPLAMIENTO `analytics` ↔ `pos` (Rev. 2)
+
+> **Origen:** verificación de cobertura ERP-wide solicitada por el dueño
+> ("¿todo el ERP operará bajo este esquema?"). Se encontró un **acoplamiento
+> oculto** que el plan original NO contemplaba y que **rompe los reportes**
+> si se migra `pos` a UTC sin tocar `analytics`.
+
+### 6.6.1 El hallazgo (verificado contra el código real)
+
+[`analytics/service.py`](apps/api/modules/analytics/service.py:54) filtra
+`Ticket.created_at` con **fronteras de fecha naive local**:
+
+| Línea | Patrón | Efecto |
+|---|---|---|
+| 54, 89 | `Ticket.created_at >= dt_cls.combine(start_date, dt_cls.min.time())` | Compara UTC contra `00:00` naive |
+| 55, 90 | `Ticket.created_at < dt_cls.combine(end_date + timedelta(days=1), dt_cls.min.time())` | Idem, frontera superior |
+| 104, 111-115, 126-128, 156-158, 272-273, 288, 297-299 | `func.date(Ticket.created_at)` | Agrupa por **día UTC**, no por día local |
+| 121 | `func.extract('hour', Ticket.created_at)` | Histograma por **hora UTC**, no local |
+| 217-218 | `ticket.created_at.date()` / `.weekday()` | Día de semana en **UTC** |
+| 281 | `extract('dow', Ticket.created_at)` | Filtro de día de semana en **UTC** |
+
+**Por qué es crítico:** hoy `Ticket.created_at` es **naive local**, así que
+`combine(start_date, 00:00)` coincide por casualidad con la hora local. Al migrar
+`created_at` a **UTC** (Fase 20.2), la MISMA comparación pasa a significar
+"00:00 UTC" = "18:00 local del día anterior". **Todos los reportes de ventas
+se desplazan 6 horas** y las ventas de 18:00-23:59 local caen en el día siguiente.
+
+**Este es el mismo tipo de bug que el `+6h` del POS**, pero en el lado de lectura.
+El plan original lo omitió porque `analytics` aparecía solo como consumidor de
+`business_timezone` (Sección 3.2) y como formateador de frontend (Sección 3.3),
+nunca como **filtro de fecha en SQL**.
+
+### 6.6.2 El arreglo — convertir fronteras locales → UTC en el borde
+
+**Principio:** el filtro SQL **siempre** compara UTC contra UTC. La conversión
+"día local → rango UTC" se hace **una sola vez**, en el borde del servicio,
+reutilizando el helper de la Fase 20.0.
+
+```python
+# apps/api/modules/analytics/service.py
+from core.timestamps import local_day_bounds_utc  # NUEVO helper (Fase 20.0)
+
+# ANTES (naive local vs UTC — se rompe al migrar pos)
+# Ticket.created_at >= dt_cls.combine(start_date, dt_cls.min.time())
+
+# DESPUES (UTC vs UTC — correcto con cualquier zona del selector)
+start_utc, end_utc = await local_day_bounds_utc(db, start_date, end_date)
+conditions.append(Ticket.created_at >= start_utc)
+conditions.append(Ticket.created_at < end_utc)
+```
+
+**Para las agrupaciones** (`func.date`, `extract('hour')`, `extract('dow')`),
+la conversión se hace **en SQL** con `AT TIME ZONE`, para no traer filas a Python:
+
+```python
+# Agrupar por DIA LOCAL, no por dia UTC
+func.date(func.timezone(business_tz_name, Ticket.created_at)).label("exact_date")
+
+# Histograma por HORA LOCAL
+func.extract('hour', func.timezone(business_tz_name, Ticket.created_at)).label("hour")
+```
+
+> **Nota PostgreSQL:** `func.timezone(tz, ts)` sobre un `TIMESTAMP WITHOUT TIME ZONE`
+> interpreta el valor como UTC y lo convierte a `tz`. Es exactamente la semántica
+> que se necesita tras la migración de la Fase 20.2.
+
+### 6.6.3 Helper nuevo en `core/timestamps.py` (se suma a la Fase 20.0)
+
+```python
+async def local_day_bounds_utc(db, start_date: date, end_date: date):
+    """Convierte un rango de dias LOCALES a un rango UTC [start, end).
+
+    Devuelve naive-UTC (sin tzinfo) porque las columnas son
+    TIMESTAMP WITHOUT TIME ZONE y asyncpg rechaza tzinfo.
+    """
+    tz = await get_business_tz(db)
+    start_local = datetime.combine(start_date, time.min, tzinfo=tz)
+    end_local   = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=tz)
+    start_utc = start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc   = end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    return start_utc, end_utc
+```
+
+**Este helper es el MISMO que usa la Sección 6.5.2** para el `+6h` del POS.
+Una sola implementación, dos consumidores. Eso garantiza que POS y Analytics
+**nunca** se desincronicen.
+
+### 6.6.4 Orden obligatorio (regla de commit atómico ampliada)
+
+La Fase 20.2 (migrar `pos` a UTC) y la Fase 20.2.c (arreglar `analytics`)
+**deben ir en el MISMO commit**. Si se migra `pos` primero, los reportes quedan
+6 horas desfasados entre un commit y el siguiente — inaceptable en producción.
+
+**Commit atómico ampliado (reemplaza la regla de la Sección 11):**
+
+| Archivo | Cambio |
+|---|---|
+| [`pos/models.py:34`](apps/api/modules/pos/models.py:34) | `default=datetime.now` → `default=_utcnow` |
+| [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) | `+6h` → `local_day_bounds_utc()` |
+| [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) | naive−naive → `_utcnow()` |
+| [`analytics/service.py:54-55,89-90`](apps/api/modules/analytics/service.py:54) | `combine(...)` → `local_day_bounds_utc()` |
+| [`analytics/service.py:104,111-115,121,126-128,156-158,272-273,281,288,297-299`](apps/api/modules/analytics/service.py:104) | `func.date/extract` → `func.timezone(tz, ...)` |
+| [`analytics/service.py:217-218`](apps/api/modules/analytics/service.py:217) | `.date()/.weekday()` → convertir a local antes |
+
+### 6.6.5 Tests de la Fase 20.2.c
+
+- Test nuevo: un ticket creado a las **23:30 local** aparece en el reporte del
+  **día local correcto** (no en el siguiente).
+- Test nuevo: un ticket creado a las **02:00 local** aparece en el día local
+  correcto (no en el anterior).
+- Test nuevo: el histograma por hora agrupa la venta de las 20:00 local en la
+  **hora 20**, no en la hora 02 del día siguiente.
+- Test de paridad: `local_day_bounds_utc()` produce el mismo rango que el
+  `+6h` generalizado del POS para la misma fecha.
+- **Regresión:** pytest **~76/76** + smoke Estadísticas de Ventas (comparar
+  el total del día contra el corte de caja).
+
+**Verificación:** pytest **~76/76** + smoke Estadísticas de Ventas + smoke
+Auditoría POS + smoke ticket impreso.
+
+---
+
 ## 7. FASE 20.3 — FRONTEND: CONTEXTO GLOBAL DE ZONA HORARIA
 
 **Objetivo:** que el frontend **sepa** la zona del negocio y formatee con ella.
@@ -776,6 +915,7 @@ ambos `_utcnow` hacen exactamente lo mismo).
 | 20.1 | 🟡 Medio | Red/KDS con offset incorrecto | Mantener override + fallback |
 | 20.2 | 🔴 **ALTO** | KDS muestra 6h de antigüedad | Migrar `pos` junto con 20.3 |
 | **20.2.b** | 🔴 **ALTO** | **Auditoría POS desfasada 6h** | **Commit atómico con 20.2 (ver 6.5.2)** |
+| **20.2.c** | 🔴 **ALTO** | **Reportes de ventas desfasados 6h** | **Commit atómico con 20.2 (ver 6.6.4)** |
 | 20.3 | 🟢 Bajo | Ninguno (solo añade contexto) | Degradación elegante |
 | 20.4 | 🔴 **ALTO** | Fechas mal mostradas | Oleadas + smoke por pantalla |
 | 20.5 | 🟡 Medio | Tests de warehouse/security | **DIFERIR** |
@@ -820,6 +960,25 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
    día correcto (hoy aparece en el día anterior — bug existente).
 4. **NO borrar el offset:** generalizarlo con `ZoneInfo` (Sección 6.5.2), nunca eliminarlo.
 
+### 10.4 El riesgo #4: el acoplamiento `analytics` ↔ `pos` (Rev. 2)
+
+**El riesgo más silencioso del plan**, porque **no se ve en el diff de `pos`**:
+
+> [`analytics/service.py`](apps/api/modules/analytics/service.py:54) filtra
+> `Ticket.created_at` con `dt_cls.combine(start_date, dt_cls.min.time())` — es decir,
+> asume que `created_at` está en la **misma zona** que las fronteras de fecha.
+> Hoy ambas son naive local, así que funciona. Al migrar `pos` a UTC, la frontera
+> sigue siendo local pero el dato pasa a ser UTC → **desfase de 6 horas en TODOS
+> los reportes de ventas**.
+
+**Mitigación obligatoria:**
+1. **Commit atómico ampliado:** `pos` + `analytics` en el **mismo commit** (Sección 6.6.4).
+2. **Helper compartido:** `local_day_bounds_utc()` en `core/timestamps.py`, usado por
+   POS y Analytics — una sola implementación, imposible que se desincronicen.
+3. **Agrupaciones en SQL:** `func.timezone(tz, Ticket.created_at)` para `date`/`hour`/`dow`.
+4. **Test de frontera:** ticket de las **23:30 local** en el día local correcto.
+5. **Test de paridad:** `local_day_bounds_utc()` == rango del `+6h` generalizado del POS.
+
 ---
 
 ## 11. ORDEN DE EJECUCIÓN
@@ -833,7 +992,8 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
   ↓     vitest ~305/305
 20.2    Migrar timestamps a UTC (network, cash, orders, pos)
 20.2.b  Arreglar el +6h del POS IA (generalizar con ZoneInfo)  ← MISMO COMMIT que 20.2
-  ↓     pytest ~72/72 + smoke POS + smoke KDS + smoke Auditoría POS
+20.2.c  Arreglar el filtro de fechas de analytics (UTC vs local) ← MISMO COMMIT que 20.2
+  ↓     pytest ~76/76 + smoke POS + smoke KDS + smoke Auditoría POS + smoke Estadísticas
 20.4    Migrar los 49 puntos de formateo (4 oleadas)
   ↓     vitest ~305/305 + build + smoke por pantalla
 20.5    Unificación y limpieza → DIFERIDA
@@ -844,13 +1004,17 @@ internamente para TTL). Verificar en el smoke de la Fase 20.2.
 correctamente **antes** de que los datos cambien, para que el KDS no muestre
 6 horas de antigüedad ni por un segundo.
 
-**⚠️ Regla del commit atómico (Rev. 2):** las Fases **20.2 y 20.2.b** son
+**⚠️ Regla del commit atómico (Rev. 2):** las Fases **20.2, 20.2.b y 20.2.c** son
 **indivisibles**. Un solo commit que contenga:
 1. [`pos/models.py:34`](apps/api/modules/pos/models.py:34) → `default=utcnow`
 2. [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) → offset con `ZoneInfo`
 3. [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) → `utcnow()`
+4. [`analytics/service.py:54-55,89-90`](apps/api/modules/analytics/service.py:54) → `local_day_bounds_utc()`
+5. [`analytics/service.py:104,111-115,121,126-128,156-158,272-273,281,288,297-299`](apps/api/modules/analytics/service.py:104) → `func.timezone(tz, ...)`
+6. [`analytics/service.py:217-218`](apps/api/modules/analytics/service.py:217) → convertir a local antes de `.date()/.weekday()`
 
-Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
+Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
+6 horas entre commits.
 
 ---
 
@@ -901,6 +1065,20 @@ Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
 - [ ] Smoke Auditoría POS: filtrar por fecha y verificar el conteo
 - [ ] Smoke ticket impreso: `committed_at` con hora correcta
 
+### Fase 20.2.c — Acoplamiento `analytics` ↔ `pos` (Rev. 2)
+- [ ] `core/timestamps.py::local_day_bounds_utc()` creado (compartido con 6.5.2)
+- [ ] [`analytics/service.py:54-55,89-90`](apps/api/modules/analytics/service.py:54) → `local_day_bounds_utc()` **en el mismo commit** que 20.2
+- [ ] [`analytics/service.py:104,111-115,126-128,156-158,272-273,288,297-299`](apps/api/modules/analytics/service.py:104) → `func.timezone(tz, Ticket.created_at)`
+- [ ] [`analytics/service.py:121`](apps/api/modules/analytics/service.py:121) → histograma por **hora local**
+- [ ] [`analytics/service.py:217-218`](apps/api/modules/analytics/service.py:217) → `.date()/.weekday()` sobre hora local
+- [ ] [`analytics/service.py:281`](apps/api/modules/analytics/service.py:281) → `extract('dow')` sobre hora local
+- [ ] Test: ticket de las **23:30 local** en el día local correcto
+- [ ] Test: ticket de las **02:00 local** en el día local correcto
+- [ ] Test: histograma agrupa las 20:00 local en la hora 20
+- [ ] Test de paridad: `local_day_bounds_utc()` == rango del `+6h` generalizado del POS
+- [ ] `docker exec rderico-api-dev python -m pytest -q` → **~76/76**
+- [ ] Smoke Estadísticas de Ventas: total del día == corte de caja
+
 ### Fase 20.4
 - [ ] Oleada 1 (analytics, inventory, network) migrada + smoke
 - [ ] Oleada 2 (production) migrada + smoke
@@ -934,6 +1112,8 @@ Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
 | 10 | **Borrar el `+6h` de `pos/service.py`** | **Es el parche que hace funcionar la Auditoría. Se generaliza, no se borra** |
 | 11 | Tocar [`useTicketActions.js:79`](apps/pos/hooks/useTicketActions.js:79) | `new Date().toISOString()` ya es UTC correcto |
 | 12 | Quitar el parche `+ 'Z'` de [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) | Defensa redundante inofensiva |
+| 13 | **Migrar `pos` sin migrar `analytics`** | **El filtro de fechas de `analytics` asume misma zona que `created_at`. Van juntos o se rompen los reportes** |
+| 14 | Reescribir el filtro de `analytics` con lógica Python en vez de SQL | Traer filas a Python para agrupar por día local es O(n) y rompe el rendimiento |
 
 ---
 
@@ -953,6 +1133,11 @@ Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
    era el parche que sostenía la Auditoría. **Auditar antes de "arreglar".**
 10. **Los cambios acoplados van en un commit.** `pos/models.py` + `pos/service.py`
     son indivisibles: separarlos introduce un desfase de 6 horas entre commits.
+11. **Buscar los acoplamientos ocultos antes de migrar.** `analytics` filtraba
+    `Ticket.created_at` con fronteras naive: un módulo que "solo lee" puede romperse
+    al migrar el que "escribe". **Grep por la columna, no por el módulo.**
+12. **Un helper compartido elimina la clase de bug.** POS y Analytics usan el MISMO
+    `local_day_bounds_utc()`: no pueden desincronizarse por construcción.
 
 ---
 
@@ -965,9 +1150,10 @@ Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
 | 20.3 | 3 nuevos + 1 edit | 🟢 Baja | 1 |
 | 20.2 | ~12 edits | 🔴 Alta | 2 |
 | **20.2.b** | **~6 edits** | 🔴 **Alta** | **1** |
+| **20.2.c** | **~3 edits** | 🔴 **Alta** | **1** |
 | 20.4 | ~22 edits | 🔴 Alta | 3 |
 | 20.5 | — | ⏸️ Diferida | 0 |
-| **Total** | **~50 archivos** | — | **~9 sesiones** |
+| **Total** | **~53 archivos** | — | **~10 sesiones** |
 
 **Comparación con V19:** V19 son ~15 archivos y ~3 sesiones. **V20 es 3× más
 grande.** Por eso son planes separados.
@@ -1004,6 +1190,8 @@ industria** ("Store UTC, Display Local") de forma **completa y verificable**:
 - **Selector:** deja de mentir — ahora **sí** controla todo el ERP.
 - **POS IA:** alineado sin tocar su UI — se corrigen sus 5 desviaciones en backend
   y utilitarios (Sección 6.5), respetando la Restricción A.
+- **Analytics:** su filtro de fechas deja de asumir la zona de `created_at` y pasa
+  a convertir "día local → rango UTC" con el mismo helper del POS (Sección 6.6).
 
 **El resultado:** reportes que cuadran, cero bugs de horario de verano, una sola
 fuente de verdad para la hora en todo el sistema, y un POS IA que —sin cambiar una
