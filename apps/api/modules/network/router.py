@@ -14,6 +14,16 @@ router = APIRouter()
 DEFAULT_TZ_OFFSET_HOURS = 6
 
 async def _get_tz_offset(db: AsyncSession) -> int:
+    """Offset (positivo) en horas de la zona local respecto a UTC.
+
+    Prioridad (V20 Fase 20.1):
+      1. Setting explicito `network_tz_offset_hours` (override manual).
+      2. Derivado de `business_timezone` (fuente unica de verdad).
+      3. DEFAULT_TZ_OFFSET_HOURS (6) como ultimo recurso.
+
+    Nota: se usa abs() porque este modulo trabaja con la convencion POSITIVA
+    (se SUMA a la medianoche local para obtener UTC). Mexico = -6 -> 6.
+    """
     try:
         from modules.settings.service import get_setting_by_key
         setting = await get_setting_by_key(db, "network_tz_offset_hours")
@@ -21,6 +31,15 @@ async def _get_tz_offset(db: AsyncSession) -> int:
             return int(float(setting.value))
     except Exception:
         pass
+
+    # Fallback: derivar de la zona horaria del negocio (fuente unica de verdad).
+    try:
+        from core.timezone import get_business_tz, tz_offset_hours
+        tz = await get_business_tz(db)
+        return abs(tz_offset_hours(tz))
+    except Exception:
+        pass
+
     return DEFAULT_TZ_OFFSET_HOURS
 
 @router.post("/incidents", response_model=schemas.NetworkIncidentResponse)

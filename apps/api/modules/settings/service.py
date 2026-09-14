@@ -2,6 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from . import models, schemas
 from fastapi import HTTPException
+from core.timezone import tz_offset_hours
+from zoneinfo import ZoneInfo
 
 async def get_settings(db: AsyncSession):
     result = await db.execute(select(models.SystemSetting))
@@ -22,6 +24,22 @@ async def update_setting(db: AsyncSession, key: str, value: str):
     return setting
 
 async def seed_settings(db: AsyncSession):
+    # V20 (Fase 20.1): el offset del KDS de Heladería debe derivarse de la zona
+    # horaria del negocio (business_timezone), NO hardcodearse. Si el setting aún
+    # no existe (primer arranque), se usa America/Mexico_City como fallback.
+    # tz_offset_hours() devuelve el offset CON SIGNO (México = -6); el KDS usa la
+    # convención POSITIVA (suma horas a la medianoche local para obtener UTC),
+    # por eso se aplica abs().
+    try:
+        tz_result = await db.execute(
+            select(models.SystemSetting).where(models.SystemSetting.key == "business_timezone")
+        )
+        tz_row = tz_result.scalar_one_or_none()
+        tz_name = tz_row.value if tz_row and tz_row.value else "America/Mexico_City"
+        kds_tz_offset = abs(tz_offset_hours(ZoneInfo(tz_name)))
+    except Exception:
+        kds_tz_offset = 6
+
     default_settings = [
         {
             "key": "pos_terminal_status_polling_ms",
@@ -128,8 +146,8 @@ async def seed_settings(db: AsyncSession):
         # omite o es inválido, el frontend cae a 0 (created_at es naive local).
         {
             "key": "heladeria_kds_urgency_config",
-            "value": '{"warningSec":180,"criticalSec":420,"tzOffsetHours":6}',
-            "description": "Umbrales de urgencia visual del KDS de Heladería (V15).",
+            "value": '{"warningSec":180,"criticalSec":420,"tzOffsetHours":' + str(kds_tz_offset) + '}',
+            "description": "Umbrales de urgencia visual del KDS de Heladería (V15). tzOffsetHours se deriva de business_timezone (V20).",
             "category": "heladeria",
             "input_type": "json"
         }
