@@ -5,7 +5,18 @@
 >
 > **Estado:** 📋 **LISTA PARA EJECUTAR.** Ningún bloque iniciado.
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 1
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 2
+>
+> **Cambios de la Rev. 2 (alineada con el plan V20 Rev. 4):**
+> 1. **`grandeza` SÍ se migra** (Fase 20.2.d) — ya no es excepción. Solo sus
+>    `Column(Date)` (`journey_date`, `route_date`) quedan locales.
+> 2. **Nuevo Bloque 9.b — acoplamiento `analytics` ↔ `pos`** (Fase 20.2.c):
+>    `analytics` filtra `Ticket.created_at` con fronteras naive; va en el MISMO
+>    commit que `pos`.
+> 3. **Nuevo Bloque 9.a — arreglo del `+6h` del POS IA** (Fase 20.2.b):
+>    se generaliza con `ZoneInfo`, **no se borra**.
+> 4. **Nuevo Bloque 9.c — migrar `grandeza`** (Fase 20.2.d), commit propio tras 20.3.
+> 5. Total: **~58 archivos** / **~11 sesiones** (antes ~53 / ~10).
 
 ---
 
@@ -69,6 +80,9 @@ Cada bloque = **1 commit verificado**. No se avanza sin pytest + vitest en verde
 │  BLOQUE 7  Fase 20.1         Sincronizar 3 mecanismos    🟡     │
 │  BLOQUE 8  Fase 20.3         TimezoneProvider frontend   🟢     │
 │  BLOQUE 9  Fase 20.2 + 20.4  Migración datos + formateo  🔴     │
+│    ├ 9.a   Fase 20.2.b       Arreglo +6h del POS IA      🔴     │
+│    ├ 9.b   Fase 20.2.c       Acoplamiento analytics↔pos  🔴     │
+│    └ 9.c   Fase 20.2.d       Migrar grandeza a UTC       🟡     │
 │  BLOQUE 10 Fase 20.5         Unificación → DIFERIDA      ⏸️     │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -182,8 +196,9 @@ smoke es limpio, para no duplicar verificación.
 3. Migrar `cash/models.py:44` + `cash/service.py:154` → `utcnow()`
 4. Migrar `orders/models.py:52,53` + `orders/service.py:117` → `utcnow()`
 
-**⛔ NO TOCAR:**
-- `grandeza/models.py` y `grandeza/service.py` — guarda local **a propósito**
+**⛔ NO TOCAR en este bloque:**
+- `grandeza/models.py` y `grandeza/service.py` — **se migra en V20 Bloque 9.c**
+  (Rev. 2: ya NO es excepción permanente; solo sus `Column(Date)` quedan locales)
 - `pos/models.py` — se migra en V20 Bloque 9 (junto con el frontend)
 
 **Verificación:**
@@ -200,7 +215,8 @@ smoke es limpio, para no duplicar verificación.
 
 **Acciones:**
 1. Actualizar `ESPECIFICACIONES DEL PROYECTO/DOCUMENTACION_VISTA_GENERAL.md`
-2. Registrar en el CHANGELOG la decisión de `grandeza` (local deliberado)
+2. Registrar en el CHANGELOG que `grandeza` queda **pendiente** para V20 Bloque 9.c
+   (Rev. 2: ya NO se documenta como "local deliberado permanente")
 3. Marcar V19 como COMPLETO en el plan
 
 **Verificación:**
@@ -302,6 +318,53 @@ antigüedad entre un commit y el otro.
 | 9.3 | `AuditoriaControlUI`, `ExperimentCenterUI` | ~9 | 🟡 |
 | 9.4 | `pos` no-IA (11 archivos) + `pos/models.py` a UTC | ~15 | 🔴 |
 
+**⚠️ COMMIT ATÓMICO AMPLIADO (Rev. 2):** las Fases **20.2 + 20.2.b + 20.2.c** son
+**indivisibles**. Un solo commit que contenga:
+
+| # | Archivo | Cambio |
+|---|---|---|
+| 1 | [`pos/models.py:34`](apps/api/modules/pos/models.py:34) | `default=utcnow` |
+| 2 | [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) | `+6h` generalizado con `ZoneInfo` (**NO borrar**) |
+| 3 | [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) | `utcnow()` |
+| 4 | [`analytics/service.py:54-55,89-90`](apps/api/modules/analytics/service.py:54) | `local_day_bounds_utc()` |
+| 5 | [`analytics/service.py:104,111-115,121,126-128,156-158,272-273,281,288,297-299`](apps/api/modules/analytics/service.py:104) | `func.timezone(tz, ...)` |
+| 6 | [`analytics/service.py:217-218`](apps/api/modules/analytics/service.py:217) | convertir a local antes de `.date()/.weekday()` |
+
+Si se separan, la Auditoría POS **y** los reportes de ventas quedan desfasados
+6 horas entre commits.
+
+---
+
+### BLOQUE 9.c — V20 Fase 20.2.d (migrar `grandeza` a UTC) 🟡
+
+**Riesgo:** Medio. **Commit propio**, DESPUÉS del Bloque 8 (frontend listo).
+
+**⚠️ LA TRAMPA `Date` ≠ `DateTime`:** `grandeza` mezcla dos tipos de columna:
+
+| Columna | Tipo | Destino |
+|---|---|---|
+| `journey_date`, `route_date` | `Column(Date)` — día de negocio | **LOCAL (no se toca)** |
+| `dispatched_at`, `arrived_at`, `completed_at`, `recorded_at`, `created_at`, `updated_at` | `Column(DateTime)` — instante real | **UTC** |
+
+**Acciones (5 archivos, 1 commit):**
+1. [`grandeza/models.py`](apps/api/modules/grandeza/models.py:95) → 9 columnas `DateTime` con `default=_utcnow`
+2. [`grandeza/service.py:18-20`](apps/api/modules/grandeza/service.py:18) → `_now_mexico()` alias de `utcnow()`
+3. [`grandeza/service.py:614`](apps/api/modules/grandeza/service.py:614) → `to_local_date_str()` en vez de `strftime`
+4. [`GrandezaDailyUI.jsx:700,728`](apps/pos/GrandezaDailyUI.jsx:700) → quitar el parche `+ 'Z'`
+5. [`GrandezaDriverUI.jsx:997,1121`](apps/pos/GrandezaDriverUI.jsx:997) → `formatLocal` en vez de `timeZone` hardcodeado
+
+**⛔ NO TOCAR:** `journey_date`, `route_date`, `weekday()`, `day_map`, `order_by`.
+
+**Verificación:**
+- [ ] `docker restart rderico-api-dev`
+- [ ] pytest **~80/80**
+- [ ] Test: `created_at` de un viaje nuevo < 5s de `utcnow()`
+- [ ] Test: `journey_date` de un viaje creado a las **23:30 local** sigue siendo el día local
+- [ ] Smoke Reparto Grandeza: horas de despacho/llegada correctas
+- [ ] Smoke App Repartidor: horas correctas en el móvil
+
+**Commit:** `fix(v20): migrar grandeza a UTC (Date local / DateTime UTC)`
+
 **⛔ NO MIGRAR (son montos o hora del dispositivo):**
 - `analyticsConfig.js:88,89` — números
 - `EstadisticasVentasUI.jsx:467-471,488,546,578,603,652,669` — montos
@@ -321,7 +384,7 @@ antigüedad entre un commit y el otro.
 - [ ] **Smoke POS:** crear ticket, verificar hora correcta
 - [ ] **Smoke KDS:** ticket nuevo muestra "0 min", **NO** "360 min"
 - [ ] **Smoke Auditoría:** fechas correctas
-- [ ] **Smoke Grandeza:** fechas de reparto correctas (no se tocó el backend)
+- [ ] **Smoke Grandeza:** fechas de reparto correctas (backend migrado en Bloque 9.c)
 
 **Commit:** `feat(v20): migrar pos a UTC + formatLocal en toda la UI`
 
@@ -337,27 +400,32 @@ Se documenta como **deuda técnica aceptada**.
 
 ---
 
-## 4. LAS 7 REGLAS DE ORO
+## 4. LAS 8 REGLAS DE ORO
 
 1. **Un bloque = un commit verificado.** Nunca dos bloques sin verificar.
 2. **`docker restart rderico-api-dev`** después de CADA cambio de Python.
 3. **pytest vía `docker exec`** (Python no está en el PATH del host).
 4. **Nunca `docker compose down`.** Solo `restart`.
 5. **El POS IA (`RetailVisionPOS.jsx`) no se toca.** Ni una línea.
-6. **`grandeza` no se migra a UTC.** Guarda local a propósito.
-7. **Si pytest o vitest fallan, se revierte el bloque.** No se avanza con rojo.
+6. **`grandeza` SÍ se migra** (Bloque 9.c). Solo sus `Column(Date)`
+   (`journey_date`, `route_date`) quedan locales. **Rev. 2: ya no es excepción.**
+7. **El `+6h` del POS IA no se borra: se generaliza** con `ZoneInfo`. Es el parche
+   que sostiene la Auditoría POS.
+8. **Si pytest o vitest fallan, se revierte el bloque.** No se avanza con rojo.
 
 ---
 
-## 5. LOS 5 PUNTOS DE MAYOR RIESGO
+## 5. LOS 7 PUNTOS DE MAYOR RIESGO
 
 | # | Punto | Síntoma si falla | Prevención |
 |---|---|---|---|
 | 1 | `TerminalSelector.jsx:63` | Los terminales no abren | **NO migrarlo** (es la URL de la app) |
 | 2 | `pos` a UTC (Bloque 9) | KDS muestra "360 min" | Hacer 20.2 + 20.4 **juntos** |
 | 3 | Orden de rutas FastAPI | `/settings/timezone` → 404 | `/timezone` **antes** de `/{key}` |
-| 4 | `grandeza` | Fechas de reparto corridas 6h | **NO tocarlo** |
-| 5 | Frontera de datos | Reportes con salto de 6h | Documentar fecha/hora del deploy |
+| 4 | `+6h` del POS IA (Bloque 9.a) | Auditoría POS desfasada 6h | **Generalizar con `ZoneInfo`, NO borrar** |
+| 5 | `analytics` ↔ `pos` (Bloque 9.b) | Reportes de ventas desfasados 6h | **Mismo commit que `pos`** |
+| 6 | `grandeza` `Date` ≠ `DateTime` (Bloque 9.c) | Calendario roto o reparto desfasado | **`Date` local, `DateTime` UTC** |
+| 7 | Frontera de datos | Reportes con salto de 6h | Documentar fecha/hora del deploy |
 
 ---
 
@@ -372,10 +440,11 @@ Se documenta como **deuda técnica aceptada**.
 | **5** | Bloque 6 | Infraestructura backend V20 |
 | **6** | Bloque 7 | Sincronizar 3 mecanismos |
 | **7** | Bloque 8 | TimezoneProvider |
-| **8-10** | Bloque 9 | Migración datos + formateo (4 sub-oleadas) |
+| **8-10** | Bloque 9 (9.1-9.4) | Migración datos + formateo (4 sub-oleadas) |
+| **11** | Bloque 9.c | Migrar `grandeza` a UTC |
 | — | Bloque 10 | Diferido |
 
-**Total:** ~10 sesiones. **V19 se completa en 4. V20 en 6.**
+**Total:** ~11 sesiones. **V19 se completa en 4. V20 en 7.**
 
 ---
 
@@ -388,12 +457,15 @@ Se documenta como **deuda técnica aceptada**.
 - [ ] Build compila
 
 ### Al cerrar V20
-- [ ] **Todas** las columnas `DateTime` son UTC (excepto `grandeza`, documentado)
+- [ ] **Todas** las columnas `DateTime` son UTC — **Rev. 2: sin excepciones**
+      (`grandeza` incluida; solo sus `Column(Date)` quedan locales)
 - [ ] `GET /api/v1/settings/timezone` responde correctamente
 - [ ] El selector de "Visión General" **controla** la hora en todo el ERP
 - [ ] Los 3 mecanismos de zona están sincronizados
-- [ ] pytest ~70/70 + vitest ~305/305
-- [ ] Smoke POS + KDS + Auditoría + Grandeza en verde
+- [ ] El `+6h` del POS IA generalizado con `ZoneInfo` (no borrado)
+- [ ] `analytics` filtra con `local_day_bounds_utc()` (mismo commit que `pos`)
+- [ ] pytest ~80/80 + vitest ~305/305
+- [ ] Smoke POS + KDS + Auditoría + Estadísticas + Grandeza en verde
 
 ---
 
@@ -413,7 +485,8 @@ Se documenta como **deuda técnica aceptada**.
 ## 9. RESUMEN EN UNA FRASE
 
 **V19 primero (Bloques 1-5, riesgo bajo/medio), V20 después (Bloques 6-9, riesgo
-alto concentrado en el Bloque 9). Un commit verificado por bloque. El POS IA y
-`grandeza` nunca se tocan. Si algo falla, se revierte el bloque y no se avanza.**
+alto concentrado en el Bloque 9). Un commit verificado por bloque. El POS IA nunca
+se toca; `grandeza` SÍ se migra (Bloque 9.c) salvo sus `Column(Date)`. Si algo
+falla, se revierte el bloque y no se avanza.**
 
 **FIN DE LA HOJA DE RUTA**
