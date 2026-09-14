@@ -16,14 +16,46 @@
  * El scope de este SW se limita estrictamente al módulo de almacenes.
  */
 
-// v19.2 (14 Sep 2026): bump de version para invalidar caches stale del app shell.
-// El hotfix v19.1 corrigio la URL del API en apps/shared/config.js, pero los
-// navegadores que ya tenian el SW instalado seguian sirviendo los modulos JS
-// ANTIGUOS (cache-first) -> pagina en blanco. Al subir la version, el handler
-// 'activate' borra las caches viejas y el navegador vuelve a pedir los modulos.
-const CACHE_VERSION = 'rderico-warehouse-v2';
+// v19.3 (14 Sep 2026): MODO DEV — el SW NO debe cachear el app shell en desarrollo.
+//
+// HISTORIA DEL BUG (pagina en blanco persistente):
+//   El SW cacheaba el app shell (HTML + scripts) con estrategia cache-first.
+//   En Vite DEV, cada modulo se sirve con un hash de version en la query
+//   (p.ej. /node_modules/.vite/deps/react.js?v=e6b2a3a9). Al editar un modulo,
+//   Vite cambia el hash, pero el SW seguia devolviendo la copia cacheada ANTIGUA
+//   de /main.jsx y /apps/ExperimentCenterUI.jsx, que apuntaban a modulos ya
+//   inexistentes -> error de modulo -> pagina en blanco.
+//   Ctrl+Shift+R NO ayuda: bypassa el cache HTTP pero NO el Service Worker.
+//
+// SOLUCION: en desarrollo (Vite dev server) el SW se auto-desregistra y borra
+//   todas sus caches. El app shell se sirve SIEMPRE por red (network-only).
+//   El cache-first del app shell solo aplica en PRODUCCION (build estatico).
+const CACHE_VERSION = 'rderico-warehouse-v3';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const API_CACHE = `${CACHE_VERSION}-api`;
+
+/**
+ * ¿Estamos en el servidor de desarrollo de Vite?
+ * El dev server corre en el puerto 3000 (contenedor) / 5000 (host) y sirve
+ * los modulos con /@vite/client. En produccion el build estatico NO tiene
+ * /@vite/client, por lo que esta deteccion es fiable.
+ */
+const ES_DEV = (() => {
+    try {
+        const host = self.location.hostname;
+        const port = self.location.port;
+        // Puertos del dev server (contenedor 3000, host 5000) o cualquier host
+        // que no sea el dominio de produccion.
+        const puertosDev = ['3000', '5000', '5173'];
+        if (puertosDev.includes(port)) return true;
+        // localhost / IPs privadas => entorno de desarrollo.
+        if (host === 'localhost' || host === '127.0.0.1') return true;
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return true;
+        return false;
+    } catch (e) {
+        return false;
+    }
+})();
 
 /** Rutas del POS que JAMÁS deben tocarse. */
 const POS_PATH_PREFIX = '/api/v1/pos/';
@@ -41,6 +73,11 @@ const APP_SHELL_ASSETS = [
 // ─── Instalación ─────────────────────────────────────────────────────────────
 
 self.addEventListener('install', (event) => {
+    // En DEV no se precachea nada: el app shell se sirve siempre por red.
+    if (ES_DEV) {
+        self.skipWaiting();
+        return;
+    }
     event.waitUntil(
         caches.open(APP_SHELL_CACHE)
             .then((cache) => cache.addAll(APP_SHELL_ASSETS))
@@ -54,6 +91,25 @@ self.addEventListener('install', (event) => {
 // ─── Activación: limpiar cachés de versiones anteriores ─────────────────────
 
 self.addEventListener('activate', (event) => {
+    // En DEV: borrar TODAS las caches y auto-desregistrar el SW.
+    // Esto purga cualquier SW/cache stale de sesiones anteriores que estuviera
+    // sirviendo modulos JS antiguos (causa de la pagina en blanco).
+    if (ES_DEV) {
+        event.waitUntil(
+            caches.keys()
+                .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+                .then(() => self.registration.unregister())
+                .then(() => self.clients.matchAll({ type: 'window' }))
+                .then((clients) => {
+                    // Recargar las pestanas para que tomen el control sin SW.
+                    clients.forEach((client) => {
+                        if ('navigate' in client) client.navigate(client.url);
+                    });
+                })
+                .catch(() => {})
+        );
+        return;
+    }
     event.waitUntil(
         caches.keys().then((keys) =>
             Promise.all(
@@ -173,8 +229,10 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // App shell: cache-first con revalidación.
-    if (esAppShell(request, url)) {
+    // App shell: cache-first con revalidación (SOLO en producción).
+    // En DEV se deja pasar (network-only) para que Vite sirva siempre los
+    // módulos frescos y nunca se sirva un app shell stale.
+    if (!ES_DEV && esAppShell(request, url)) {
         event.respondWith(cacheFirstShell(request));
         return;
     }

@@ -37,14 +37,79 @@ const DEFAULT_APP_NAME = 'R de Rico - ERP';
 // ─── Registro del Service Worker ─────────────────────────────────────────────
 
 /**
+ * ¿Estamos en el servidor de desarrollo de Vite?
+ *
+ * v19.3: en DEV el Service Worker NO debe existir. Cacheaba el app shell
+ * (HTML + scripts) con estrategia cache-first, y al editar un módulo Vite
+ * cambiaba el hash de la query, pero el SW seguía sirviendo la copia ANTIGUA
+ * de /main.jsx y /apps/ExperimentCenterUI.jsx -> error de módulo -> página en
+ * blanco. Ctrl+Shift+R no ayuda porque bypassa el cache HTTP, no el SW.
+ *
+ * @returns {boolean}
+ */
+function esEntornoDev() {
+    if (typeof window === 'undefined') return false;
+    const host = window.location.hostname;
+    const port = window.location.port;
+    const puertosDev = ['3000', '5000', '5173'];
+    if (puertosDev.includes(port)) return true;
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return true;
+    return false;
+}
+
+/**
+ * v19.3: Purga total del Service Worker y sus caches en desarrollo.
+ *
+ * Se ejecuta al arrancar la app. Si detecta entorno DEV, desregistra cualquier
+ * SW existente (incluido uno stale de una sesión anterior) y borra TODAS las
+ * caches. Esto garantiza que la página en blanco no vuelva a ocurrir aunque el
+ * ciclo de actualización del SW sea lento.
+ *
+ * @returns {Promise<boolean>} true si se purgó algo.
+ */
+export async function purgarServiceWorkerEnDev() {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return false;
+    }
+    if (!esEntornoDev()) return false;
+
+    let purgado = false;
+    try {
+        // 1. Desregistrar todos los SW existentes.
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((reg) => reg.unregister()));
+        if (registrations.length > 0) purgado = true;
+
+        // 2. Borrar todas las caches (app shell stale).
+        if (typeof caches !== 'undefined') {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((key) => caches.delete(key)));
+            if (keys.length > 0) purgado = true;
+        }
+    } catch (e) {
+        // Silencioso: nunca romper el arranque de la app por el SW.
+    }
+    return purgado;
+}
+
+/**
  * Registra el Service Worker del módulo de almacenes.
  * Es idempotente y silencioso ante entornos sin soporte (SSR, navegadores
  * antiguos) para no romper la app.
+ *
+ * v19.3: en DEV NO se registra (ver `esEntornoDev`). El SW solo tiene sentido
+ * en el build de producción.
  *
  * @returns {Promise<ServiceWorkerRegistration|null>}
  */
 export async function registrarServiceWorker() {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return null;
+    }
+    // En DEV: nunca registrar; además purgar cualquier SW stale.
+    if (esEntornoDev()) {
+        await purgarServiceWorkerEnDev();
         return null;
     }
     try {

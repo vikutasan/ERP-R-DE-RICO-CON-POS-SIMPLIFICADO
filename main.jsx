@@ -1,7 +1,16 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ExperimentCenterUI } from './apps/ExperimentCenterUI';
+import { purgarServiceWorkerEnDev } from './apps/inventory/services/pwaRuntime';
 import './index.css';
+
+// v19.3: Purga del Service Worker en desarrollo.
+// El SW cacheaba el app shell (cache-first) y servía módulos JS stale tras
+// cada edición -> página en blanco. Ctrl+Shift+R no lo soluciona porque
+// bypassa el cache HTTP, no el SW. Esta llamada desregistra el SW y borra
+// todas las caches ANTES de montar React, garantizando módulos frescos.
+// En producción es un no-op (esEntornoDev() === false).
+purgarServiceWorkerEnDev().catch(() => {});
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
