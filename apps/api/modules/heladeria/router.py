@@ -6,10 +6,10 @@ KDS con filtro por estación, y datos para displays.
 Todos los endpoints reutilizan el sistema de tickets y caja existente
 (POST /pos/tickets, POST /cash/sessions) — no se duplica esa lógica aquí.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from . import service, schemas
+from . import service, schemas, totem_storage
 
 router = APIRouter()
 
@@ -104,3 +104,41 @@ async def get_display_menu(db: AsyncSession = Depends(get_db)):
     Incluye timestamp de última actualización.
     """
     return await service.get_display_menu(db)
+
+
+# ═══════════════════════════════════════════════════════════════
+# TÓTEM — UPLOAD DE IMÁGENES (V16, Fase 16.2)
+# ═══════════════════════════════════════════════════════════════
+# El manifiesto (macros/heroes/config) se lee y escribe vía /settings/
+# (clave `heladeria_totem_content`). Aquí solo se gestiona el BINARIO.
+
+@router.post("/totem/upload")
+async def upload_totem_image(file: UploadFile = File(...)):
+    """
+    Sube una imagen para el Display Tótem. El backend es el guardián
+    autoritativo: valida tipo MIME y peso (8 MB), sanea el nombre y
+    guarda el archivo en el bind mount `media/totem`.
+
+    Devuelve `{ filename, url }` donde `url` es la ruta pública
+    `/media/totem/<filename>`.
+    """
+    content = await file.read()
+    try:
+        result = totem_storage.save_totem_image(
+            content=content,
+            original_filename=file.filename or "",
+            content_type=file.content_type or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
+@router.delete("/totem/upload/{filename}")
+async def delete_totem_image(filename: str):
+    """
+    Borra una imagen del Display Tótem del disco. Sanea el nombre para
+    evitar path traversal. Devuelve `{ deleted: bool }`.
+    """
+    deleted = totem_storage.delete_totem_image(filename)
+    return {"deleted": deleted, "filename": filename}

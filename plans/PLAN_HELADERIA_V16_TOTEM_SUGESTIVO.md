@@ -1,13 +1,37 @@
-# 📺 PLAN v16 — DISPLAY TÓTEM SUGESTIVO (Heladería)
+# 📺 PLAN v16 — DISPLAY TÓTEM SUGESTIVO (Heladería) — REVISIÓN 2
 
-**Fecha:** 13/Septiembre/2026
+**Fecha:** 14/Septiembre/2026
 **Autor:** Auditoría técnica derivada de [`DOCUMENTACION_MODULO_HELADERIA.md`](../ESPECIFICACIONES%20DEL%20PROYECTO/DOCUMENTACION_MODULO_HELADERIA.md)
-**Estado:** ⏳ PROPUESTO — pendiente de ejecución
-**Alcance:** Convertir el placeholder [`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7) en un tótem de antojo visual macro con gestor de contenido 4K/8K, control fino de reproducción, torre dinámica y selector estético.
+**Estado:** ⏳ PROPUESTO — pendiente de aprobación y ejecución
+**Alcance:** Convertir el placeholder [`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7) en un tótem de antojo visual macro con gestor de contenido, control fino de reproducción y selector estético.
 **Predecesor:** [`PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md`](PLAN_HELADERIA_V14_TIENDA_INTERACTIVA.md)
 **Sucesor:** [`PLAN_HELADERIA_V15_KDS_INTELIGENTE.md`](PLAN_HELADERIA_V15_KDS_INTELIGENTE.md)
 
 > **Orden de ejecución corregido:** FASE 0 → V17 → V14 → **V16** → V15 (ver tabla de baselines del [`PLAN_HELADERIA_MAESTRO.md`](PLAN_HELADERIA_MAESTRO.md)).
+
+---
+
+## 📋 REGISTRO DE LA REVISIÓN 2
+
+La Revisión 1 de este plan contenía **15 defectos** detectados en auditoría autocrítica contra el código real. Esta Revisión 2 los corrige todos. Tabla de trazabilidad:
+
+| # | Defecto Rev.1 | Severidad | Corrección en Rev.2 |
+|---|---|---|---|
+| D1 | Pillow NO instalado; conversión WebP imposible; falta rebuild Docker | 🔴 Bloqueante | **Eliminada la conversión WebP del MVP.** Se aceptan JPEG/PNG/WebP tal cual, con límite de peso. Cero dependencias nuevas de Python. Ver §Decisión 1 |
+| D2 | Volumen `totem_media` inexistente y sin especificar | 🔴 Bloqueante | Bind mount explícito `../ERP-R-DE-RICO-DATA/totem_media:/app/media/totem` (respeta la convención de bind mounts externos). Ver Fase 16.2 |
+| D3 | `/media` no montado en `StaticFiles`; URLs darían 404 | 🔴 Bloqueante | Se añade `app.mount("/media/totem", ...)` en `main.py`. `main.py` ahora figura en la tabla de archivos. Ver Fase 16.2 |
+| D4 | `PUT` no existe; falta siembra → primer guardado daría 404 | 🔴 Bloqueante | Se usa el patrón `/settings/` (**PATCH**) y se añade **Fase 16.0** de siembra de `heladeria_totem_content`. Ver Fase 16.0 |
+| D5 | Endpoints `/totem/content` duplican `/settings/` | 🔴 Bloqueante | El manifiesto se lee/escribe vía `/settings/`. Solo se crea endpoint nuevo para el **upload binario** (que sí lo requiere). Ver Fase 16.2 |
+| D6 | Baselines obsoletos (141/141) | 🟠 Grave | Actualizados a **vitest 232**, pytest 39, build 1428. Ver §Baselines |
+| D7 | Validación de archivos duplicada cliente/servidor | 🟠 Grave | Backend es el **guardián autoritativo**; frontend solo da UX temprana. Constante documentada en un único lugar. Ver §Decisión 3 |
+| D8 | "Inventario en tiempo real" no existe en el API | 🟠 Grave | **Eliminado del alcance.** La torre usa solo disponibilidad booleana. Ver §Decisión 4 |
+| D9 | Lazy-loading declarado sin diseño | 🟠 Grave | Diseño explícito con `new Image()` precargando solo la siguiente. Ver Fase 16.4 |
+| D10 | Sin limpieza de huérfanos en el volumen | 🟠 Grave | `DELETE` borra manifiesto **y** archivo físico; + saneo anti path-traversal. Ver Fase 16.2 |
+| D11 | No elimina `@keyframes float` explícitamente | 🟡 Menor | Tarea explícita en Fase 16.4 |
+| D12 | `format` sin validar en `normalizeTotemConfig` | 🟡 Menor | Enum `FORMAT` validado. Ver Fase 16.1 |
+| D13 | Falta Fase 16.0 (siembra) | 🟡 Menor | Fase 16.0 añadida |
+| D14 | Reversión no cubre infraestructura | 🟡 Menor | Protocolo de reversión ampliado (volumen + compose + recrear). Ver §Reversión |
+| D15 | Regla de horario no auditable | 🟡 Menor | Reemplazada por criterio verificable: "POS sin tickets abiertos". Ver §Protocolo |
 
 ---
 
@@ -23,7 +47,32 @@
 4. **PROHIBIDO** animaciones CSS infinitas en indicadores estáticos (Incidente 16.1).
 5. **Cada fase es un commit independiente** y debe pasar la verificación completa antes de continuar.
 6. **Si una fase falla la verificación, se revierte inmediatamente** (`git revert`).
-7. **Ninguna fase se ejecuta en horario de operación del POS.**
+7. **Ventana de ejecución verificable:** antes de cada fase que toque el backend (16.0, 16.2), confirmar que **no hay tickets abiertos** en el POS de Panadería:
+
+```powershell
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/pos/tickets?status=OPEN" -UseBasicParsing).Content
+```
+
+Si devuelve una lista **no vacía**, **detener** y esperar. Esto reemplaza la regla vaga "no en horario de operación" por un criterio objetivo y auditable.
+
+### ⚠️ Regla especial: cambios en `main.py` y `docker-compose.yml`
+
+Las Fases 16.0 y 16.2 tocan infraestructura compartida con el POS de Panadería:
+
+- **`main.py`** es el punto de entrada de **todo** el API. Un error de sintaxis aquí **tumba el POS de Panadería**.
+- **`docker-compose.yml`** define el contenedor del API que el POS consume.
+
+**Mitigación obligatoria:**
+
+1. Los cambios en `main.py` son **estrictamente aditivos** (una línea `app.mount(...)` al final del bloque de mounts). No se reordena ni se toca nada existente.
+2. **NUNCA** se ejecuta `docker compose down` (tumbaría el POS). Solo `docker compose up -d api` o `docker restart rderico-api-dev`.
+3. Tras cualquier cambio en `main.py`, verificar **inmediatamente** que el POS sigue vivo:
+
+```powershell
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/" -UseBasicParsing).StatusCode   # debe ser 200
+```
+
+4. Si el API no responde en 15 s tras el reinicio, **revertir de inmediato**.
 
 ### Verificación obligatoria por fase
 
@@ -31,15 +80,29 @@
 # 1. Tests backend (deben seguir en 39/39 o más)
 docker exec rderico-api-dev python -m pytest -q
 
-# 2. Tests frontend (deben seguir en 141/141 o más)
+# 2. Tests frontend (deben seguir en 232/232 o más)
 npx vitest run
 
 # 3. Build de producción
-npm run build
+npx vite build
 
 # 4. POS Panadería (manual): abrir http://localhost:5000, agregar producto, sin banner falso
 # 5. Hub Heladería (manual): entrar al Tótem, verificar que las demás secciones siguen accesibles
 ```
+
+---
+
+## 📊 BASELINES REALES (verificados el 14/Sept/2026)
+
+> **Corrección D6:** la Revisión 1 citaba "141/141" repetidamente. Ese baseline es de antes de V17. Los valores reales son:
+
+| Métrica | Baseline real | Comando |
+|---|---|---|
+| vitest | **232/232** (6 archivos) | `npx vitest run` |
+| pytest | **39/39** | `docker exec rderico-api-dev python -m pytest -q` |
+| build | **1428 módulos** | `npx vite build` |
+
+**Ninguna fase de este plan puede reducir estos números.** Cualquier regresión = revert inmediato.
 
 ---
 
@@ -70,7 +133,7 @@ El único módulo POS que **NO se puede tocar** es **"Punto de Venta IA"** (Pana
 | Leer sabores activos (`GET /heladeria/display/flavors`) | ✅ |
 | Leer menú (`GET /heladeria/display/menu`) | ✅ |
 | Guardar configuración visual del tótem en `system_settings` | ✅ |
-| Subir imágenes macro al volumen `totem_media` | ✅ |
+| Subir imágenes al bind mount `totem_media` | ✅ |
 | Crear/editar sabores o productos | ❌ |
 | Cambiar precios | ❌ |
 | Decidir en qué POS aparece un producto | ❌ (se define en Gestión de Productos) |
@@ -84,69 +147,140 @@ El único módulo POS que **NO se puede tocar** es **"Punto de Venta IA"** (Pana
 
 Convertir el placeholder de 100 líneas en un tótem de antojo visual con:
 
-1. **Gestor de Contenido Macro (4K/8K):** panel administrativo para subir y administrar macrofotografías de texturas de helados y tomas de helados completos.
+1. **Gestor de Contenido Macro:** panel administrativo para subir y administrar macrofotografías de texturas de helados y tomas de helados completos.
 2. **Control Fino de Reproducción:** cuántas tomas macro antes de pasar a un helado completo (y viceversa), duración exacta en segundos de cada diapositiva, y efecto de transición (desvanecimiento, deslizamiento, zoom suave).
-3. **Torre Dinámica de Helados:** animación opcional basada en los sabores activos e inventario en tiempo real del ERP.
-4. **Selector de Formato y Estética:** color picker por imagen, tipografías curadas, selector de formato de hardware (vertical para tótem).
+3. **Selector de Formato y Estética:** color picker por imagen, tipografías curadas, selector de formato de hardware (vertical para tótem).
+4. **(Fase opcional 16.5) Torre de Sabores:** animación basada en los **sabores activos** (disponibilidad booleana). **NO usa inventario** — ver §Decisión 4.
 
 ---
 
 ## 📍 EVIDENCIA DEL PROBLEMA
 
-[`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7) es un placeholder:
+[`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7) es un placeholder de 100 líneas que incluye una **animación infinita prohibida** (Incident 16.1) en la línea 61:
 
 ```jsx
-export const DisplayTotemUI = ({ onBack }) => {
-    return (
-        <div style={{ /* ... */ }}>
-            {/* ... */}
-            <div style={{ fontSize: '80px', animation: 'float 3s ease-in-out infinite' }}>📺</div>
-            <h2>Tótem Sugestivo</h2>
-            <p>Pantalla vertical tipo tótem con contenido visual sugestivo...</p>
-            <div>Próximamente</div>
-        </div>
-    );
-};
+<div style={{ fontSize: '80px', animation: 'float 3s ease-in-out infinite' }}>📺</div>
+// ...
+<style>{`
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-15px); }
+    }
+`}</style>
 ```
 
-**Lo que ya existe y se puede reutilizar:**
-- Endpoint backend `GET /api/v1/heladeria/display/flavors` (ya operativo) — para la torre dinámica.
-- Método [`heladeriaService.getDisplayFlavors()`](../apps/heladeria/services/heladeriaService.js:76) (ya operativo).
-- [`heladeriaOfflineStore.js`](../apps/heladeria/services/heladeriaOfflineStore.js:1) — IndexedDB para cache offline-first.
+**Lo que ya existe y se puede reutilizar (verificado):**
+
+- Endpoint backend `GET /api/v1/heladeria/display/flavors` — operativo ([`router.py:91`](../apps/api/modules/heladeria/router.py:91)). Devuelve `DisplayFlavorResponse` = **solo disponibilidad booleana**.
+- Método [`heladeriaService.getDisplayFlavors()`](../apps/heladeria/services/heladeriaService.js:76) — operativo, con `withRetries`.
+- [`heladeriaOfflineStore.js`](../apps/heladeria/services/heladeriaOfflineStore.js:1) — IndexedDB (`heladeria_offline` v1, store `menu_cache` con `keyPath: 'key'`) para cache offline-first.
+- Patrón `/settings/` para persistir configuración ([`settings/router.py:17`](../apps/api/modules/settings/router.py:17) — **PATCH**, no PUT).
+- `python-multipart 0.0.32` **ya instalado** → `UploadFile` de FastAPI funciona sin dependencias nuevas.
 
 ---
 
-## ⚠️ LOS 3 PROBLEMAS CRÍTICOS QUE ESTE PLAN RESUELVE
+## 🔑 DECISIONES DE DISEÑO (resuelven los defectos bloqueantes)
 
-> Estos 3 puntos son la razón por la que el Tótem **no** se puede implementar "a lo directo".
+### Decisión 1 — SIN conversión WebP en el MVP (resuelve D1)
 
-### Problema 1 — El Tótem NO debe depender del ERP en tiempo real para las imágenes
+**Contexto verificado:** Pillow **NO está instalado** (`ModuleNotFoundError: No module named 'PIL'`) y no figura en [`requirements.txt`](../apps/api/requirements.txt:1). Agregarlo exigiría `docker compose build api` (rebuild completo), lo que **aumenta el riesgo sobre el POS de Panadería** durante la implementación.
 
-Si el tótem hace polling al API y el API se cae, **el tótem se queda en negro frente al cliente**. Esto viola el principio de aislamiento del módulo.
+**Decisión:** el MVP **acepta JPEG/PNG/WebP tal cual**, sin conversión. Se mitiga el peso con:
 
-**Solución:** el tótem es **offline-first**. Cachea el manifiesto de contenido (lista de imágenes + config de reproducción) en IndexedDB y solo *refresca* disponibilidad cuando hay red. **Nunca bloquea el render esperando al API.**
+- Límite duro de **8 MB** por archivo (validado en backend).
+- Recomendación documentada al admin: exportar a 2560 px de ancho máximo.
+- Lazy-loading (solo 2 imágenes en memoria).
 
-### Problema 2 — Imágenes 4K/8K en el repo = bomba de tiempo
+**Beneficio:** cero dependencias nuevas, cero rebuild, cero riesgo añadido al POS. La conversión WebP queda como **mejora futura** (Fase 16.7 opcional, fuera del MVP).
 
-Un JPEG 8K pesa 15-40 MB. Subirlos al servidor actual (Docker local, sin CDN) satura disco y ancho de banda.
+### Decisión 2 — El manifiesto vive en `system_settings`, no en un router nuevo (resuelve D4, D5)
 
-**Solución:** definir desde el inicio:
-- (a) Límite de peso por archivo (ej. 8 MB máximo).
-- (b) Conversión a WebP en el upload.
-- (c) Almacenamiento en volumen Docker dedicado (`totem_media`), **fuera** del repo Git.
-- (d) Lazy-loading por diapositiva (solo se carga la imagen actual y la siguiente).
+**Contexto verificado:** el proyecto ya tiene un mecanismo consolidado: `system_settings` + `/settings/` (GET lista, GET por clave, **PATCH** por clave, POST seed). V17 lo usó correctamente.
 
-### Problema 3 — La "Torre Dinámica" es una mejora, no un requisito del MVP
+**Decisión:** el manifiesto del tótem se guarda en `system_settings` con la clave `heladeria_totem_content`, y se lee/escribe **directamente vía `/settings/`** desde el frontend. **No se crea `GET/PUT /totem/content`.**
 
-La torre dinámica (animación basada en sabores activos) es visualmente atractiva pero añade complejidad y dependencia del API. **Solución:** implementarla como **fase separada y opcional** (Fase 16.5), después de que el núcleo del tótem (gestor + reproducción) funcione y sea estable.
+Solo se crea **un endpoint nuevo**: `POST /heladeria/totem/upload` — porque el upload binario **sí** requiere `multipart/form-data`, que `/settings/` no soporta.
+
+### Decisión 3 — El backend es el guardián autoritativo de la validación (resuelve D7)
+
+**Contexto:** validar en el cliente es UX; validar en el servidor es seguridad. El cliente es bypasseable.
+
+**Decisión:**
+
+- **Backend** (`service.py`): validación **autoritativa** — rechaza > 8 MB (413) y tipos no permitidos (415). Es la única que importa.
+- **Frontend** (`totemSequencer.js`): `validateImageFile` existe **solo para UX temprana** (avisar antes de subir). Su límite se documenta como "espejo del backend" y **no es la fuente de verdad**.
+- Ambos usan el **mismo valor literal `8 * 1024 * 1024`**, documentado en un comentario cruzado en ambos archivos para que un cambio se haga en los dos.
+
+### Decisión 4 — La torre usa disponibilidad, NO inventario (resuelve D8)
+
+**Contexto verificado:** [`GET /heladeria/display/flavors`](../apps/api/modules/heladeria/router.py:91) devuelve `DisplayFlavorResponse` — **solo un booleano de disponibilidad**. El inventario en tiempo real requeriría la integración con Almacenes (V6), que **no existe**.
+
+**Decisión:** la Fase 16.5 (opcional) construye la torre con los **sabores activos** (los que `is_available = true`). Se **elimina toda mención a "inventario en tiempo real"**. Si en el futuro se integra Almacenes, la torre podrá enriquecerse — pero eso es otro plan.
+
+### Decisión 5 — Storage en bind mount externo, consistente con el proyecto (resuelve D2)
+
+**Contexto verificado:** [`docker-compose.yml:48`](../docker-compose.yml:48) dice explícitamente: *"Los volúmenes ahora son externos (Bind Mounts) para mayor seguridad y facilidad de backup."* Los 4 mounts actuales del API son bind mounts a `../ERP-R-DE-RICO-DATA/`.
+
+**Decisión:** se usa un **bind mount** (no un named volume) para respetar la convención:
+
+```yaml
+- ../ERP-R-DE-RICO-DATA/totem_media:/app/media/totem
+```
+
+Esto permite respaldar las imágenes con el mismo procedimiento que el resto de los datos.
 
 ---
 
 ## 🔧 CAMBIOS PROPUESTOS
 
+### Fase 16.0 — Sembrar la clave `heladeria_totem_content` (NUEVA — resuelve D4, D13)
+
+**Objetivo:** garantizar que el primer `PATCH /settings/heladeria_totem_content` **no devuelva 404**. Este fue exactamente el defecto que V17 corrigió con su Fase 17.0.
+
+**Archivo:** [`apps/api/modules/settings/service.py`](../apps/api/modules/settings/service.py:24)
+
+**Cambio:** añadir una entrada **aditiva** al final de `default_settings` (después de `heladeria_display_precios_config`, línea 112):
+
+```python
+# V16 (Fase 16.0): manifiesto de contenido del Display Tótem de Heladería.
+# Entrada ADITIVA: el bucle de abajo solo inserta si la clave no existe,
+# por lo que no altera ninguna clave que lea el POS de Panadería.
+{
+    "key": "heladeria_totem_content",
+    "value": '{"macros":[],"heroes":[],"config":{"macroCount":3,"macroDurationSec":4,"heroDurationSec":6,"transition":"fade","transitionMs":800,"format":"vertical","accentColor":"#fbbf24"}}',
+    "description": "Manifiesto de contenido del Display Tótem de Heladería (V16).",
+    "category": "heladeria",
+    "input_type": "json"
+}
+```
+
+**Verificación de la fase:**
+
+```powershell
+# 1. Reiniciar API (NO rebuild — solo cambio de Python)
+docker restart rderico-api-dev
+Start-Sleep -Seconds 15
+
+# 2. Sembrar
+Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/seed" -Method POST -UseBasicParsing
+
+# 3. Verificar que la clave existe (debe ser 200)
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/heladeria_totem_content" -UseBasicParsing).StatusCode
+
+# 4. Verificar que el POS sigue vivo
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/" -UseBasicParsing).StatusCode   # 200
+
+# 5. pytest
+docker exec rderico-api-dev python -m pytest -q   # 39/39
+```
+
+**Commit:** `feat(settings): sembrar clave heladeria_totem_content (V16 Fase 16.0)`
+
+---
+
 ### Fase 16.1 — Extraer la lógica de reproducción a funciones puras + tests
 
-**Objetivo:** replicar el patrón "guardián del contrato" para que la lógica de secuenciación de diapositivas sea testeable sin React ni timers.
+**Objetivo:** replicar el patrón "guardián del contrato" para que la lógica de secuenciación sea testeable sin React ni timers.
 
 **1. Crear `apps/heladeria/utils/totemSequencer.js`** (nuevo, puro, sin React):
 
@@ -163,104 +297,192 @@ export const TRANSITION = {
     ZOOM: 'zoom',
 };
 
+export const FORMAT = {
+    VERTICAL: 'vertical',
+    HORIZONTAL: 'horizontal',
+};
+
+export const VALID_TRANSITIONS = Object.values(TRANSITION);
+export const VALID_FORMATS = Object.values(FORMAT);
+
+export const MIN_MACRO_COUNT = 1;
+export const MAX_MACRO_COUNT = 10;
+export const MIN_DURATION_SEC = 1;
+export const MAX_DURATION_SEC = 15;
+export const MIN_TRANSITION_MS = 200;
+export const MAX_TRANSITION_MS = 2000;
+
+/**
+ * Límite de peso por imagen. ESPEJO del backend (apps/api/modules/heladeria/service.py).
+ * Si cambia aquí, DEBE cambiar allá. El backend es el guardián autoritativo.
+ */
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
+export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 export const DEFAULT_TOTEM_CONFIG = {
-    macroCount: 3,          // cuántas tomas macro antes de un helado completo
-    macroDurationSec: 4,    // duración de cada macro
-    heroDurationSec: 6,     // duración del helado completo
+    macroCount: 3,
+    macroDurationSec: 4,
+    heroDurationSec: 6,
     transition: TRANSITION.FADE,
     transitionMs: 800,
-    format: 'vertical',
+    format: FORMAT.VERTICAL,
     accentColor: '#fbbf24',
 };
 
-/**
- * Construye la secuencia de reproducción intercalando macros y heroes.
- * Regla: N macros → 1 hero → N macros → 1 hero ...
- * @param {Array} macros - imágenes macro de textura
- * @param {Array} heroes - imágenes de helados completos
- * @param {number} macroCount - cuántas macros por cada hero
- * @returns {Array<{ image, kind: 'macro'|'hero', durationSec }>}
- */
+/** Construye la secuencia intercalando macros y heroes: N macros → 1 hero → ... */
 export const buildSequence = (macros, heroes, macroCount) => { /* ... */ };
 
-/**
- * Calcula la duración total de una secuencia en segundos.
- * @param {Array} sequence
- * @returns {number}
- */
+/** Duración total de una secuencia en segundos. */
 export const totalDurationSec = (sequence) => { /* ... */ };
 
-/**
- * Valida y normaliza una configuración de tótem (defensa contra configs corruptas).
- * @param {object} config
- * @returns {object} config normalizada con defaults aplicados
- */
+/** Valida y normaliza una configuración (defensa contra configs corruptas). */
 export const normalizeTotemConfig = (config) => { /* ... */ };
 
-/**
- * Valida un archivo de imagen antes de aceptarlo (peso, tipo).
- * @param {{ size: number, type: string }} file
- * @param {number} maxBytes
- * @returns {{ ok: boolean, reason?: string }}
- */
-export const validateImageFile = (file, maxBytes = 8 * 1024 * 1024) => { /* ... */ };
+/** Valida un archivo de imagen (UX temprana; el backend re-valida). */
+export const validateImageFile = (file, maxBytes = MAX_IMAGE_BYTES) => { /* ... */ };
 ```
 
-**2. Crear `apps/heladeria/utils/totemSequencer.test.js`** (nuevo, ~15 tests):
+**2. Crear `apps/heladeria/utils/totemSequencer.test.js`** (nuevo, ~20 tests):
 
 Casos a cubrir:
-- `buildSequence`: 3 macros + 1 hero → `[m,m,m,h]`; 6 macros + 2 heroes → `[m,m,m,h,m,m,m,h]`; sin heroes → solo macros; sin macros → solo heroes; listas vacías → `[]`.
-- `totalDurationSec`: suma correcta de duraciones; secuencia vacía → 0.
-- `normalizeTotemConfig`: config vacía → defaults; config parcial → mezcla; transición inválida → default; `macroCount` negativo → default.
-- `validateImageFile`: archivo válido → `{ ok: true }`; archivo > límite → `{ ok: false, reason }`; tipo no permitido → `{ ok: false, reason }`.
 
-### Fase 16.2 — Backend: endpoints de gestión de contenido del tótem
+- `buildSequence`: 3 macros + 1 hero → `[m,m,m,h]`; 6 macros + 2 heroes → `[m,m,m,h,m,m,m,h]`; sin heroes → solo macros; sin macros → solo heroes; listas vacías → `[]`; `macroCount` mayor que macros disponibles → no rompe.
+- `totalDurationSec`: suma correcta; secuencia vacía → 0.
+- `normalizeTotemConfig`: config vacía → defaults; config parcial → mezcla; transición inválida → default; **`format` inválido → default (D12)**; `macroCount` negativo → default; `macroCount` > 10 → clamp a 10; `transitionMs` fuera de rango → clamp.
+- `validateImageFile`: archivo válido → `{ ok: true }`; > límite → `{ ok: false, reason }`; tipo no permitido → `{ ok: false, reason }`; archivo nulo → `{ ok: false }`.
 
-**Objetivo:** persistir el manifiesto de contenido y servir las imágenes.
+**Verificación de la fase:**
 
-**1. Agregar endpoints en `apps/api/modules/heladeria/router.py`:**
+```bash
+npx vitest run      # 232 + ~20 = ~252 OK
+npx vite build      # sin errores
+docker exec rderico-api-dev python -m pytest -q   # 39/39
+```
+
+**Commit:** `test(heladeria): extraer secuenciador puro del tótem + tests (V16 Fase 16.1)`
+
+---
+
+### Fase 16.2 — Backend: upload de imágenes + storage (resuelve D2, D3, D5, D10)
+
+**Objetivo:** permitir subir imágenes y servirlas, sin tocar el mecanismo de configuración existente.
+
+**1. Bind mount en [`docker-compose.yml`](../docker-compose.yml:23)** — añadir **una línea** al bloque `volumes` del servicio `api`:
+
+```yaml
+    volumes:
+      - ./apps/api:/app
+      - ../ERP-R-DE-RICO-DATA/catalogos:/app/static/catalog
+      - ../ERP-R-DE-RICO-DATA/images:/app/static/images
+      - ../ERP-R-DE-RICO-DATA/config/terminal_status.json:/app/terminal_status.json
+      - ../ERP-R-DE-RICO-DATA/totem_media:/app/media/totem      # V16: imágenes del tótem
+```
+
+> **Nota:** bind mount externo (no named volume) para respetar la convención del proyecto y permitir backup con el mismo procedimiento.
+
+**2. Montar `StaticFiles` en [`apps/api/main.py`](../apps/api/main.py:321)** — añadir **una línea** al final del bloque de mounts:
+
+```python
+app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")
+app.mount("/static/images", StaticFiles(directory="static/images"), name="images")
+app.mount("/media/totem", StaticFiles(directory="media/totem"), name="totem")   # V16
+```
+
+> **⚠️ Cambio aditivo en el punto de entrada del API.** Ver §Regla especial. Tras aplicarlo, verificar que `/api/v1/settings/` sigue devolviendo 200.
+
+**3. Endpoints en [`apps/api/modules/heladeria/router.py`](../apps/api/modules/heladeria/router.py:106):**
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/totem/content` | Devuelve el manifiesto (lista de imágenes + config) |
-| `PUT` | `/totem/content` | Guarda el manifiesto |
-| `POST` | `/totem/upload` | Sube una imagen (valida peso/tipo, convierte a WebP) |
-| `DELETE` | `/totem/content/{image_id}` | Elimina una imagen del manifiesto |
+| `POST` | `/heladeria/totem/upload` | Sube una imagen (valida peso/tipo). Devuelve `{ url, filename, size }` |
+| `DELETE` | `/heladeria/totem/upload/{filename}` | Elimina el archivo físico (resuelve D10) |
 
-**2. Almacenamiento:**
+**NO se crean `GET/PUT /totem/content`** — el manifiesto se maneja vía `/settings/heladeria_totem_content` (Decisión 2).
 
-- Las imágenes se guardan en un **volumen Docker dedicado** (`totem_media`), mapeado a `/app/media/totem` dentro del contenedor.
-- **PROHIBIDO** guardar las imágenes en el repo Git (`.gitignore` debe excluir `media/totem/`).
-- El manifiesto (JSON) se guarda en `system_settings` con la clave `heladeria_totem_content`.
+**4. Servicio en [`apps/api/modules/heladeria/service.py`](../apps/api/modules/heladeria/service.py:267):**
 
-**3. Validación en el upload:**
+```python
+TOTEM_MEDIA_DIR = "media/totem"
+MAX_IMAGE_BYTES = 8 * 1024 * 1024  # ESPEJO de totemSequencer.js
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
-- Peso máximo: 8 MB.
-- Tipos permitidos: `image/jpeg`, `image/png`, `image/webp`.
-- Conversión a WebP con Pillow (ya disponible en el entorno Python del API).
+async def save_totem_image(file) -> dict:
+    # 1. Validar content_type → 415 si no permitido
+    # 2. Leer bytes y validar tamaño → 413 si > MAX_IMAGE_BYTES
+    # 3. Generar nombre seguro (uuid4 + extensión derivada del content_type)
+    # 4. Escribir en TOTEM_MEDIA_DIR (crear si no existe)
+    # 5. Devolver { url: f"/media/totem/{filename}", filename, size }
 
-**4. Tests backend** (`apps/api/tests/test_heladeria_totem.py`, nuevo, ~6 tests):
-- `GET /totem/content` sin manifiesto → devuelve defaults.
-- `PUT /totem/content` guarda y `GET` recupera.
-- `POST /totem/upload` con archivo válido → 200 + URL.
-- `POST /totem/upload` con archivo > 8 MB → 413.
-- `POST /totem/upload` con tipo no permitido → 415.
-- `DELETE /totem/content/{id}` elimina del manifiesto.
+async def delete_totem_image(filename: str) -> dict:
+    # 1. Sanear filename (PROHIBIDO path traversal: rechazar '/', '..', '\\')
+    # 2. Borrar el archivo físico si existe
+    # 3. Devolver { deleted: bool }
+```
+
+> **Seguridad:** el saneo de `filename` es obligatorio. Sin él, `DELETE /totem/upload/../../etc/passwd` sería un path traversal. Se valida contra una whitelist de caracteres y se rechaza cualquier separador de ruta.
+
+**5. Tests backend** (`apps/api/tests/test_heladeria_totem.py`, nuevo, ~7 tests):
+
+- `POST /totem/upload` con JPEG válido → 200 + `url` que empieza con `/media/totem/`.
+- `POST /totem/upload` con archivo > 8 MB → **413**.
+- `POST /totem/upload` con tipo no permitido (`application/pdf`) → **415**.
+- `DELETE /totem/upload/{filename}` existente → 200 + `{ deleted: true }`.
+- `DELETE /totem/upload/{filename}` inexistente → 200 + `{ deleted: false }` (idempotente).
+- `DELETE /totem/upload/..%2F..%2Fetc%2Fpasswd` → **400** (path traversal bloqueado).
+- `GET /settings/heladeria_totem_content` tras seed → 200 con el manifiesto por defecto.
+
+**Verificación de la fase:**
+
+```bash
+# 1. Rebuild NO necesario (sin deps nuevas). Solo recrear el contenedor por el nuevo mount:
+docker compose up -d api
+Start-Sleep -Seconds 15
+
+# 2. Verificar que el POS sigue vivo (CRÍTICO tras tocar main.py)
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/" -UseBasicParsing).StatusCode   # 200
+
+# 3. pytest
+docker exec rderico-api-dev python -m pytest -q   # 39 + 7 = 46 OK
+
+# 4. Persistencia tras reinicio
+docker restart rderico-api-dev
+Start-Sleep -Seconds 15
+# La imagen subida debe seguir accesible en /media/totem/<filename>
+```
+
+**Commit:** `feat(heladeria): upload de imágenes del tótem + storage en bind mount (V16 Fase 16.2)`
+
+---
 
 ### Fase 16.3 — Frontend: Gestor de Contenido Macro
 
 **Objetivo:** panel administrativo para subir y administrar las imágenes.
 
-**1. Crear `apps/heladeria/components/TotemContentManager.jsx`** (nuevo):
+**1. Crear `apps/heladeria/services/totemContentService.js`** (nuevo) — capa de datos:
+
+```js
+export const TOTEM_CONTENT_KEY = 'heladeria_totem_content';
+
+export async function fetchTotemContent() { /* GET /settings/ → busca la clave */ }
+export async function saveTotemContent(manifest) { /* PATCH /settings/heladeria_totem_content */ }
+export async function uploadTotemImage(file) { /* POST /heladeria/totem/upload (FormData) */ }
+export async function deleteTotemImage(filename) { /* DELETE /heladeria/totem/upload/{filename} */ }
+export async function loadTotemContent() { /* auto-reparación: si no existe → seed + retry */ }
+```
+
+> **Reutiliza el patrón exacto de [`displayConfigService.js`](../apps/heladeria/services/displayConfigService.js:1)** (V17), que ya demostró funcionar.
+
+**2. Crear `apps/heladeria/components/TotemContentManager.jsx`** (nuevo):
 
 - Zona de **drag & drop** para subir imágenes (macro y hero).
 - Vista previa en miniatura de cada imagen.
 - Clasificación: cada imagen se etiqueta como `macro` (textura) o `hero` (helado completo).
-- Botón de eliminar por imagen.
+- Botón de eliminar por imagen (llama a `deleteTotemImage` → borra manifiesto **y** archivo físico).
 - **Color picker por imagen** (color de acento individual).
 - Indicador de peso de cada imagen (para que el admin vea el impacto).
+- **Sin animaciones CSS infinitas** (Incident 16.1).
 
-**2. Control Fino de Reproducción** (mismo componente o sub-panel):
+**3. Control Fino de Reproducción** (sub-panel):
 
 - Slider: **cuántas tomas macro** antes de un hero (1-10).
 - Slider: **duración de cada macro** en segundos (1-15).
@@ -268,175 +490,229 @@ Casos a cubrir:
 - Selector de **transición**: desvanecimiento / deslizamiento / zoom suave.
 - Slider: **duración de la transición** en ms (200-2000).
 
-**3. Selector de Formato y Estética:**
+**4. Selector de Formato y Estética:**
 
 - Selector de **formato de hardware**: vertical (tótem) / horizontal.
 - Selector de **tipografía** curada.
 - Color picker global de acento.
 
-**4. Persistencia:** guardar el manifiesto vía `PUT /totem/content`.
+**5. Persistencia:** guardar el manifiesto vía `saveTotemContent()` (PATCH a `/settings/`).
+
+**Verificación de la fase:**
+
+```bash
+npx vite build      # sin errores
+# Manual: el gestor sube imágenes, las clasifica, y la config se guarda y recupera
+```
+
+**Commit:** `feat(heladeria): gestor de contenido macro del tótem (V16 Fase 16.3)`
+
+---
 
 ### Fase 16.4 — Frontend: Output del Tótem (offline-first)
 
-**Objetivo:** la pantalla que ve el cliente, sin controles, que nunca se queda en negro.
+**Objetivo:** la pantalla que ve el cliente. Reproduce la secuencia macro→hero con transiciones suaves, sin animaciones infinitas, y funciona sin red.
 
-**1. Crear `apps/heladeria/components/TotemPlayer.jsx`** (nuevo):
+**1. Crear `apps/heladeria/components/TotemPlayer.jsx`** (nuevo) — el reproductor:
 
-- Reproduce la secuencia construida por `buildSequence()`.
-- Aplica las transiciones configuradas.
-- **Offline-first:** carga el manifiesto desde IndexedDB primero; si hay red, refresca en segundo plano.
-- **Lazy-loading:** solo carga la imagen actual y la siguiente (nunca todas a la vez).
-- **Nunca bloquea el render:** si el fetch falla, reproduce el manifiesto cacheado.
-- **Sin animaciones CSS infinitas** en indicadores de estado (Incidente 16.1).
+- Recibe `manifest` (macros, heroes, config) y `onExit`.
+- Usa [`buildSequence()`](../apps/heladeria/utils/totemSequencer.js:1) para obtener el orden de reproducción.
+- Avanza con un `setTimeout` **encadenado** (no `setInterval`) cuya duración sale de `totalDurationSec`/config. Esto evita el "Efecto Estrobo" (Incident 16.1): cada transición es un cambio de estado puntual, no una animación CSS infinita.
+- Transiciones implementadas como **transición CSS finita** (`transition: opacity 800ms`), nunca `@keyframes ... infinite`.
+- **Diseño explícito del lazy-loading (corrige D9):** se precarga **solo la siguiente** imagen con `new Image()`; al terminar la transición se libera la anterior. No se precargan las N imágenes (evita saturar la RAM del tótem).
+- **Modo offline-first:** si `fetchTotemContent()` falla, usa el manifiesto cacheado en IndexedDB (mismo patrón que [`heladeriaOfflineStore.js`](../apps/heladeria/services/heladeriaOfflineStore.js:1)). Si no hay caché, muestra estado vacío ("Sin contenido configurado").
+- **Sin dependencia de inventario** (corrige D8): el tótem es puramente sugestivo; no consulta stock.
 
-**2. Refactorizar [`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7)** para orquestar las dos landings:
+**2. Reescribir [`DisplayTotemUI.jsx`](../apps/heladeria/sections/DisplayTotemUI.jsx:7)** con **doble landing** (mismo patrón que [`DisplayPreciosUI.jsx`](../apps/heladeria/sections/DisplayPreciosUI.jsx:21) de V17):
 
-```jsx
-export const DisplayTotemUI = ({ onBack }) => {
-    const [view, setView] = useState('player'); // 'player' | 'manager'
-    // ...
-    return view === 'player'
-        ? <TotemPlayer onBack={onBack} onOpenManager={() => setView('manager')} />
-        : <TotemContentManager onBack={() => setView('player')} />;
-};
-```
+- Sin parámetro → **panel de administración** (`TotemContentManager`).
+- Con `?mode=output` → **`TotemPlayer`** a pantalla completa (kiosco).
 
-### Fase 16.5 — (OPCIONAL) Torre Dinámica de Helados
+**3. ELIMINAR explícitamente la animación infinita (corrige D11):**
 
-**Objetivo:** animación basada en los sabores activos e inventario en tiempo real.
+- Borrar la línea `animation: 'float 3s ease-in-out infinite'` (línea 61 del placeholder actual).
+- Borrar el bloque `<style>{`@keyframes float { ... }`}</style>` (líneas 91-96 del placeholder actual).
+- Verificación: `findstr /n "infinite" apps\heladeria\sections\DisplayTotemUI.jsx` debe devolver **vacío**.
 
-> **Esta fase es opcional y se ejecuta solo si las fases 16.1-16.4 están estables.**
-
-- Consume `GET /heladeria/display/flavors` (ya existe).
-- Construye una "torre" visual apilando los sabores activos.
-- **Offline-first:** si el API falla, usa el último estado cacheado o se oculta (nunca rompe el tótem).
-- Toggle en el gestor para activar/desactivar.
-
-### Fase 16.6 — Verificación y documentación
-
-- Actualizar [`DOCUMENTACION_MODULO_HELADERIA.md`](../ESPECIFICACIONES%20DEL%20PROYECTO/DOCUMENTACION_MODULO_HELADERIA.md) sección 13: marcar "Display Tótem" como ✅ resuelto.
-- Documentar la estrategia de storage (volumen Docker, límites, WebP).
-- Agregar los nuevos archivos a "Archivos gobernados".
-
----
-
-## ✅ VERIFICACIÓN DE CADA FASE
-
-### Fase 16.1
-- [ ] `npx vitest run` → 141 + ~15 = **~156 tests OK**.
-- [ ] `npm run build` → transforma sin errores.
-- [ ] `docker exec rderico-api-dev python -m pytest -q` → **39/39**.
-
-### Fase 16.2
-- [ ] `docker exec rderico-api-dev python -m pytest -q` → 39 + ~6 = **~45 tests OK**.
-- [ ] `curl -X POST .../totem/upload` con archivo válido → 200.
-- [ ] `curl -X POST .../totem/upload` con archivo > 8 MB → 413.
-- [ ] El volumen `totem_media` persiste las imágenes tras reiniciar el contenedor.
-
-### Fase 16.3
-- [ ] `npm run build` → transforma sin errores.
-- [ ] El gestor sube imágenes y las clasifica como macro/hero.
-- [ ] La config de reproducción se guarda y recupera.
-
-### Fase 16.4
-- [ ] `npm run build` → transforma sin errores.
-- [ ] El tótem reproduce la secuencia con las transiciones configuradas.
-- [ ] **Prueba offline:** apagar el API → el tótem sigue reproduciendo el contenido cacheado.
-- [ ] **Prueba de lazy-loading:** verificar en DevTools que solo se cargan 2 imágenes a la vez.
-
-### Fase 16.5 (opcional)
-- [ ] La torre dinámica refleja los sabores activos.
-- [ ] Si el API falla, la torre se oculta sin romper el tótem.
-
-### Fase 16.6
-- [ ] Documentación actualizada.
-- [ ] `git diff --name-only` no incluye archivos del POS de Panadería.
-- [ ] `git diff --name-only` no incluye imágenes en `media/totem/`.
-
----
-
-## ⚠️ RIESGO POS: 🟢 NULO
-
-Solo se toca `apps/heladeria/` y `apps/api/modules/heladeria/`. El POS de Panadería no importa nada de ahí. Los endpoints `/totem/*` son nuevos y no afectan tickets ni caja.
-
----
-
-## 📊 ORDEN DE EJECUCIÓN Y COMMITS
-
-| Fase | Commit esperado | Archivos |
-|---|---|---|
-| 16.1 | `test(heladeria): extraer secuenciador puro del tótem + tests` | `totemSequencer.js` (nuevo), `totemSequencer.test.js` (nuevo) |
-| 16.2 | `feat(heladeria): endpoints de gestión de contenido del tótem` | `router.py`, `service.py`, `schemas.py`, `test_heladeria_totem.py` (nuevo), `docker-compose.yml` (volumen) |
-| 16.3 | `feat(heladeria): gestor de contenido macro del tótem` | `TotemContentManager.jsx` (nuevo) |
-| 16.4 | `feat(heladeria): output del tótem offline-first` | `TotemPlayer.jsx` (nuevo), `DisplayTotemUI.jsx` |
-| 16.5 | `feat(heladeria): torre dinámica de sabores (opcional)` | `TotemDynamicTower.jsx` (nuevo) |
-| 16.6 | `docs(heladeria): tótem sugestivo completado` | `DOCUMENTACION_MODULO_HELADERIA.md` |
-
-**Cada commit se pushea individualmente** a `origin/main` tras verificar.
-
----
-
-## 🎯 CRITERIOS DE ACEPTACIÓN
-
-Al terminar las fases 16.1-16.4 (núcleo) y 16.6:
-
-- [ ] `DisplayTotemUI.jsx` ya no dice "Próximamente".
-- [ ] Gestor de contenido funcional (subir, clasificar, eliminar, color picker).
-- [ ] Control fino de reproducción funcional (macros, duraciones, transiciones).
-- [ ] Output offline-first: el tótem sobrevive a la caída del API.
-- [ ] Lazy-loading verificado (solo 2 imágenes en memoria).
-- [ ] Imágenes en volumen Docker, **fuera** del repo Git.
-- [ ] vitest: 141 → ~156 tests, todos OK.
-- [ ] pytest: 39 → ~45 tests, todos OK.
-- [ ] build: sin errores.
-- [ ] **El POS de Panadería funciona idéntico.**
-- [ ] **Restricción A respetada:** cero archivos de `apps/pos/` modificados.
-- [ ] **Restricción B respetada:** cero escrituras a `products` / `categories`.
-- [ ] **Cero precios hardcodeados** en el código del tótem.
-- [ ] Documentación actualizada.
-
----
-
-## 🔄 PROTOCOLO DE REVERSIÓN
+**Verificación de la fase:**
 
 ```bash
-git revert HEAD --no-edit
-git push origin main
-# Verificar POS Panadería en http://localhost:5000
+npx vite build      # sin errores
+findstr /n "infinite" apps\heladeria\sections\DisplayTotemUI.jsx   # debe estar vacío
+# Manual: ?mode=output reproduce la secuencia; sin red usa la caché
 ```
 
-**Regla:** ante la duda, revertir. El POS nunca se queda roto.
+**Commit:** `feat(heladeria): reproductor del tótem offline-first + elimina animación infinita (V16 Fase 16.4)`
 
 ---
 
-## 📝 NOTAS DE DISEÑO
+### Fase 16.5 — (Opcional) Torre de Disponibilidad
 
-1. **¿Por qué el tótem es offline-first?**
-   Porque un tótem que depende del API en vivo se queda **en negro frente al cliente** si el API se cae. El cache en IndexedDB garantiza que siempre haya contenido que mostrar.
+**Objetivo:** mostrar en el tótem qué sabores están disponibles **hoy**, sin inventario.
 
-2. **¿Por qué las imágenes van a un volumen Docker y no al repo?**
-   Porque un JPEG 8K pesa 15-40 MB. Meterlos al repo Git infla el historial, ralentiza los clones y satura el disco. El volumen dedicado los aísla y permite respaldarlos por separado.
+> **Alcance reducido (corrige D8):** el API [`GET /heladeria/display/flavors`](../apps/api/modules/heladeria/router.py:91) devuelve **solo disponibilidad booleana** (`DisplayFlavorResponse`), NO cantidades. La torre refleja únicamente "disponible / agotado".
 
-3. **¿Por qué la torre dinámica es opcional?**
-   Porque es visualmente atractiva pero añade dependencia del API y complejidad. El núcleo del tótem (gestor + reproducción) debe funcionar y ser estable primero. La torre es una mejora incremental.
+- Consumir `heladeriaService.getDisplayFlavors()` (ya existe, [`heladeriaService.js`](../apps/heladeria/services/heladeriaService.js:76)).
+- Renderizar una lista simple de sabores con un punto verde/gris.
+- **Sin animaciones infinitas.** Refresco cada 5 min (igual que el Display de Precios).
+- Si el API falla, ocultar la torre (no romper el tótem).
 
-4. **¿Por qué lazy-loading?**
-   Porque cargar 20 imágenes 4K a la vez consume cientos de MB de RAM y satura el ancho de banda. Cargar solo la actual y la siguiente mantiene el consumo bajo y la reproducción fluida.
+**Verificación de la fase:**
 
-5. **¿Por qué la conversión a WebP?**
-   Porque WebP pesa ~30% menos que JPEG con calidad equivalente. Reduce el ancho de banda y el tiempo de carga sin pérdida visual perceptible.
+```bash
+npx vite build
+# Manual: apagar un sabor en el POS de Heladería → el tótem lo refleja en <5 min
+```
+
+**Commit:** `feat(heladeria): torre de disponibilidad del tótem (V16 Fase 16.5)`
 
 ---
 
-## ✅ CHECKLIST DE APROBACIÓN
+### Fase 16.6 — Documentación
 
-- [ ] El plan respeta el protocolo de no-interferencia al POS.
-- [ ] **Restricción A confirmada:** el POS intocable es "Punto de Venta IA"; el tótem no lo toca.
-- [ ] **Restricción B confirmada:** Gestión de Productos es el maestro; el tótem solo lee.
-- [ ] Cero precios hardcodeados.
-- [ ] Cada fase es reversible de forma independiente.
-- [ ] La verificación es objetiva (tests + build + manual).
-- [ ] El orden de ejecución minimiza el riesgo.
-- [ ] La estrategia de storage está definida antes de codificar.
+**Objetivo:** registrar el módulo en la documentación maestra.
 
-**Una vez aprobado:** ejecutar Fase 16.1 → verificar → commit → push → Fase 16.2 → ...
+**1. Actualizar [`DOCUMENTACION_MODULO_HELADERIA.md`](../ESPECIFICACIONES%20DEL%20PROYECTO/DOCUMENTACION_MODULO_HELADERIA.md:1):**
+
+- Tabla §5.4 (Secciones): cambiar la fila de `DisplayTotemUI.jsx` de "Placeholder" a "🟢 Funcional (V16)" y añadir las filas de `TotemPlayer.jsx` y `TotemContentManager.jsx`.
+- §4 (API ENDPOINTS): documentar `POST /heladeria/totem/upload` y `DELETE /heladeria/totem/upload/{filename}`.
+- §13 (Roadmap): mover "Display Tótem" de "Oleada 2" a "✅ Completado".
+- §9 (DATOS SEED): documentar la clave `heladeria_totem_content`.
+
+**2. Actualizar [`PLAN_HELADERIA_MAESTRO.md`](PLAN_HELADERIA_MAESTRO.md):** marcar V16 como completado.
+
+**Verificación de la fase:**
+
+```bash
+git diff --stat   # solo archivos .md
+```
+
+**Commit:** `docs(heladeria): documenta el Display Tótem V16`
+
+---
+
+### Fase 16.7 — (Futuro, NO en este plan) Conversión WebP
+
+> **Corrige D1.** La conversión a WebP requiere **Pillow**, que NO está instalado ni en [`requirements.txt`](../apps/api/requirements.txt:1). Añadirlo obliga a `docker compose build`, lo que **reinicia el contenedor del API y por ende el POS**. Por eso queda **explícitamente fuera del MVP**.
+
+**Cuándo retomarlo:** en una ventana de mantenimiento programada, con el POS cerrado.
+
+**Qué implicaría:**
+
+1. Añadir `Pillow>=10.0.0` a `requirements.txt`.
+2. `docker compose build api` (rebuild, NO `down`).
+3. `docker compose up -d api` (recrea solo el API).
+4. Implementar la conversión en `save_totem_image()`.
+5. Verificar `/api/v1/settings/` = 200 tras el rebuild.
+
+**Commit (futuro):** `feat(heladeria): conversión WebP de imágenes del tótem (V16 Fase 16.7)`
+
+---
+
+## ✅ CHECKLIST DE VERIFICACIÓN POR FASE
+
+| Fase | vitest | build | pytest | POS vivo | Commit |
+|---|---|---|---|---|---|
+| 16.0 | 232 | 1428 | 39 | ✅ `/settings/`=200 | `feat(heladeria): siembra clave heladeria_totem_content (V16 Fase 16.0)` |
+| 16.1 | 232 + N | 1428 | 39 | ✅ | `feat(heladeria): totemSequencer.js puro + tests (V16 Fase 16.1)` |
+| 16.2 | 232 + N | 1428 | 39 + 7 | ✅ `/settings/`=200 | `feat(heladeria): upload de imágenes del tótem + storage (V16 Fase 16.2)` |
+| 16.3 | 232 + N | 1428 | 46 | ✅ | `feat(heladeria): gestor de contenido macro del tótem (V16 Fase 16.3)` |
+| 16.4 | 232 + N | 1428 | 46 | ✅ | `feat(heladeria): reproductor del tótem offline-first (V16 Fase 16.4)` |
+| 16.5 | 232 + N | 1428 | 46 | ✅ | `feat(heladeria): torre de disponibilidad del tótem (V16 Fase 16.5)` |
+| 16.6 | 232 + N | 1428 | 46 | ✅ | `docs(heladeria): documenta el Display Tótem V16` |
+
+> **N** = tests nuevos de `totemSequencer.test.js` (estimado 30-40).
+
+---
+
+## ⚠️ MATRIZ DE RIESGOS
+
+| Riesgo | Probabilidad | Impacto | Mitigación |
+|---|---|---|---|
+| Tocar `main.py` rompe el POS | Baja | 🔴 Alto | Cambio **estrictamente aditivo** (solo `app.mount`). Verificar `/settings/`=200 tras cada cambio. Revertir con `git revert` si falla |
+| Tocar `docker-compose.yml` reinicia el POS | Baja | 🔴 Alto | Solo se **añade** un bind mount al servicio `api`. **NUNCA** `docker compose down`. Usar `docker compose up -d api` |
+| El volumen `totem_media` no existe en el host | Media | 🟠 Medio | Crear el directorio `../ERP-R-DE-RICO-DATA/totem_media` **antes** de `up -d api` |
+| Imágenes pesadas saturan el tótem | Media | 🟠 Medio | Límite de 8 MB por archivo (backend autoritativo). Lazy-loading de solo la siguiente imagen |
+| Path traversal en el upload | Baja | 🔴 Alto | Saneo del filename en `save_totem_image()` (solo `[a-zA-Z0-9._-]`, sin `..`) |
+| El manifiesto se corrompe | Baja | 🟠 Medio | `normalizeTotemConfig()` valida y repara; `loadTotemContent()` re-siembra si falta |
+| Animación infinita reintroducida | Baja | 🟡 Bajo | Verificación `findstr "infinite"` en cada fase de frontend |
+
+**Riesgo global: 🟢 NULO para el POS de Panadería**, con las 2 mitigaciones críticas (cambios aditivos + nunca `down`).
+
+---
+
+## 🔄 PROTOCOLO DE REVERSIÓN (AMPLIADO — corrige D14)
+
+### Reversión de código (frontend)
+
+```bash
+git revert <commit_sha>   # revierte el commit de la fase
+npx vite build            # verifica que compila
+```
+
+### Reversión de backend (Fases 16.0 y 16.2)
+
+```bash
+git revert <commit_sha>
+docker restart rderico-api-dev
+Start-Sleep -Seconds 15
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/" -UseBasicParsing).StatusCode   # 200
+```
+
+### Reversión de infraestructura (Fase 16.2 — bind mount)
+
+Si el bind mount causa problemas:
+
+1. Revertir el commit de `docker-compose.yml`.
+2. `docker compose up -d api` (recrea el API con la config anterior).
+3. Verificar `/settings/`=200.
+4. Los archivos en `../ERP-R-DE-RICO-DATA/totem_media` **no se borran** (quedan huérfanos pero inofensivos).
+
+### Reversión de emergencia (POS caído)
+
+```bash
+git log --oneline -5                 # identificar el último commit bueno
+git revert <commit_malo>
+docker compose up -d api             # NUNCA down
+Start-Sleep -Seconds 15
+(Invoke-WebRequest -Uri "http://localhost:5001/api/v1/settings/" -UseBasicParsing).StatusCode   # 200
+```
+
+---
+
+## 📌 NOTAS DE DISEÑO
+
+1. **Cero dependencias nuevas de Python.** El MVP acepta JPEG/PNG/WebP tal cual. WebP se difiere a Fase 16.7.
+2. **El manifiesto vive en `system_settings`** (clave `heladeria_totem_content`), leído/escrito vía `/settings/` (PATCH). No se crean endpoints CRUD nuevos.
+3. **El backend es el guardián autoritativo** de la validación de archivos; el frontend solo da UX temprana.
+4. **La torre usa disponibilidad, no inventario** (el API no expone cantidades).
+5. **Bind mount, no volumen nombrado** — respeta la convención de [`docker-compose.yml`](../docker-compose.yml:48).
+6. **`config.js` es la única fuente de URLs.** Prohibido `window.location.hostname`.
+7. **Sin animaciones infinitas** (Incident 16.1). Transiciones finitas únicamente.
+
+---
+
+## ✅ CRITERIOS DE ACEPTACIÓN
+
+- [ ] El placeholder `DisplayTotemUI.jsx` ya no contiene `@keyframes float` ni `infinite`.
+- [ ] `?mode=output` reproduce la secuencia macro→hero con transiciones finitas.
+- [ ] El gestor de contenido sube, clasifica y elimina imágenes.
+- [ ] El manifiesto persiste en `system_settings` y sobrevive un reinicio del API.
+- [ ] El tótem funciona sin red (usa caché IndexedDB).
+- [ ] `POST /heladeria/totem/upload` rechaza archivos >8 MB y tipos no permitidos.
+- [ ] `DELETE /heladeria/totem/upload/{filename}` borra manifiesto **y** archivo físico.
+- [ ] vitest 232+N, build 1428, pytest 39+7.
+- [ ] `/api/v1/settings/` = 200 tras cada cambio de backend.
+- [ ] **El POS de Panadería funciona sin cambios** (Restricción A respetada).
+- [ ] Cero archivos de `apps/pos/` modificados.
+
+---
+
+## 🚦 CHECKLIST DE APROBACIÓN
+
+- [ ] El usuario aprueba la Revisión 2 de este plan.
+- [ ] Se confirma la ventana de ejecución (sin tickets abiertos).
+- [ ] Se crea el directorio `../ERP-R-DE-RICO-DATA/totem_media` en el host.
+- [ ] Se confirma el orden: Fase 16.0 → 16.1 → 16.2 → 16.3 → 16.4 → 16.5 → 16.6.
+
+> **Este plan está PROPUESTO. No se inicia la implementación sin aprobación explícita del usuario.**

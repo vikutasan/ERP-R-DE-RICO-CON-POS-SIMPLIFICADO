@@ -25,6 +25,7 @@ services:
       - ../ERP-R-DE-RICO-DATA/catalogos:/app/static/catalog
       - ../ERP-R-DE-RICO-DATA/images:/app/static/images
       - ../ERP-R-DE-RICO-DATA/config/terminal_status.json:/app/terminal_status.json
+      - ../ERP-R-DE-RICO-DATA/totem_media:/app/media/totem      # V16: imágenes del tótem
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - PORT=3001
