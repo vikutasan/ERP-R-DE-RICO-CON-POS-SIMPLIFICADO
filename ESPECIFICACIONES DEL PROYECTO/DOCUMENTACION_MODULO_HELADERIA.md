@@ -146,6 +146,8 @@ Prefijo: `/api/v1/heladeria`
 | `PATCH` | `/kds/items/{item_id}/status` | Actualizar estado KDS (PENDING → IN_PROGRESS → READY) |
 | `GET` | `/display/flavors` | Sabores disponibles para display público |
 | `GET` | `/display/menu` | Menú formateado para pantalla de precios. **Agrupa por `component_type`** (RECIPIENTE, TAMAÑO, SABOR, EXTRA, BEBIDA_BASE). `price` llega como **NÚMERO** (ej. `65.0`), no como string |
+| `POST` | `/totem/upload` | **(V16 Fase 16.2)** Sube una imagen del tótem (`multipart/form-data`, campo `file`). Valida MIME (JPEG/PNG/WebP), peso (≤ 8 MB) y no-vacío. Devuelve `{ filename, url }` |
+| `DELETE` | `/totem/upload/{filename}` | **(V16 Fase 16.2)** Borra una imagen del tótem. Devuelve `{ deleted, filename }` |
 
 ### Configuración del Display (V17)
 
@@ -174,6 +176,45 @@ Forma del `value` (JSON serializado):
 - `columns`: entero 1–6.
 - `theme`: `LIGHT` | `DARK`.
 - `showUnavailable: false` ⇒ oculta productos agotados.
+
+### Configuración del Tótem (V16)
+
+El manifiesto de contenido del Display Tótem vive en `system_settings` bajo la
+clave `heladeria_totem_content` (prefijo `/api/v1/settings`):
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/settings/` | Devuelve TODAS las settings; el frontend extrae la clave del Tótem |
+| `PATCH` | `/settings/heladeria_totem_content` | Guarda el manifiesto. Body: `{ "value": "<json string>" }`. **El PUT NO existe** |
+| `POST` | `/settings/seed` | Siembra las claves faltantes (idempotente) |
+
+Las imágenes se sirven desde el montaje estático **ADITIVO** `/media/totem/<filename>`
+(no altera los montajes que consume el POS de Panadería).
+
+Forma del `value` (JSON serializado):
+
+```json
+{
+    "macros": [ { "id": "macro_1", "filename": "x.png", "url": "/media/totem/x.png", "label": "Cono", "accentColor": "#fbbf24" } ],
+    "heroes": [ { "id": "hero_1", "filename": "y.png", "url": "/media/totem/y.png", "label": "R de Rico", "accentColor": "#fbbf24" } ],
+    "config": {
+        "macroCount": 3,
+        "macroDurationSec": 4,
+        "heroDurationSec": 6,
+        "transition": "fade",
+        "transitionMs": 800,
+        "format": "vertical",
+        "accentColor": "#fbbf24"
+    }
+}
+```
+
+- `macroCount`: entero 1–10 (tomas macro antes de cada hero).
+- `macroDurationSec` / `heroDurationSec`: entero 1–15.
+- `transition`: `fade` | `slide` | `zoom` (transiciones **FINITAS**).
+- `transitionMs`: entero 200–2000.
+- `format`: `vertical` | `horizontal`.
+- `accentColor`: `#rrggbb`.
 
 ### Respuesta de `/menu`
 
@@ -214,6 +255,7 @@ Forma del `value` (JSON serializado):
 | `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB (`heladeria_offline` v1). Stores: `menu_cache` (TTL 30 min) y `sync_queue` (operaciones PENDING). Expone `enqueueOperation()` / `getPendingOperations()` / `markOperationDone()`. **(V17 Fase 17.3)** añade `cacheDisplayMenu()` / `getCachedDisplayMenu()` (TTL **24 h**, clave `'display_menu'` en el MISMO store `menu_cache`, sin subir `DB_VERSION`), `getDisplayMenuCacheAge()` y `clearDisplayMenuCache()` |
 | `services/heladeriaTerminals.js` | Lock de terminales heladería (`H1`, `H2`, `H-CAJA`). Usa los endpoints reales `POST /pos/terminals/{id}/lock`, `POST /pos/terminals/{id}/unlock` y `GET /pos/terminals/status` (FASE 0) |
 | `services/displayConfigService.js` | **(V17 Fase 17.2)** Cliente HTTP de la configuración del Display. `fetchDisplayConfig()` (GET `/settings/` + extrae la clave), `saveDisplayConfig()` (**PATCH** `/settings/heladeria_display_precios_config` — el PUT NO existe), `seedDisplayConfig()` (POST `/settings/seed`) y `loadDisplayConfig()` (auto-reparación: si la clave no existe, siembra y reintenta; ante error devuelve defaults) |
+| `services/totemContentService.js` | **(V16 Fase 16.3)** Cliente HTTP del manifiesto del Tótem. `getManifest()` (GET `/settings/` + parsea la clave `heladeria_totem_content`), `saveManifest()` (**PATCH** `/settings/heladeria_totem_content`), `uploadImage()` (POST `/heladeria/totem/upload` con `FormData`), `deleteImage()` (DELETE `/heladeria/totem/upload/{filename}`) y `resolveImageUrl()` |
 
 ### 5.2 Hooks (lógica de estado)
 
@@ -476,13 +518,13 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 |---|---|---|
 | **Tienda Interactiva** | V14 (Fases 14.1–14.5) | 🟢 Funcional — configurador doble columna, switch Kiosco/Caja, pre-comanda con canal atómico + cola offline real |
 | **Display Precios** | V17 (Fases 17.0–17.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), config persistida en `system_settings`, offline-first con caché 24 h, `displayMappers.js` puro con 43 tests |
+| **Display Tótem** | V16 (Fases 16.0–16.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), manifiesto persistido en `system_settings` (`heladeria_totem_content`), subida/borrado de imágenes con validación de MIME + tamaño (8 MB), servido estático en `/media/totem/`, offline-first con caché en `localStorage`, `totemSequencer.js` puro con 36 tests. **Sin animaciones infinitas** (Incidente 16.1) |
 
 ### Oleada 2 (pendiente de revisión)
 
 | Feature | Prioridad | Dependencia |
 |---|---|---|
 | **Checkout integrado** | 🔴 Alta | Módulo de caja existente |
-| **Display Tótem** | 🟢 Baja | Plan V16 (no revisado) |
 | **KDS Inteligente** | 🟡 Media | Plan V15 (no revisado) |
 | **WebSocket KDS** | 🟢 Baja | Reemplazar polling 5s |
 | **Integración Almacenes** | 🟡 Media | Plan Almacenes V6 |
