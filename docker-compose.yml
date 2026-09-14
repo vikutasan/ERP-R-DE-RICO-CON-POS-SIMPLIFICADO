@@ -43,7 +43,10 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-    environment:
-      - VITE_API_URL=http://192.168.1.117:5001
+    # v19.1-hotfix: NO fijar VITE_API_URL a una IP LAN.
+    # El frontend deriva el API del hostname del navegador (apps/shared/config.js),
+    # de modo que cualquier cliente (PC/tablet/celular) que abra el POS en
+    # http://<host>:5000 llama correctamente a http://<host>:5001.
+    # Fijar una IP aqui rompia el POS en cualquier host distinto -> "sin conexion".
 
 # Los volúmenes ahora son externos (Bind Mounts) para mayor seguridad y facilidad de backup.
