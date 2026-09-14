@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { securityService } from './services/securityService';
 import { CONFIG } from './config';
+import { formatLocalTime } from '../shared/timezone';
 
 /**
  * GESTIÓN DIARIA — Reparto Pan Grandeza (Fase 2)
@@ -697,7 +698,7 @@ const CierreJornada = ({ journey, API_BASE, showToast, onReload, cashFund, total
                             <h3 className="text-xl font-black uppercase tracking-tighter text-white">Ruta en <span className="text-blue-400">Curso</span></h3>
                             {journey.dispatched_at && (
                                 <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400 mt-1">
-                                    🕒 Salida: {new Date(journey.dispatched_at + 'Z').toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                    🕒 Salida: {formatLocalTime(journey.dispatched_at)}
                                 </p>
                             )}
                         </div>
@@ -725,7 +726,7 @@ const CierreJornada = ({ journey, API_BASE, showToast, onReload, cashFund, total
                                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                                         {v.completed_at ? (
                                             <span className="text-[10px] font-bold text-blue-400">
-                                                🕒 {new Date(v.completed_at + 'Z').toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                🕒 {formatLocalTime(v.completed_at)}
                                             </span>
                                         ) : (
                                             <span className="text-[10px] font-bold text-gray-500">• Hora no registrada</span>

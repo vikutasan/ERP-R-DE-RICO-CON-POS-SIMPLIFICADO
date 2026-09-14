@@ -3,6 +3,7 @@ import { cacheRouteData, getCachedRouteData, updateCachedVisits, enqueueOperatio
 import { createNetworkMonitor } from './services/networkMonitor';
 import { CONFIG } from './config';
 import { securityService } from './services/securityService';
+import { formatLocalTime } from '../shared/timezone';
 
 // ─── Hook: Borrador de visita en localStorage ───
 // Previene pérdida de datos cuando el SO del móvil mata la pestaña
@@ -994,7 +995,7 @@ export const GrandezaDriverUI = ({ onBack, userPermissions = {} }) => {
                                         <h3 className="font-black text-lg text-white">{selectedVisitDetail.client_name || selectedVisitDetail.ext_client_name || 'Cliente'}</h3>
                                         <p className="text-xs text-gray-400 mt-1">
                                             {selectedVisitDetail.visit_type === 'EXTEMPORANEA' ? '⚡ Extemporánea' : '📋 Programada'}
-                                            {selectedVisitDetail.arrived_at && ` — ${new Date(selectedVisitDetail.arrived_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Mexico_City' })}`}
+                                            {selectedVisitDetail.arrived_at && ` — ${formatLocalTime(selectedVisitDetail.arrived_at)}`}
                                         </p>
                                     </div>
                                     <button onClick={() => setSelectedVisitDetail(null)} className="text-gray-400 hover:text-white text-xl font-black px-2">✕</button>
@@ -1118,7 +1119,7 @@ export const GrandezaDriverUI = ({ onBack, userPermissions = {} }) => {
                         <div key={exp.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-3 flex justify-between items-center">
                             <div className="flex-1 min-w-0">
                                 <div className="font-bold text-sm text-white truncate">{exp.description}</div>
-                                <div className="text-[10px] text-gray-400">{exp.created_at ? new Date(exp.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Mexico_City' }) : ''}</div>
+                                <div className="text-[10px] text-gray-400">{exp.created_at ? formatLocalTime(exp.created_at) : ''}</div>
                             </div>
                             <div className="font-black text-red-400 text-sm mx-3">${exp.amount.toFixed(2)}</div>
                             <button onClick={() => deleteExpense(exp.id)} className="w-8 h-8 rounded-full bg-red-500/20 border border-red-500/30 flex items-center justify-center text-red-400 font-black text-xs shrink-0 active:scale-90 transition-all">✕</button>

@@ -10,14 +10,16 @@ from typing import List, Optional
 from datetime import date, datetime
 
 
-# ─── Timezone: Hora oficial de México para todos los timestamps de Grandeza ───
-# Los contenedores Docker corren en UTC por defecto. Esta función garantiza
-# que los timestamps se guarden en hora local de México sin depender del SO.
-from core.timezone import get_business_tz, local_now
+# ─── Timezone (v20 Fase 20.2.d): "Store UTC, Display Local" ───
+# Los timestamps de Grandeza se guardan en UTC (naive). La conversión a hora
+# local del negocio se hace en la capa de presentación (frontend formatLocal).
+# _now_mexico se conserva como alias de utcnow() para no tocar los call-sites.
+from core.timestamps import utcnow
+from core.timezone import get_business_tz, to_local_date_str
 
-async def _now_mexico(db):
-    """Retorna datetime naive en hora del negocio (configurable via system_settings)."""
-    return local_now(await get_business_tz(db))
+async def _now_mexico(db=None):
+    """Alias de utcnow(): los timestamps se almacenan en UTC (naive)."""
+    return utcnow()
 
 from .models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
@@ -611,7 +613,7 @@ class GrandezaService:
         for v in all_visits:
             visit_entry = {
                 "visit_id": v.id,
-                "date": v.created_at.strftime("%Y-%m-%d") if v.created_at else None,
+                "date": to_local_date_str(v.created_at, await get_business_tz(db)) if v.created_at else None,
                 "sale_amount": v.sale_amount or 0,
                 "items": []
             }

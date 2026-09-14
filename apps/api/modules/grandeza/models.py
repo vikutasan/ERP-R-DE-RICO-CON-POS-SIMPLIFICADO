@@ -7,6 +7,7 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from core.database import Base
+from core.timestamps import utcnow
 
 
 class GrandezaProductConfig(Base):
@@ -20,8 +21,8 @@ class GrandezaProductConfig(Base):
     product_id = Column(Integer, ForeignKey("products.id"), unique=True, nullable=False)
     is_enabled = Column(Boolean, default=True)
     b2b_price = Column(Float, nullable=False, default=0.0)  # Precio B2B Grandeza (distinto al precio tienda)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     product = relationship("Product", backref="grandeza_config", uselist=False)
 
@@ -42,8 +43,8 @@ class GrandezaClient(Base):
     facade_photo_url = Column(String, nullable=True)  # Ruta al archivo en disco local
     notes = Column(Text, nullable=True)
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relaciones
     route_slots = relationship("GrandezaRouteSlot", back_populates="client", cascade="all, delete-orphan")
@@ -79,7 +80,7 @@ class GrandezaExtraordinaryRouteSlot(Base):
     client_id = Column(Integer, ForeignKey("grandeza_clients.id"), nullable=False)
     visit_order = Column(Integer, nullable=False)
     label = Column(String, nullable=True)  # Etiqueta opcional: "Ruta Día de Muertos"
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
 
     client = relationship("GrandezaClient")
 
@@ -113,8 +114,8 @@ class GrandezaJourney(Base):
     # Notas de retroalimentación del gerente
     feedback_notes = Column(Text, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     # Relaciones
     visits = relationship("GrandezaVisit", back_populates="journey", cascade="all, delete-orphan")
@@ -176,7 +177,7 @@ class GrandezaVisit(Base):
     # Vinculación con pedido de producción (opcional)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
     
     # Relaciones
     journey = relationship("GrandezaJourney", back_populates="visits")
@@ -218,7 +219,7 @@ class GrandezaDriverLocation(Base):
     lat = Column(Float, nullable=False)
     lng = Column(Float, nullable=False)
     accuracy = Column(Float, nullable=True)  # Precisión en metros del GPS
-    recorded_at = Column(DateTime, default=datetime.now)
+    recorded_at = Column(DateTime, default=utcnow)
     
     journey = relationship("GrandezaJourney", back_populates="driver_locations")
 
@@ -247,7 +248,7 @@ class GrandezaExpense(Base):
     journey_id = Column(Integer, ForeignKey("grandeza_journeys.id"), nullable=False)
     description = Column(String, nullable=False)  # Texto libre: "Gasolina", "Caseta Palmillas"
     amount = Column(Float, nullable=False, default=0.0)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
 
     journey = relationship("GrandezaJourney")
  
@@ -288,5 +289,5 @@ class GrandezaOrder(Base):
     delivery_journey_id = Column(Integer, ForeignKey("grandeza_journeys.id"), nullable=True)
     
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
