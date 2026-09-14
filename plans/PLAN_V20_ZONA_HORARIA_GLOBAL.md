@@ -6,7 +6,12 @@
 >
 > **Estado:** 📋 **PLANIFICADO.** No implementado. Depende de V19 (Fase 19.4).
 >
-> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 1
+> **Autor:** Roo · **Fecha:** 2026-09-14 · **Revisión:** 2
+>
+> **Cambios de la Rev. 2:** se incorpora la **Sección 6.5 — Arreglo de zona horaria
+> del POS IA**, tras auditar el módulo a fondo. Se documenta el **bug del `+6h`**
+> ([`pos/service.py:579-580`](apps/api/modules/pos/service.py:579)) y se establece la
+> regla del **commit atómico** para `pos`.
 
 ---
 
@@ -26,6 +31,8 @@ corregir mi propio diseño inicial):
 | 6 | "`hr` guarda UTC correctamente" | **CIERTO.** Usa `timezone=True, server_default=func.now()` (19 columnas) | — |
 | 7 | "`warehouse`/`security` guardan UTC correctamente" | **CIERTO.** Usan `_utcnow()` | — |
 | 8 | "`pos` guarda UTC" | **FALSO.** `pos/models.py:34` usa `datetime.now()` (hora local) | ✅ Sí |
+| 9 | "El POS IA maneja zona horaria" | **FALSO.** No tiene **ninguna** lógica de timezone. Solo `setLastSaveTime(new Date())` ×3 | ✅ Sí |
+| 10 | "El `+6h` de `pos/service.py` es un bug" | **MATIZ.** Hoy es un **parche funcional** que compensa el naive local. Se vuelve bug **solo si** se migra `created_at` a UTC sin quitarlo | ✅ Sí |
 
 **Conclusión de la autocrítica:** este plan **NO es "activar" algo que ya existe**.
 Es **corregir desviaciones reales** en 4 módulos backend + reescribir la capa de
@@ -134,6 +141,54 @@ sueltos por un **helper único** que respete la zona elegida.
 | `pos/router.py` | `:135,255,402` | Migrar a `utcnow()` |
 | `pos/pos_audit.py` | `:82` | Migrar a `utcnow()` |
 | `heladeria/service.py` | `:274` | `last_updated` informativo — migrar a `iso_utc()` |
+
+### 3.1.b 🔴 EL BUG DEL `+6h` — el hallazgo más importante de la Rev. 2
+
+[`pos/service.py:573-584`](apps/api/modules/pos/service.py:573) — filtro de fecha de la Auditoría POS:
+
+```python
+if search_date:
+    try:
+        from datetime import datetime, timedelta
+        # Los timestamps están en UTC. Hora local México es UTC-6.   ← COMENTARIO FALSO
+        # Calculamos el inicio y el fin del día en UTC para que el rango abarque correctamente la noche.
+        target_date = datetime.strptime(search_date, "%Y-%m-%d")
+        start_utc = target_date + timedelta(hours=6)          # ← +6h
+        end_utc   = target_date + timedelta(days=1, hours=6)  # ← +6h
+        query = query.where(models.Ticket.created_at >= start_utc).where(models.Ticket.created_at < end_utc)
+```
+
+**El comentario MIENTE.** Dice *"Los timestamps están en UTC"*, pero
+[`pos/models.py:34`](apps/api/modules/pos/models.py:34) los guarda en **hora local**.
+El `+6h` **no** convierte UTC→local: **compensa** que `created_at` ya está en local.
+
+**Aritmética real (hoy, con `created_at` en local):**
+
+| Paso | Valor |
+|---|---|
+| Usuario pide | `search_date = "2026-09-14"` (día local) |
+| `start_utc` | `2026-09-14 06:00:00` |
+| `end_utc` | `2026-09-15 06:00:00` |
+| Rango efectivo sobre `created_at` (local) | **06:00 del 14 → 06:00 del 15** |
+| ❌ Consecuencia | Los tickets vendidos entre **00:00 y 06:00** aparecen en el día **anterior** |
+
+**🔴 Si se migra `pos` a UTC sin quitar el `+6h`:**
+
+| Paso | Valor |
+|---|---|
+| `start_utc` | `2026-09-14 06:00:00` UTC = `2026-09-14 00:00:00` local |
+| `end_utc` | `2026-09-15 06:00:00` UTC = `2026-09-15 00:00:00` local |
+| Rango efectivo | **00:00 del 14 → 00:00 del 15** ✅ **¡CORRECTO!** |
+
+**Conclusión contraintuitiva y CRÍTICA:** el `+6h` **NO debe eliminarse** al migrar a
+UTC — **debe CONSERVARSE**, porque el `+6h` es precisamente la conversión
+"día local → rango UTC" que se necesita. Lo que **debe corregirse es el comentario**
+(que hoy miente) y **generalizarse el offset** para que lea del selector en vez de
+hardcodear `6`.
+
+**El arreglo correcto (Sección 6.5):** reemplazar el `6` hardcodeado por el offset
+real del negocio, calculado con `ZoneInfo` (soporta horario de verano), y corregir el
+comentario. Ver la Sección 6.5 para el código exacto.
 
 ### 3.2 Backend — Los TRES mecanismos de zona horaria
 
@@ -402,6 +457,130 @@ quedan con su valor actual (hora local). Esto significa que:
 
 ---
 
+## 6.5 FASE 20.2.b — ARREGLO DE ZONA HORARIA DEL POS IA (Rev. 2)
+
+> **Origen:** auditoría del módulo POS IA solicitada por el dueño. Se encontraron
+> **5 hallazgos**, de los cuales **3 son corregibles sin tocar la UI intocable**
+> (Restricción A) porque viven en backend y utilitarios.
+
+### 6.5.1 Los 5 hallazgos (verificados contra el código real)
+
+| # | Hallazgo | Ubicación | Severidad | ¿Se corrige? |
+|---|---|---|---|---|
+| 1 | `created_at` guarda **local naive**, no UTC | [`pos/models.py:34`](apps/api/modules/pos/models.py:34) | 🔴 Alta | ✅ Sí (Fase 20.2) |
+| 2 | `+6h/+6h` con **comentario falso** | [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) | 🔴 Alta | ✅ Sí (6.5.2) |
+| 3 | `now - created_at` naive−naive (GC y TTL) | [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) | 🟡 Media | ✅ Sí (Fase 20.2) |
+| 4 | `committed_at` impreso **sin parche `Z`** | [`ticketGenerator.js:154`](apps/pos/utils/ticketGenerator.js:154) | 🟡 Media | ✅ Sí (6.5.3) |
+| 5 | Zona **hardcodeada** `America/Mexico_City` | [`GestorDeCaja.jsx:365`](apps/pos/components/GestorDeCaja.jsx:365) | 🟢 Baja | ✅ Sí (6.5.4) |
+
+### 6.5.2 El arreglo del `+6h` — generalizar el offset (hallazgo #2)
+
+**Estado actual** ([`pos/service.py:573-584`](apps/api/modules/pos/service.py:573)):
+
+```python
+# Los timestamps están en UTC. Hora local México es UTC-6.   ← FALSO
+target_date = datetime.strptime(search_date, "%Y-%m-%d")
+start_utc = target_date + timedelta(hours=6)          # ← 6 hardcodeado
+end_utc   = target_date + timedelta(days=1, hours=6)  # ← 6 hardcodeado
+```
+
+**Arreglo propuesto** (tras la Fase 20.2, cuando `created_at` YA es UTC):
+
+```python
+from core.timezone import get_business_tz
+from zoneinfo import ZoneInfo
+
+if search_date:
+    try:
+        target_date = datetime.strptime(search_date, "%Y-%m-%d").date()
+        tz = await get_business_tz(db)
+        # El día LOCAL [00:00, 24:00) convertido a UTC.
+        # ZoneInfo maneja el horario de verano automáticamente.
+        start_local = datetime.combine(target_date, time.min, tzinfo=tz)
+        end_local   = datetime.combine(target_date + timedelta(days=1), time.min, tzinfo=tz)
+        start_utc = start_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        end_utc   = end_local.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        query = query.where(models.Ticket.created_at >= start_utc).where(models.Ticket.created_at < end_utc)
+    except Exception as e:
+        logging.error(f"Error parsing date {search_date}: {e}")
+```
+
+**Por qué es el arreglo correcto:**
+1. **Elimina el `6` hardcodeado** → si el negocio cambia de zona, el filtro se ajusta solo.
+2. **Soporta horario de verano** vía `ZoneInfo` (el `+6` fijo NO lo soporta).
+3. **Corrige el comentario** que hoy miente.
+4. **Mantiene la semántica** de "día local completo" que el `+6` lograba por accidente.
+
+**⚠️ Regla de oro:** este cambio y la migración de [`pos/models.py:34`](apps/api/modules/pos/models.py:34)
+van en el **MISMO COMMIT**. Si se migra la columna sin cambiar el filtro, la auditoría
+se desfasa 6 horas. Si se cambia el filtro sin migrar la columna, también.
+
+### 6.5.3 El arreglo del ticket impreso (hallazgo #4)
+
+**Estado actual** ([`ticketGenerator.js:154`](apps/pos/utils/ticketGenerator.js:154)):
+
+```javascript
+new Date(ticketData.committed_at).toLocaleString('es-MX', {...})   // ← SIN parche 'Z'
+```
+
+**Problema:** si `committed_at` llega naive (`"2026-09-14T03:49:00"`), `new Date()`
+lo interpreta como **hora local del navegador** → desfase de 6 horas en el ticket.
+
+**Arreglo:** usar el helper compartido `formatLocal()` de la Fase 20.3, que normaliza
+el ISO y aplica la zona del negocio:
+
+```javascript
+import { formatLocal } from '../../shared/timezone';
+// ...
+const committedStr = formatLocal(ticketData.committed_at, timeZone, {
+    dateStyle: 'short', timeStyle: 'short'
+});
+```
+
+**Nota:** [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) (el parche
+`+ 'Z'` del `created_at`) **se conserva** — es defensa redundante inofensiva y
+garantiza compatibilidad si algún día el backend dejara de mandar la `Z`.
+
+### 6.5.4 El arreglo de la zona hardcodeada (hallazgo #5)
+
+**Estado actual** ([`GestorDeCaja.jsx:365-368`](apps/pos/components/GestorDeCaja.jsx:365)):
+
+```javascript
+const mexicoDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City' })
+    .format(new Date());
+```
+
+**Arreglo:** leer la zona del contexto global:
+
+```javascript
+const { timeZone } = useTimezone();
+const mexicoDate = new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
+```
+
+**Nota:** `GestorDeCaja.jsx` **NO es la UI intocable** — la Restricción A aplica a
+[`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29). `GestorDeCaja` es un
+componente de caja modificable.
+
+### 6.5.5 Lo que NO se toca del POS IA (Restricción A)
+
+| Archivo | Razón |
+|---|---|
+| [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29) | **UI intocable.** Sus 3 `setLastSaveTime(new Date())` son hora del dispositivo, no de la DB |
+| [`useTicketActions.js:79`](apps/pos/hooks/useTicketActions.js:79) | `new Date().toISOString()` ya es UTC correcto (solo payload de impresión) |
+| [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) | El parche `+ 'Z'` es defensa redundante inofensiva |
+
+### 6.5.6 Tests de la Fase 20.2.b
+
+- Test nuevo: filtro de fecha con `search_date` cubre el **día local completo**
+  (incluye un ticket creado a las 23:30 local).
+- Test nuevo: `committed_at` naive se formatea con la zona del negocio, no del navegador.
+- **Regresión:** pytest **~72/72** + smoke Auditoría POS (verificar que un ticket de
+  las 02:00 aparece en el día correcto).
+
+**Verificación:** pytest **~72/72** + smoke Auditoría POS + smoke ticket impreso.
+
+---
+
 ## 7. FASE 20.3 — FRONTEND: CONTEXTO GLOBAL DE ZONA HORARIA
 
 **Objetivo:** que el frontend **sepa** la zona del negocio y formatee con ella.
@@ -596,6 +775,7 @@ ambos `_utcnow` hacen exactamente lo mismo).
 | 20.0 | 🟢 Bajo | Ninguno (solo añade) | Endpoint aditivo, tests propios |
 | 20.1 | 🟡 Medio | Red/KDS con offset incorrecto | Mantener override + fallback |
 | 20.2 | 🔴 **ALTO** | KDS muestra 6h de antigüedad | Migrar `pos` junto con 20.3 |
+| **20.2.b** | 🔴 **ALTO** | **Auditoría POS desfasada 6h** | **Commit atómico con 20.2 (ver 6.5.2)** |
 | 20.3 | 🟢 Bajo | Ninguno (solo añade contexto) | Degradación elegante |
 | 20.4 | 🔴 **ALTO** | Fechas mal mostradas | Oleadas + smoke por pantalla |
 | 20.5 | 🟡 Medio | Tests de warehouse/security | **DIFERIR** |
@@ -622,28 +802,55 @@ ambos `_utcnow` hacen exactamente lo mismo).
 **Mitigación:** el POS IA **no muestra** `created_at` en pantalla (solo lo usa
 internamente para TTL). Verificar en el smoke de la Fase 20.2.
 
+### 10.3 El riesgo #3: el `+6h` de la Auditoría POS (Rev. 2)
+
+**El riesgo más traicionero del plan**, porque es **contraintuitivo**:
+
+> El `+6h` de [`pos/service.py:580`](apps/api/modules/pos/service.py:580) **parece**
+> un bug que hay que borrar. **NO lo es.** Es el parche que hoy hace que la Auditoría
+> funcione. Si se borra **antes** de migrar `created_at` a UTC, la auditoría se
+> desfasa 6 horas. Si se migra `created_at` **sin** generalizar el `+6h`, también.
+
+**Mitigación obligatoria:**
+1. **Commit atómico:** [`pos/models.py:34`](apps/api/modules/pos/models.py:34) +
+   [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) en el **mismo commit**.
+2. **Test de frontera:** un ticket creado a las **23:30 local** debe aparecer en el
+   día correcto al filtrar por `search_date`.
+3. **Test de madrugada:** un ticket creado a las **02:00 local** debe aparecer en el
+   día correcto (hoy aparece en el día anterior — bug existente).
+4. **NO borrar el offset:** generalizarlo con `ZoneInfo` (Sección 6.5.2), nunca eliminarlo.
+
 ---
 
 ## 11. ORDEN DE EJECUCIÓN
 
 ```
-20.0  Infraestructura backend (core/timestamps.py, endpoint /settings/timezone)
-  ↓   pytest 64/64
-20.1  Sincronizar los 3 mecanismos (network + KDS derivan del selector)
-  ↓   pytest 64/64 + smoke Monitor de Red
-20.3  Frontend: shared/timezone.js + TimezoneProvider  ← ANTES de 20.2
-  ↓   vitest ~305/305
-20.2  Migrar timestamps a UTC (network, cash, orders, pos)  ← JUNTO con 20.4 oleada 4
-  ↓   pytest ~70/70 + smoke POS + smoke KDS
-20.4  Migrar los 49 puntos de formateo (4 oleadas)
-  ↓   vitest ~305/305 + build + smoke por pantalla
-20.5  Unificación y limpieza → DIFERIDA
+20.0    Infraestructura backend (core/timestamps.py, endpoint /settings/timezone)
+  ↓     pytest 64/64
+20.1    Sincronizar los 3 mecanismos (network + KDS derivan del selector)
+  ↓     pytest 64/64 + smoke Monitor de Red
+20.3    Frontend: shared/timezone.js + TimezoneProvider  ← ANTES de 20.2
+  ↓     vitest ~305/305
+20.2    Migrar timestamps a UTC (network, cash, orders, pos)
+20.2.b  Arreglar el +6h del POS IA (generalizar con ZoneInfo)  ← MISMO COMMIT que 20.2
+  ↓     pytest ~72/72 + smoke POS + smoke KDS + smoke Auditoría POS
+20.4    Migrar los 49 puntos de formateo (4 oleadas)
+  ↓     vitest ~305/305 + build + smoke por pantalla
+20.5    Unificación y limpieza → DIFERIDA
 ```
 
 **⚠️ Cambio de orden respecto a V19:** la Fase 20.3 (frontend) va **ANTES** de la
 20.2 (migración de datos). Razón: el frontend debe estar listo para formatear
 correctamente **antes** de que los datos cambien, para que el KDS no muestre
 6 horas de antigüedad ni por un segundo.
+
+**⚠️ Regla del commit atómico (Rev. 2):** las Fases **20.2 y 20.2.b** son
+**indivisibles**. Un solo commit que contenga:
+1. [`pos/models.py:34`](apps/api/modules/pos/models.py:34) → `default=utcnow`
+2. [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) → offset con `ZoneInfo`
+3. [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) → `utcnow()`
+
+Si se separan, la Auditoría POS queda desfasada 6 horas entre commits.
 
 ---
 
@@ -679,6 +886,21 @@ correctamente **antes** de que los datos cambien, para que el KDS no muestre
 - [ ] Smoke POS: crear ticket, verificar hora correcta
 - [ ] Smoke KDS: ticket nuevo muestra "0 min", no "360 min"
 
+### Fase 20.2.b — Arreglo del POS IA (Rev. 2)
+- [ ] [`pos/models.py:34`](apps/api/modules/pos/models.py:34) → `default=utcnow` **en el mismo commit** que 20.2
+- [ ] [`pos/service.py:579-580`](apps/api/modules/pos/service.py:579) → offset con `ZoneInfo` (NO borrar el offset)
+- [ ] Comentario falso *"Los timestamps están en UTC"* **corregido**
+- [ ] [`pos/service.py:658,685,962,984`](apps/api/modules/pos/service.py:962) → `utcnow()`
+- [ ] [`ticketGenerator.js:154`](apps/pos/utils/ticketGenerator.js:154) → `formatLocal()` (quitar `new Date()` sin parche)
+- [ ] [`GestorDeCaja.jsx:365`](apps/pos/components/GestorDeCaja.jsx:365) → `useTimezone()` (quitar hardcode)
+- [ ] [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx:29) **NO tocado** (Restricción A)
+- [ ] [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) parche `+ 'Z'` **conservado**
+- [ ] Test: ticket de las **23:30 local** aparece en el día correcto
+- [ ] Test: ticket de las **02:00 local** aparece en el día correcto (bug existente corregido)
+- [ ] `docker exec rderico-api-dev python -m pytest -q` → **~72/72**
+- [ ] Smoke Auditoría POS: filtrar por fecha y verificar el conteo
+- [ ] Smoke ticket impreso: `committed_at` con hora correcta
+
 ### Fase 20.4
 - [ ] Oleada 1 (analytics, inventory, network) migrada + smoke
 - [ ] Oleada 2 (production) migrada + smoke
@@ -709,6 +931,9 @@ correctamente **antes** de que los datos cambien, para que el KDS no muestre
 | 7 | Fase 20.5 (unificación) | Riesgo > beneficio (duplicación inocua) |
 | 8 | Migrar `hr` | Ya usa `timezone=True` correctamente |
 | 9 | Migrar `warehouse`/`security` | Ya usan `_utcnow()` correctamente |
+| 10 | **Borrar el `+6h` de `pos/service.py`** | **Es el parche que hace funcionar la Auditoría. Se generaliza, no se borra** |
+| 11 | Tocar [`useTicketActions.js:79`](apps/pos/hooks/useTicketActions.js:79) | `new Date().toISOString()` ya es UTC correcto |
+| 12 | Quitar el parche `+ 'Z'` de [`ticketGenerator.js:7-12`](apps/pos/utils/ticketGenerator.js:7) | Defensa redundante inofensiva |
 
 ---
 
@@ -724,6 +949,10 @@ correctamente **antes** de que los datos cambien, para que el KDS no muestre
 6. **Python no está en el PATH del host.** pytest vía `docker exec`.
 7. **Documentar la deuda que no se paga.** La Fase 20.5 se difiere **explícitamente**.
 8. **El POS IA es intocable.** Ni siquiera para "mejorar" el formateo de fechas.
+9. **Un parche funcional no es un bug.** El `+6h` de `pos/service.py` parecía un bug;
+   era el parche que sostenía la Auditoría. **Auditar antes de "arreglar".**
+10. **Los cambios acoplados van en un commit.** `pos/models.py` + `pos/service.py`
+    son indivisibles: separarlos introduce un desfase de 6 horas entre commits.
 
 ---
 
@@ -735,9 +964,10 @@ correctamente **antes** de que los datos cambien, para que el KDS no muestre
 | 20.1 | 2 edits | 🟡 Media | 1 |
 | 20.3 | 3 nuevos + 1 edit | 🟢 Baja | 1 |
 | 20.2 | ~12 edits | 🔴 Alta | 2 |
+| **20.2.b** | **~6 edits** | 🔴 **Alta** | **1** |
 | 20.4 | ~22 edits | 🔴 Alta | 3 |
 | 20.5 | — | ⏸️ Diferida | 0 |
-| **Total** | **~44 archivos** | — | **~8 sesiones** |
+| **Total** | **~50 archivos** | — | **~9 sesiones** |
 
 **Comparación con V19:** V19 son ~15 archivos y ~3 sesiones. **V20 es 3× más
 grande.** Por eso son planes separados.
@@ -772,8 +1002,11 @@ industria** ("Store UTC, Display Local") de forma **completa y verificable**:
 - **API:** serializa en UTC con `iso_utc()`, expone la zona del negocio.
 - **Frontend:** un solo helper (`formatLocal`) y un solo contexto (`TimezoneProvider`).
 - **Selector:** deja de mentir — ahora **sí** controla todo el ERP.
+- **POS IA:** alineado sin tocar su UI — se corrigen sus 5 desviaciones en backend
+  y utilitarios (Sección 6.5), respetando la Restricción A.
 
-**El resultado:** reportes que cuadran, cero bugs de horario de verano, y una
-sola fuente de verdad para la hora en todo el sistema.
+**El resultado:** reportes que cuadran, cero bugs de horario de verano, una sola
+fuente de verdad para la hora en todo el sistema, y un POS IA que —sin cambiar una
+sola línea de su interfaz— deja de depender de un parche de `+6h` para funcionar.
 
 **FIN DEL PLAN V20**
