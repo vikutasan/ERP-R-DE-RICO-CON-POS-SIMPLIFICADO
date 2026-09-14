@@ -139,19 +139,8 @@ export const HeladeriaHubUI = ({ onBack }) => {
             <div style={{
                 borderBottom: '1px solid #0f0f0f',
                 padding: '12px 40px',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
             }}>
-                <button
-                    onClick={onBack}
-                    style={{
-                        background: 'none', border: '1px solid #d1d5db',
-                        color: '#6b7280', padding: '6px 16px', borderRadius: '100px',
-                        cursor: 'pointer', fontWeight: '700', fontSize: '12px',
-                        letterSpacing: '0.5px',
-                    }}
-                >
-                    ← Dashboard
-                </button>
                 <span style={{
                     fontSize: '11px', fontWeight: '800', color: '#0f0f0f',
                     textTransform: 'uppercase', letterSpacing: '3px',
