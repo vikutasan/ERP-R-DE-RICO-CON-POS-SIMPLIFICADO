@@ -5,12 +5,11 @@ from sqlalchemy.orm import relationship
 from core.database import Base
 
 
-def _utcnow():
-    """UTC naive: las columnas DateTime son TIMESTAMP WITHOUT TIME ZONE.
-
-    asyncpg rechaza datetimes con tzinfo, por eso se elimina explicitamente.
-    """
-    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+# v20 (Fase 20.5): helper unificado. Se conserva el alias `_utcnow` para que
+# todos los `default=_utcnow` de este modulo sigan funcionando sin cambios.
+# `utcnow()` devuelve UTC NAIVE (sin tzinfo), requerido por las columnas
+# TIMESTAMP WITHOUT TIME ZONE y por asyncpg.
+from core.timestamps import utcnow as _utcnow
 
 
 class SecurityProfile(Base):

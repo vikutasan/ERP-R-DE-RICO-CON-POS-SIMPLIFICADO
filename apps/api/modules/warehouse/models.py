@@ -1,23 +1,15 @@
 ﻿from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey, DateTime, JSON, func
 from sqlalchemy.orm import relationship
 from core.database import Base
-import datetime
+from core.timestamps import utcnow as _utcnow
 import uuid
 import json
 
-
-def _utcnow():
-    """v7 (D3): UTC naive. Reemplaza datetime.utcnow() (deprecado en Python 3.12).
-
-    Regla de oro del proyecto: almacenar en UTC, mostrar en hora local.
-
-    v7 (Fase 1.5, bugfix): debe ser NAIVE (sin tzinfo). Todas las columnas
-    DateTime de este modulo son TIMESTAMP WITHOUT TIME ZONE, y asyncpg rechaza
-    un datetime timezone-aware con "can't subtract offset-naive and
-    offset-aware datetimes". Se conserva el valor en UTC, solo se omite el
-    tzinfo para que coincida con el tipo de columna.
-    """
-    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+# v20 (Fase 20.5): _utcnow se importa de core.timestamps (fuente unica de verdad).
+# Antes era un helper local duplicado; el alias conserva intactos todos los
+# call-sites `default=_utcnow`. Sigue siendo NAIVE (UTC sin tzinfo) porque las
+# columnas DateTime de este modulo son TIMESTAMP WITHOUT TIME ZONE y asyncpg
+# rechaza datetimes timezone-aware.
 
 class Insumo(Base):
     __tablename__ = "insumos"
