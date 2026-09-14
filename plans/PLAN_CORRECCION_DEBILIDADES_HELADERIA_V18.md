@@ -254,6 +254,30 @@ comentario que documente la deuda) en lugar de romper la tienda.
 > **Si esta verificación falla, la Fase 18.2 se DIFIERE.** No vale la pena arriesgar la
 > operación de la tienda por una mejora arquitectónica.
 
+#### ⏸️ RESULTADO DE LA VERIFICACIÓN (2026-09-14) — **DIFERIDA**
+
+Se ejecutó la verificación del `.env` y **FALLÓ**:
+
+```
+.env:API_URL="http://192.168.1.117:5001"
+.env:NEXT_PUBLIC_API_URL="http://192.168.1.117:5001"
+```
+
+- **NO existe `VITE_API_BASE_URL`** en `.env` ni en `.env.example`.
+- `NEXT_PUBLIC_API_URL` es un prefijo de **Next.js**, que **Vite NO expone** al cliente
+  (`import.meta.env` solo expone variables con prefijo `VITE_`).
+- `apps/pos/config.js` resuelve la URL **dinámicamente** desde `window.location.hostname`
+  (funciona hoy sin ninguna variable de entorno).
+
+**Conclusión:** crear `apps/shared/config.js` leyendo `import.meta.env.VITE_API_BASE_URL`
+resolvería a `undefined` → **rompería la conectividad de la tienda**. La corrección real
+exige una decisión de infraestructura deliberada (añadir `VITE_API_BASE_URL` a `.env`,
+`.env.example` y los build args de Docker), **fuera del alcance de una corrección que no
+debe tocar el POS IA**.
+
+**Decisión:** **Fase 18.2 DIFERIDA** a un plan propio (V19 o superior). El alcance efectivo
+de V18 queda en **18.1 + 18.5**, ambos completados y verificados.
+
 ### 4.4 Verificación
 - [ ] `npx vitest run` → 293/293
 - [ ] `npx vite build` → 1433 módulos (o +1)
