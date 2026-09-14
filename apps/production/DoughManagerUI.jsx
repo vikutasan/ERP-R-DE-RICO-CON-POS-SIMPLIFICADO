@@ -8,6 +8,7 @@ import {
 import { PedidosPendientesUI } from './PedidosPendientesUI';
 import { ProcesoProduccionMasaUI } from './ProcesoProduccionMasaUI';
 import GlobalAgentSettingsUI from './GlobalAgentSettingsUI';
+import { CONFIG } from '../shared/config';
 
 /**
  * DOUGH MANAGER UI (INDUSTRIAL EDITION)
