@@ -247,11 +247,18 @@ Forma del `value` (JSON serializado):
 
 ## 5. FRONTEND: ARQUITECTURA DE ARCHIVOS
 
+### 5.0 Utilidades puras (lógica sin React/DOM/fetch)
+
+| Archivo | Responsabilidad |
+|---|---|
+| `utils/kdsUrgency.js` | **(V15 Fase 15.1)** Guardián del contrato de urgencia del KDS. Lógica **pura** (no importa React, no toca el DOM, no hace `fetch`). Exporta `URGENCY_LEVELS` (NORMAL/WARNING/CRITICAL), `DEFAULT_URGENCY_THRESHOLDS` (`{warningSec:180, criticalSec:420}`), `DEFAULT_TZ_OFFSET_HOURS` (0), `normalizeTzOffset()`, `normalizeThresholds()`, `computeElapsedSec()`, `classifyUrgency()`, `urgencyColor()`, `formatElapsed()`, `sortOrdersByUrgency()` y `countByUrgency()`. **Solo color, nunca animación** (Incidente 16.1). 25 tests |
+| `utils/kdsUrgency.test.js` | **(V15 Fase 15.1)** 25 tests de `kdsUrgency.js`, incluyendo guardianes: `urgencyColor()` no devuelve claves de animación y `sortOrdersByUrgency()` no muta la entrada |
+
 ### 5.1 Servicios (capa de datos)
 
 | Archivo | Responsabilidad |
 |---|---|
-| `services/heladeriaService.js` | Cliente HTTP con `withRetries` para todos los endpoints. Usa `CONFIG.API_BASE_URL` |
+| `services/heladeriaService.js` | Cliente HTTP con `withRetries` para todos los endpoints. Usa `CONFIG.API_BASE_URL`. **(V15 Fase 15.4)** añade `getKdsUrgencyConfig()` (GET `/settings/heladeria_kds_urgency_config`, parsea el `value` JSON y devuelve `null` ante JSON corrupto para que el componente caiga a defaults) |
 | `services/heladeriaOfflineStore.js` | Cache offline con IndexedDB (`heladeria_offline` v1). Stores: `menu_cache` (TTL 30 min) y `sync_queue` (operaciones PENDING). Expone `enqueueOperation()` / `getPendingOperations()` / `markOperationDone()`. **(V17 Fase 17.3)** añade `cacheDisplayMenu()` / `getCachedDisplayMenu()` (TTL **24 h**, clave `'display_menu'` en el MISMO store `menu_cache`, sin subir `DB_VERSION`), `getDisplayMenuCacheAge()` y `clearDisplayMenuCache()` |
 | `services/heladeriaTerminals.js` | Lock de terminales heladería (`H1`, `H2`, `H-CAJA`). Usa los endpoints reales `POST /pos/terminals/{id}/lock`, `POST /pos/terminals/{id}/unlock` y `GET /pos/terminals/status` (FASE 0) |
 | `services/displayConfigService.js` | **(V17 Fase 17.2)** Cliente HTTP de la configuración del Display. `fetchDisplayConfig()` (GET `/settings/` + extrae la clave), `saveDisplayConfig()` (**PATCH** `/settings/heladeria_display_precios_config` — el PUT NO existe), `seedDisplayConfig()` (POST `/settings/seed`) y `loadDisplayConfig()` (auto-reparación: si la clave no existe, siembra y reintenta; ante error devuelve defaults) |
@@ -282,8 +289,8 @@ Forma del `value` (JSON serializado):
 | Archivo | Responsabilidad |
 |---|---|
 | `sections/PosHeladeriaUI.jsx` | Orquestador POS: layout 3 columnas (recipientes, sabores+extras, ticket) |
-| `sections/KdsHeladosUI.jsx` | KDS estación HELADOS: polling 5s, estados con colores, botones Preparar/Listo |
-| `sections/KdsMalteadasUI.jsx` | KDS estación MALTEADAS: misma lógica, esquema de color púrpura |
+| `sections/KdsHeladosUI.jsx` | KDS estación HELADOS: polling 5s, estados con colores, botones Preparar/Listo. **(V15 Fase 15.3)** urgencia visual: reloj propio de 1 s (separado del polling de 5 s), borde izquierdo por nivel, badge `⏱` de tiempo transcurrido y contador NORMAL/atención/crítico en el header. **Solo color, sin animación** |
+| `sections/KdsMalteadasUI.jsx` | KDS estación MALTEADAS: mismo patrón de urgencia que Helados (V15 Fase 15.3), preservando sus diferencias deliberadas: PENDING en púrpura y sin `customer_group_name` / `recipient_name` / `components` |
 | `sections/TiendaInteractivaUI.jsx` | 🟢 **Funcional (V14)**. Monta `TiendaConfigurator` (doble columna) cableado a `usePreComanda`. Sin animaciones infinitas |
 | `sections/DisplayTotemUI.jsx` | Placeholder "Próximamente" (Oleada 2) |
 | `sections/DisplayPreciosUI.jsx` | 🟢 **Funcional (V17)**. Doble landing: sin parámetro → panel de administración (`DisplayConfigPanel` + utilidades de caché); `?mode=output` → `DisplayPreciosOutput` (kiosco fullscreen). Se eliminó la animación `float` infinita del placeholder (Incident 16.1) |
@@ -504,6 +511,16 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 
 **Regla de Oro:** *Un dato crítico de enrutamiento (el canal) debe nacer en el MISMO `INSERT`, nunca en un segundo request no verificado.*
 
+### 🐛 BUG 3: `created_at` es **naive local**, no UTC (V15 Fase 15.1)
+
+**Síntoma:** Al calcular la urgencia del KDS con `Date.parse(order.created_at)`, los pedidos aparecían con **6 horas de antigüedad** (o negativos) apenas se creaban, marcando todo como CRÍTICO de inmediato.
+
+**Causa Raíz:** [`pos/models.py:34`](apps/api/modules/pos/models.py:34) define `created_at = Column(DateTime, default=datetime.now)` — **sin `timezone=True`** — por lo que el valor es **hora local naive**. [`heladeria/service.py:179`](apps/api/modules/heladeria/service.py:179) lo serializa con `.isoformat()` **sin sufijo `Z` ni offset**. `Date.parse()` de un string sin zona lo interpreta como **UTC**, introduciendo un desfase igual al offset local (CST México = 6 h). Además, `paid_at` es **siempre `None`** ([`service.py:180`](apps/api/modules/heladeria/service.py:180)), por lo que no sirve como referencia.
+
+**Solución:** `computeElapsedSec(createdAtNaiveIso, serverOffsetHours, nowMs)` en [`kdsUrgency.js`](apps/heladeria/utils/kdsUrgency.js:1) reconstruye el instante UTC real: `createdUtcMs = Date.parse(raw + 'Z') - offset * 3600000`, y luego `elapsedSec = max(0, floor((now - createdUtcMs) / 1000))`. El offset se lee de `heladeria_kds_urgency_config.tzOffsetHours` (fallback `0`). El `max(0, …)` blinda contra relojes desfasados.
+
+**Regla de Oro:** *Un `DateTime` sin `timezone=True` es hora local naive: NUNCA pasarlo a `Date.parse()` sin corregir el offset.*
+
 ### Estado actual: 🟢 Sin bugs abiertos
 
 El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme se presentan.
@@ -519,12 +536,12 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 | **Tienda Interactiva** | V14 (Fases 14.1–14.5) | 🟢 Funcional — configurador doble columna, switch Kiosco/Caja, pre-comanda con canal atómico + cola offline real |
 | **Display Precios** | V17 (Fases 17.0–17.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), config persistida en `system_settings`, offline-first con caché 24 h, `displayMappers.js` puro con 43 tests |
 | **Display Tótem** | V16 (Fases 16.0–16.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), manifiesto persistido en `system_settings` (`heladeria_totem_content`), subida/borrado de imágenes con validación de MIME + tamaño (8 MB), servido estático en `/media/totem/`, offline-first con caché en `localStorage`, `totemSequencer.js` puro con 36 tests. **Sin animaciones infinitas** (Incidente 16.1) |
+| **KDS Inteligente** | V15 (Fases 15.1–15.5) | 🟢 Funcional — urgencia visual por color (NORMAL/WARNING/CRITICAL) en ambos KDS, umbrales configurables en `system_settings` (`heladeria_kds_urgency_config`), `kdsUrgency.js` puro con 25 tests. **Solo color, sin animación** (Incidente 16.1). El asistente de lotes se eliminó (D1: no existen alérgenos en el sistema) |
 
 ### Oleada 2 (pendiente de revisión)
 
 | Feature | Prioridad | Dependencia |
 |---|---|---|
 | **Checkout integrado** | 🔴 Alta | Módulo de caja existente |
-| **KDS Inteligente** | 🟡 Media | Plan V15 (no revisado) |
 | **WebSocket KDS** | 🟢 Baja | Reemplazar polling 5s |
 | **Integración Almacenes** | 🟡 Media | Plan Almacenes V6 |
