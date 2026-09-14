@@ -723,7 +723,7 @@ export const GrandezaDriverUI = ({ onBack, userPermissions = {} }) => {
                             </div>
                         ) : (
                             <div className="flex gap-3">
-                                {client?.facade_photo_url && <img src={`http://${window.location.hostname}:5001${client.facade_photo_url}`} className="w-16 h-16 rounded-xl object-cover border border-white/10" />}
+                                {client?.facade_photo_url && <img src={`${CONFIG.API_BASE_URL.replace(/\/api\/v1\/?$/, '')}${client.facade_photo_url}`} className="w-16 h-16 rounded-xl object-cover border border-white/10" />}
                                 <div className="flex-1 min-w-0">
                                     <h3 className="font-black text-lg leading-tight truncate">{client?.name}</h3>
                                     <p className="text-xs text-amber-200/60 truncate">{client?.business_name}</p>

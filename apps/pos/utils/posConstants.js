@@ -1,3 +1,8 @@
+import { CONFIG } from '../../shared/config.js';
+
+// v19 (Fase 19.3): URL del API desde la fuente unica de verdad.
+const API_BASE = CONFIG.API_BASE_URL;
+
 export const INITIAL_CATEGORIES = [
     { name: "1.-EMPAQUE Y PAN BLANCO", icon: "🥖", visionEnabled: true },
     { name: "2.-A - B", icon: "🍪", visionEnabled: true },
@@ -57,8 +62,7 @@ export let terminals = [...DEFAULT_TERMINALS];
 // Función para cargar configuración desde BD
 export async function loadTerminalsConfig() {
     try {
-        const API = `http://${window.location.hostname}:5001/api/v1`;
-        const res = await fetch(`${API}/settings/pos_terminals_config`, { cache: 'no-store' });
+        const res = await fetch(`${API_BASE}/settings/pos_terminals_config`, { cache: 'no-store' });
         if (res.ok) {
             const data = await res.json();
             const parsed = JSON.parse(data.value);
@@ -76,8 +80,7 @@ export async function loadTerminalsConfig() {
 
 // Función para guardar configuración en BD
 export async function saveTerminalsConfig(newTerminals) {
-    const API = `http://${window.location.hostname}:5001/api/v1`;
-    const res = await fetch(`${API}/settings/pos_terminals_config`, {
+    const res = await fetch(`${API_BASE}/settings/pos_terminals_config`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: JSON.stringify(newTerminals) })
