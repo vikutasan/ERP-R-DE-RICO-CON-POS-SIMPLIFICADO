@@ -80,18 +80,21 @@ export const getTheme = (theme_id) => {
     };
 };
 
-const API_BASE = `http://${window.location.hostname}:5001/api/v1`;
+// v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
+const API_BASE = CONFIG.API_BASE_URL;
+// Origen del API (sin /api/v1) para reescribir URLs de imagenes.
+const API_ORIGIN = CONFIG.API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 console.log("R de Rico API Base detectada:", API_BASE);
 
 // Sistema inteligente de de-hardcoding de imágenes para red local
 const resolveImageUrl = (url) => {
     if (!url) return null;
     if (url.startsWith('http')) {
-        return url.replace(/localhost:\d+/g, `${window.location.hostname}:5001`)
-                  .replace(/127\.0\.0\.1:\d+/g, `${window.location.hostname}:5001`)
-                  .replace(/192\.168\.\d+\.\d+:\d+/g, `${window.location.hostname}:5001`);
+        return url.replace(/localhost:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''))
+                  .replace(/127\.0\.0\.1:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''))
+                  .replace(/192\.168\.\d+\.\d+:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''));
     }
-    return `http://${window.location.hostname}:5001${url.startsWith('/') ? '' : '/'}${url}`;
+    return `${API_ORIGIN}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 
 export const DoughManagerUI = ({ onBack }) => {

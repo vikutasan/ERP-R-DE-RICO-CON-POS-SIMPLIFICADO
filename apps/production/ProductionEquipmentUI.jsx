@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
+import {
     ArrowLeft, Plus, Search, Loader2, Settings2, Trash2, Save, X, Image as ImageIcon,
     Settings, Box, Key, Hash, FileText, Info, MapPin, Wrench, Sparkles, GripVertical, Activity
 } from 'lucide-react';
+import { CONFIG } from '../shared/config.js';
 
-const API_BASE = `http://${window.location.hostname}:5001/api/v1`;
+// v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
+const API_BASE = CONFIG.API_BASE_URL;
+// Origen del API (sin /api/v1) para reescribir URLs de imagenes.
+const API_ORIGIN = CONFIG.API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 
 const compressImage = (base64Str, maxWidth = 800, maxHeight = 800) => {
     return new Promise((resolve) => {
@@ -209,7 +213,7 @@ export const ProductionEquipmentUI = ({ onBack }) => {
                                     {/* Icon / Image */}
                                     <div className="w-12 h-12 rounded-xl bg-white/40 border border-black/5 flex items-center justify-center overflow-hidden shrink-0 shadow-sm">
                                         {equip.image_url ? (
-                                            <img src={equip.image_url.startsWith('http') || equip.image_url.startsWith('data:') ? equip.image_url : `http://${window.location.hostname}:5001${equip.image_url}`} alt={equip.name} className="w-full h-full object-cover" />
+                                            <img src={equip.image_url.startsWith('http') || equip.image_url.startsWith('data:') ? equip.image_url : `${API_ORIGIN}${equip.image_url}`} alt={equip.name} className="w-full h-full object-cover" />
                                         ) : (
                                             <ImageIcon size={20} style={{ color: theme.text }} className="opacity-50" />
                                         )}

@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-    ArrowLeft, Save, ChevronDown, ChevronRight, Plus, 
+import {
+    ArrowLeft, Save, ChevronDown, ChevronRight, Plus,
     Trash2, Copy, GripVertical, Settings, Mic, ListOrdered, Info, X, Download, Upload, Table, AlertTriangle, Loader2
 } from 'lucide-react';
+import { CONFIG } from '../shared/config.js';
 
-const API_BASE = `http://${window.location.hostname}:5001/api/v1`;
+// v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
+const API_BASE = CONFIG.API_BASE_URL;
 
 const FIELD_INFO_DATA = {
     'grupoMaquinaria': {

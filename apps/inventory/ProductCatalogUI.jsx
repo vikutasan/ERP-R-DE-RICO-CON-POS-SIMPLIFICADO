@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import ReactDOM from 'react-dom';
+import { CONFIG } from '../shared/config.js';
 
 /**
  * R DE RICO - PRODUCT MASTER & CATALOG MANAGER (API SYNC)
@@ -45,17 +46,20 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
     const [draggedCatIndex, setDraggedCatIndex] = useState(null);
     const [draggedProdIndex, setDraggedProdIndex] = useState(null);
 
-    const API_BASE = `http://${window.location.hostname}:5001/api/v1/catalog`;
+    // v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
+    const API_BASE = `${CONFIG.API_BASE_URL}/catalog`;
+    // Origen del API (sin /api/v1) para reescribir URLs de imagenes.
+    const API_ORIGIN = CONFIG.API_BASE_URL.replace(/\/api\/v1\/?$/, '');
 
     // Sistema inteligente de de-hardcoding de imágenes para red local
     const resolveImageUrl = (url) => {
         if (!url) return null;
         if (url.startsWith('http')) {
-            return url.replace(/localhost:\d+/g, `${window.location.hostname}:5001`)
-                      .replace(/127\.0\.0\.1:\d+/g, `${window.location.hostname}:5001`)
-                      .replace(/192\.168\.\d+\.\d+:\d+/g, `${window.location.hostname}:5001`);
+            return url.replace(/localhost:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''))
+                      .replace(/127\.0\.0\.1:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''))
+                      .replace(/192\.168\.\d+\.\d+:\d+/g, API_ORIGIN.replace(/^https?:\/\//, ''));
         }
-        return `http://${window.location.hostname}:5001${url.startsWith('/') ? '' : '/'}${url}`;
+        return `${API_ORIGIN}${url.startsWith('/') ? '' : '/'}${url}`;
     };
 
     // Carga inicial de datos desde la API
