@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ExperimentCenterUI } from './apps/ExperimentCenterUI';
 import { purgarServiceWorkerEnDev } from './apps/inventory/services/pwaRuntime';
+import { TimezoneProvider } from './apps/shared/TimezoneContext';
 import './index.css';
 
 // v19.3: Purga del Service Worker en desarrollo.
@@ -63,8 +64,10 @@ class ErrorBoundary extends React.Component {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
-        <div className="h-screen w-screen bg-black overflow-hidden">
-            <ExperimentCenterUI />
-        </div>
+        <TimezoneProvider>
+            <div className="h-screen w-screen bg-black overflow-hidden">
+                <ExperimentCenterUI />
+            </div>
+        </TimezoneProvider>
     </ErrorBoundary>
 );
