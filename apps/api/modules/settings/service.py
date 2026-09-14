@@ -109,6 +109,16 @@ async def seed_settings(db: AsyncSession):
             "description": "Configuración de presentación del Display de Precios de Heladería (V17).",
             "category": "heladeria",
             "input_type": "json"
+        },
+        # V16 (Fase 16.0): manifiesto de contenido del Display Tótem de Heladería.
+        # Entrada ADITIVA: el bucle de abajo solo inserta si la clave no existe, por
+        # lo que no altera ninguna clave que lea el POS de Panadería.
+        {
+            "key": "heladeria_totem_content",
+            "value": '{"macros":[],"heroes":[],"config":{"macroCount":3,"macroDurationSec":4,"heroDurationSec":6,"transition":"fade","transitionMs":800,"format":"vertical","accentColor":"#fbbf24"}}',
+            "description": "Manifiesto de contenido del Display Tótem de Heladería (V16).",
+            "category": "heladeria",
+            "input_type": "json"
         }
     ]
     
