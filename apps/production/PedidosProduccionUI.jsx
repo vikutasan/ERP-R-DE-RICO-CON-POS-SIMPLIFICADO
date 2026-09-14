@@ -19,6 +19,8 @@ import {
     Store
 } from 'lucide-react';
 import { CONFIG } from '../shared/config.js';
+import { useTimezone } from '../shared/TimezoneContext';
+import { formatLocalTime, formatLocal } from '../shared/timezone';
 
 // v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
 const API_BASE = CONFIG.API_BASE_URL;
@@ -86,6 +88,8 @@ const STATUS_LABELS = {
 
 
 export const PedidosProduccionUI = ({ onBack }) => {
+    // v20 (Fase 20.4): zona horaria del negocio para formatear timestamps UTC.
+    const { timezone } = useTimezone();
     const [orders, setOrders] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedOrder, setSelectedOrder] = useState(null);
@@ -323,7 +327,7 @@ const OrderRow = ({ order, color, onViewDetails, onUpdateStatus }) => {
                     </span>
                     <span className="flex items-center gap-1 text-orange-600">
                         <Clock size={10} />
-                        {order.committed_at ? new Date(order.committed_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '---'}
+                        {order.committed_at ? formatLocalTime(order.committed_at, timezone) : '---'}
                     </span>
                     {order.source === 'GRANDEZA' && order.payment_status && (
                         <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase not-italic ${
@@ -409,7 +413,7 @@ const OrderDetailsModal = ({ order, onClose }) => {
                     <div className="grid grid-cols-2 gap-8">
                         <DetailItem icon={<User size={16}/>} label="Cliente" value={order.customer_name} />
                         <DetailItem icon={<Phone size={16}/>} label="Teléfono" value={order.customer_phone} />
-                        <DetailItem icon={<Clock size={16}/>} label="Compromiso" value={new Date(order.committed_at).toLocaleString('es-MX', { weekday: 'long', hour: '2-digit', minute: '2-digit' })} highlight />
+                        <DetailItem icon={<Clock size={16}/>} label="Compromiso" value={order.committed_at ? formatLocal(order.committed_at, timezone, { weekday: 'long', hour: '2-digit', minute: '2-digit' }) : '---'} highlight />
                         <DetailItem 
                             icon={order.delivery_type === 'PICKUP' ? <Store size={16}/> : <Truck size={16}/>} 
                             label="Tipo de Entrega" 

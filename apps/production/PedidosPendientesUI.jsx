@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Package, Clock, User, Phone, MapPin, RefreshCw, CheckCircle, Loader2 } from 'lucide-react';
 import { CONFIG } from '../shared/config.js';
+import { useTimezone } from '../shared/TimezoneContext';
+import { formatLocal } from '../shared/timezone';
 
 // v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
 const API_BASE = CONFIG.API_BASE_URL;
@@ -20,6 +22,8 @@ const STATUS_CONFIG = {
  * los tenga visibles y listos para cuando se cree el generador de órdenes de producción.
  */
 export const PedidosPendientesUI = ({ onBack }) => {
+    // v20 (Fase 20.4): zona horaria del negocio para formatear timestamps UTC.
+    const { timezone } = useTimezone();
     const [orders, setOrders] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -87,7 +91,7 @@ export const PedidosPendientesUI = ({ onBack }) => {
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 max-w-7xl mx-auto">
                         {orders.map(order => (
-                            <OrderCard key={order.id} order={order} onStatusChange={updateStatus} />
+                            <OrderCard key={order.id} order={order} onStatusChange={updateStatus} timezone={timezone} />
                         ))}
                     </div>
                 )}
@@ -97,7 +101,7 @@ export const PedidosPendientesUI = ({ onBack }) => {
 };
 
 /** Tarjeta individual de pedido. SRP: solo renderiza y delega cambios de estado. */
-const OrderCard = ({ order, onStatusChange }) => {
+const OrderCard = ({ order, onStatusChange, timezone }) => {
     const cfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.TENTATIVO;
     const isPickup = order.delivery_type === 'PICKUP';
     const nextStatus = { PAGADO: 'EN_PRODUCCION', EN_PRODUCCION: 'LISTO' }[order.status];
@@ -116,7 +120,7 @@ const OrderCard = ({ order, onStatusChange }) => {
             <div className="space-y-2">
                 <Row icon={<User size={13}/>} value={order.customer_name || '---'} />
                 <Row icon={<Phone size={13}/>} value={order.customer_phone || '---'} />
-                <Row icon={<Clock size={13}/>} value={formatDT(order.committed_at)} highlight />
+                <Row icon={<Clock size={13}/>} value={formatDT(order.committed_at, timezone)} highlight />
                 {!isPickup && order.delivery_address && (
                     <Row icon={<MapPin size={13}/>} value={order.delivery_address} />
                 )}
@@ -155,7 +159,8 @@ const Row = ({ icon, value, highlight = false }) => (
     </div>
 );
 
-const formatDT = (dt) => {
+// v20 (Fase 20.4): formateo delegado a formatLocal (zona del negocio).
+const formatDT = (dt, tz) => {
     if (!dt) return '---';
-    return new Date(dt).toLocaleString('es-MX', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return formatLocal(dt, tz, { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 };

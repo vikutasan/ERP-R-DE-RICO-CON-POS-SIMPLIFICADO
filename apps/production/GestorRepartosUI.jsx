@@ -4,6 +4,8 @@ import {
     Clock, User, Phone, Package, CheckCircle2, Truck, MapPin, Navigation
 } from 'lucide-react';
 import { CONFIG } from '../shared/config.js';
+import { useTimezone } from '../shared/TimezoneContext';
+import { formatLocalTime, formatLocal } from '../shared/timezone';
 
 // v19 (Fase 19.2): URL del API desde la fuente unica de verdad.
 const API_BASE = CONFIG.API_BASE_URL;
@@ -46,6 +48,8 @@ const STATUS_LABELS = {
 };
 
 export const GestorRepartosUI = ({ onBack }) => {
+    // v20 (Fase 20.4): zona horaria del negocio para formatear timestamps UTC.
+    const { timezone } = useTimezone();
     const [orders, setOrders] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedOrder, setSelectedOrder] = useState(null);
@@ -144,12 +148,13 @@ export const GestorRepartosUI = ({ onBack }) => {
                                 </div>
                                 <div className="space-y-4">
                                     {sectionOrders.map(order => (
-                                        <RepartoRow 
-                                            key={order.id} 
-                                            order={order} 
+                                        <RepartoRow
+                                            key={order.id}
+                                            order={order}
                                             color={section.color}
                                             onViewDetails={() => setSelectedOrder(order)}
                                             onUpdateStatus={updateStatus}
+                                            timezone={timezone}
                                         />
                                     ))}
                                 </div>
@@ -159,12 +164,12 @@ export const GestorRepartosUI = ({ onBack }) => {
                 )}
             </div>
 
-            {selectedOrder && <RepartoDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />}
+            {selectedOrder && <RepartoDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} timezone={timezone} />}
         </div>
     );
 };
 
-const RepartoRow = ({ order, color, onViewDetails, onUpdateStatus }) => {
+const RepartoRow = ({ order, color, onViewDetails, onUpdateStatus, timezone }) => {
     const getAction = (current) => {
         if (current === 'EN_EMPAQUE_REPARTO') return { next: 'LISTO_REPARTO_EMPACADO', label: 'Avanzar' };
         if (current === 'LISTO_REPARTO_EMPACADO') return { next: 'EN_RUTA', label: 'Salió Repartidor' };
@@ -195,7 +200,7 @@ const RepartoRow = ({ order, color, onViewDetails, onUpdateStatus }) => {
                     </span>
                     <span className="flex items-center gap-1 text-orange-600">
                         <Clock size={10} />
-                        {order.committed_at ? new Date(order.committed_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '---'}
+                        {order.committed_at ? formatLocalTime(order.committed_at, timezone) : '---'}
                     </span>
                 </div>
             </div>
@@ -241,7 +246,7 @@ const RepartoRow = ({ order, color, onViewDetails, onUpdateStatus }) => {
     );
 };
 
-const RepartoDetailsModal = ({ order, onClose }) => (
+const RepartoDetailsModal = ({ order, onClose, timezone }) => (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-8 bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
         <div className="w-full max-w-2xl bg-[#e5e5e5] border border-black/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="p-8 border-b border-black/5 bg-white/60 flex items-center justify-between">
@@ -260,7 +265,7 @@ const RepartoDetailsModal = ({ order, onClose }) => (
                 <div className="grid grid-cols-2 gap-8">
                     <DetailItem icon={<User size={16}/>} label="Cliente" value={order.customer_name} />
                     <DetailItem icon={<Phone size={16}/>} label="Teléfono" value={order.customer_phone} />
-                    <DetailItem icon={<Clock size={16}/>} label="Hora Compromiso" value={order.committed_at ? new Date(order.committed_at).toLocaleString('es-MX', { weekday: 'long', hour: '2-digit', minute: '2-digit' }) : '---'} highlight />
+                    <DetailItem icon={<Clock size={16}/>} label="Hora Compromiso" value={order.committed_at ? formatLocal(order.committed_at, timezone, { weekday: 'long', hour: '2-digit', minute: '2-digit' }) : '---'} highlight />
                     <DetailItem icon={<Package size={16}/>} label="Empaque" value={order.packaging_type === 'PROPIO' ? '🛍️ Propio' : '📦 Vendido'} />
                 </div>
 
