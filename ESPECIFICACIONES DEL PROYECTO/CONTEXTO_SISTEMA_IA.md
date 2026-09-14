@@ -1080,6 +1080,47 @@ La duplicaciÃ³n de `_utcnow` en los mÃ³dulos `warehouse` y `security` es **i
 - **PROHIBIDO** "aprovechar que estamos ahÃ­" para refactorizar el POS IA durante un smoke. El POS IA es un consumidor intocable (RestricciÃ³n A).
 - **OBLIGATORIO** que todo smoke de un cambio de borde incluya la verificaciÃ³n de que el archivo restringido NO aparece en el diff (`git diff --name-only`).
 
+### 16.10 GroupingError en Analytics: la Zona Horaria debe ser LITERAL SQL, no Bind Param (V20 Fase 20.2.b) (14/Septiembre/2026)
+
+**Commit:** `64ad5b9` (`apps/api/modules/analytics/service.py`).
+
+**Contexto del Problema:**
+Tras la migraciÃ³n V20 (SecciÃ³n 16.9), los endpoints `/analytics/rankings` y `/analytics/product-daily-sales` devolvÃ­an **500** con:
+`asyncpg.exceptions.GroupingError: column "tickets.created_at" must appear in the GROUP BY clause or be used in an aggregate function`.
+El SQL era **textualmente idÃ©ntico** en el `SELECT` y en el `GROUP BY`, por lo que el error resultaba desconcertante.
+
+**Causa RaÃ­z (la trampa):**
+La expresiÃ³n de conversiÃ³n a hora local se construÃ­a con `func.timezone(tz_name, Ticket.created_at)`, pasando `tz_name` como **bind parameter**. SQLAlchemy genera un **placeholder distinto por cada ocurrencia** de la expresiÃ³n (`$1`, `$10`, `$12`...). Como `$1 â‰  $10`, PostgreSQL **no puede probar** que la expresiÃ³n del `SELECT` es la misma que la del `GROUP BY` â†’ `GroupingError`. El SQL impreso por `echo` mostraba `$1`/`$2` en el `SELECT` y `$10`/`$11` en el `GROUP BY`.
+
+**CorrecciÃ³n (patrÃ³n `_local_ts`):**
+Helper en `modules/analytics/service.py` que incrusta la zona como **LITERAL SQL** (no bind param), de modo que todas las ocurrencias renderizan idÃ©nticas y el `GROUP BY` coincide:
+
+```python
+def _sql_str(value: str) -> str:
+    """Escapa un string para incrustarlo como literal SQL seguro (comillas simples)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+def _local_ts(tz_name: str, col):
+    # Doble timezone(): la interna declara UTC (promueve a timestamptz),
+    # la externa aplica la zona del negocio. La zona va como LITERAL SQL.
+    tz_lit = literal_column(_sql_str(tz_name))
+    return func.timezone(tz_lit, func.timezone(literal_column("'UTC'"), col))
+```
+
+Se reemplazaron las **16 ocurrencias** de `func.timezone(tz_name, ...)` por `_local_ts(tz_name, ...)` en `get_time_series_metrics`, `execute_custom_query` y `get_product_daily_sales`. `tz_name` proviene de `str(ZoneInfo)` (valor controlado), por lo que el literal es seguro.
+
+**Bug Secundario Descubierto (enmascarado por el anterior):**
+`execute_custom_query` acumulaba `item.subtotal` (`Numeric` â†’ `Decimal`) en un acumulador `float`, causando `TypeError: unsupported operand type(s) for +=: 'float' and 'decimal.Decimal'`. Se corrigiÃ³ acumulando en `Decimal("0")` y convirtiendo a `float` **solo al serializar** la respuesta.
+
+**Evidencia de AceptaciÃ³n:**
+- **Smoke (HTTP real):** 3/3 endpoints **200** con datos â€” `rankings` (`by_date=31 by_hour=17`), `product-daily-sales` (`dates=31 products=245`), `POST /query` (`products=245`).
+- **pytest:** `82 passed / 2 failed`. Los 2 fallos (`test_bloque9d_3bugs.py`, mÃ³dulo POS) son **PRE-EXISTENTES** y sin relaciÃ³n: se confirmÃ³ con `git stash` que fallan idÃ©nticamente **sin** el cambio. Causa: `get_tickets` usa `limit=100` + `created_at DESC`, y con >100 tickets reales del dÃ­a el ticket de prueba (06:00 UTC, el mÃ¡s antiguo) queda fuera de la ventana. Es un problema de aislamiento de test, no de producciÃ³n.
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que cualquier expresiÃ³n SQL que deba aparecer **idÃ©ntica** en `SELECT` y `GROUP BY` (conversiones de zona horaria, `date_trunc`, etc.) use **literales SQL** (`literal_column`), **NUNCA** bind params. Un bind param genera un placeholder distinto por ocurrencia y PostgreSQL no puede probar la equivalencia â†’ `GroupingError`.
+- **OBLIGATORIO** que los acumuladores de columnas `Numeric`/`Decimal` se inicialicen en `Decimal("0")`, no en `0`/`0.0`. Convertir a `float` solo al serializar la respuesta JSON.
+- **OBLIGATORIO** que al diagnosticar un `GroupingError` con SQL "idÃ©ntico" se inspeccionen los **placeholders** (`$1` vs `$10`), no solo el texto de la expresiÃ³n.
+
 ---
 
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
