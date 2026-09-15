@@ -1115,11 +1115,44 @@ Se reemplazaron las **16 ocurrencias** de `func.timezone(tz_name, ...)` por `_lo
 **Evidencia de AceptaciÃ³n:**
 - **Smoke (HTTP real):** 3/3 endpoints **200** con datos â€” `rankings` (`by_date=31 by_hour=17`), `product-daily-sales` (`dates=31 products=245`), `POST /query` (`products=245`).
 - **pytest:** `82 passed / 2 failed`. Los 2 fallos (`test_bloque9d_3bugs.py`, mÃ³dulo POS) son **PRE-EXISTENTES** y sin relaciÃ³n: se confirmÃ³ con `git stash` que fallan idÃ©nticamente **sin** el cambio. Causa: `get_tickets` usa `limit=100` + `created_at DESC`, y con >100 tickets reales del dÃ­a el ticket de prueba (06:00 UTC, el mÃ¡s antiguo) queda fuera de la ventana. Es un problema de aislamiento de test, no de producciÃ³n.
+- **ResoluciÃ³n posterior (commit `133233b`):** los 2 fallos fueron **RESUELTOS** en una tarea separada mediante aislamiento de test: se aÃ±adiÃ³ `search=ACC_PREFIX` (`"TEST_B9D_"`) a las 3 llamadas de `get_tickets()` en los 2 tests afectados, de modo que el resultado no depende del volumen de tickets reales del dÃ­a. Verificado: `10 passed` (archivo aislado) y `84 passed` (suite completa). Ver SecciÃ³n 16.11.
 
 **Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
 - **OBLIGATORIO** que cualquier expresiÃ³n SQL que deba aparecer **idÃ©ntica** en `SELECT` y `GROUP BY` (conversiones de zona horaria, `date_trunc`, etc.) use **literales SQL** (`literal_column`), **NUNCA** bind params. Un bind param genera un placeholder distinto por ocurrencia y PostgreSQL no puede probar la equivalencia â†’ `GroupingError`.
 - **OBLIGATORIO** que los acumuladores de columnas `Numeric`/`Decimal` se inicialicen en `Decimal("0")`, no en `0`/`0.0`. Convertir a `float` solo al serializar la respuesta JSON.
 - **OBLIGATORIO** que al diagnosticar un `GroupingError` con SQL "idÃ©ntico" se inspeccionen los **placeholders** (`$1` vs `$10`), no solo el texto de la expresiÃ³n.
+
+---
+
+### 16.11 Aislamiento de Tests contra Datos Reales: `get_tickets` y el `limit=100` (14/Septiembre/2026)
+
+**Commit:** `133233b` (`apps/api/tests/test_bloque9d_3bugs.py`).
+
+**Contexto del Problema:**
+Los 2 tests de `test_bloque9d_3bugs.py` que validan los lÃ­mites del dÃ­a local (`test_bug1_ticket_0030_local_aparece_en_dia_local_correcto` y `test_bug1_limites_del_dia_local_son_0600_utc`) fallaban de forma intermitente. El fallo NO era un bug de producciÃ³n ni de zona horaria: era un **problema de aislamiento de test**.
+
+**Causa RaÃ­z:**
+`POSService.get_tickets()` termina con `order_by(Ticket.created_at.desc()).limit(100)`. El test crea un ticket de prueba a las **06:00 UTC** (00:00 hora local), que es el **mÃ¡s antiguo** del dÃ­a local. Cuando la base de datos acumula **>100 tickets reales** con fecha 2026-09-14, el ticket de prueba queda **fuera de la ventana top-100** y el test no lo encuentra â†’ fallo. El test dependÃ­a del volumen de datos reales de la base de datos de desarrollo.
+
+**CorrecciÃ³n (aislamiento por prefijo):**
+Se aÃ±adiÃ³ `search=ACC_PREFIX` (`"TEST_B9D_"`) a las 3 llamadas de `get_tickets()` en los 2 tests afectados. Como `search` filtra por `account_num ILIKE '%TEST_B9D_%'`, el resultado contiene **Ãºnicamente** los tickets de prueba, independientemente del volumen de tickets reales:
+
+```python
+# Antes (frÃ¡gil: dependÃ­a del volumen de datos reales)
+tickets = await svc.get_tickets(db, search_date="2026-09-14")
+
+# DespuÃ©s (aislado: solo tickets de prueba)
+tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
+```
+
+**Evidencia de AceptaciÃ³n:**
+- **pytest (archivo aislado):** `10 passed` (antes: 8 passed / 2 failed).
+- **pytest (suite completa):** `84 passed` (antes: 82 passed / 2 failed).
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo test que consulte una funciÃ³n de listado con `limit` (paginaciÃ³n implÃ­cita) **filtre por un prefijo Ãºnico de prueba** (`search=ACC_PREFIX`), para que el resultado no dependa del volumen de datos reales de la base de datos.
+- **OBLIGATORIO** que los datos de prueba usen un prefijo identificable (`TEST_B9D_`) y que la limpieza (`_limpiar`) borre **solo** ese prefijo, nunca datos reales.
+- **PROHIBIDO** asumir que un test que pasa en una base de datos vacÃ­a pasarÃ¡ en una base de datos con datos reales. Todo test que dependa de un `limit` debe aislarse explÃ­citamente.
 
 ---
 

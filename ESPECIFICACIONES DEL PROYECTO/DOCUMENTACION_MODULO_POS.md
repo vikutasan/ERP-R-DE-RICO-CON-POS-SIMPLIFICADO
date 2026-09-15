@@ -268,6 +268,35 @@ El componente padre ExperimentCenterUI.jsx estaba enviando currentUser como un o
 
 **Archivos involucrados:** `apps/pos/utils/terminalCardState.js` (nuevo), `apps/pos/utils/terminalCardState.test.js` (nuevo), `apps/pos/components/TerminalSelector.jsx`, `apps/pos/hooks/useBeforeUnload.js`, `apps/pos/RetailVisionPOS.jsx`, `apps/api/modules/pos/router.py`, `apps/network/NetworkMonitorUI.jsx`.
 
+### Incidente: Tests de `test_bloque9d_3bugs.py` frgiles por el `limit=100` de `get_tickets` (14/Septiembre/2026)
+
+**Commit:** `133233b` (`apps/api/tests/test_bloque9d_3bugs.py`).
+
+**Sntoma:** 2 tests del bloque 9d (`test_bug1_ticket_0030_local_aparece_en_dia_local_correcto` y `test_bug1_limites_del_dia_local_son_0600_utc`) fallaban de forma intermitente. **No** era un bug de produccin ni de zona horaria.
+
+**Causa raíz (trampa de paginacin implcita):**
+[`POSService.get_tickets()`](apps/api/modules/pos/service.py:555) termina con `order_by(Ticket.created_at.desc()).limit(100)`. El test crea un ticket de prueba a las **06:00 UTC** (00:00 hora local), que es el **ms antiguo** del da local. Cuando la base de datos acumula **>100 tickets reales** con esa fecha, el ticket de prueba queda **fuera de la ventana top-100** y el test no lo encuentra  fallo. El test dependa del volumen de datos reales de la base de datos de desarrollo.
+
+**Resolucin (aislamiento por prefijo):**
+Se aadi `search=ACC_PREFIX` (`"TEST_B9D_"`) a las 3 llamadas de `get_tickets()` en los 2 tests afectados. Como `search` filtra por `account_num ILIKE '%TEST_B9D_%'`, el resultado contiene **nicamente** los tickets de prueba:
+
+```python
+# Antes (frgil: dependa del volumen de datos reales)
+tickets = await svc.get_tickets(db, search_date="2026-09-14")
+
+# Despus (aislado: solo tickets de prueba)
+tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
+```
+
+**Evidencia de aceptacin:** `10 passed` (archivo aislado) y `84 passed` (suite completa), antes 8/2 y 82/2.
+
+**Leccin (Nueva Regla de Aislamiento de Tests):**
+- **OBLIGATORIO** que todo test que consulte una funcin de listado con `limit` (paginacin implcita) **filtre por un prefijo nico de prueba** (`search=ACC_PREFIX`), para no depender del volumen de datos reales.
+- **OBLIGATORIO** que los datos de prueba usen un prefijo identificable (`TEST_B9D_`) y que la limpieza borre **solo** ese prefijo, nunca datos reales.
+- **PROHIBIDO** asumir que un test que pasa en una base de datos vaca pasar en una base de datos con datos reales.
+
+**Archivos involucrados:** `apps/api/tests/test_bloque9d_3bugs.py`.
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:

@@ -1,9 +1,9 @@
 # 📊 DOCUMENTACIÓN — MÓDULO DE ESTADÍSTICAS DE VENTAS
 
-> **Versión:** 2.2.0  
-> **Última actualización:** 19 de agosto de 2026  
-> **Autor:** Sistema de IA / Arquitectura R de Rico  
-> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 22 mejoras implementadas (v2.1 + v2.2)
+> **Versión:** 2.3.0
+> **Última actualización:** 14 de septiembre de 2026
+> **Autor:** Sistema de IA / Arquitectura R de Rico
+> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 22 mejoras (v2.1 + v2.2) + Alineación V20 (v2.3)
 
 ---
 
@@ -43,7 +43,7 @@ El módulo de Estadísticas de Ventas es el **centro de inteligencia comercial**
 | **Zero dependencies** | Gráficos dibujados en SVG/CSS puro — sin Chart.js, Recharts ni librerías externas |
 | **Persistencia local** | La configuración del dashboard se guarda en `localStorage` del navegador |
 | **Privacidad financiera** | Toggle "Cifras Visibles/Ocultas" controlado por permisos granulares |
-| **Zona horaria correcta** | Backend usa `datetime.now(MEXICO_TZ)`, Frontend usa `Intl.DateTimeFormat` con `America/Mexico_City` |
+| **Zona horaria correcta** | Backend usa `core/timezone.py` (`get_business_tz`, `local_day_bounds_utc`, `to_local_date_str`) — V20. Frontend usa `Intl.DateTimeFormat` con la zona del negocio |
 
 ---
 
@@ -373,9 +373,9 @@ date.today() en Python (Docker):  2026-08-19 ← ¡DÍA INCORRECTO!
 new Date().toISOString() en JS:   2026-08-19T04:49:00.000Z ← ¡DÍA INCORRECTO!
 ```
 
-**Solución implementada (vigente hoy):**
+**Solución implementada (histórica — SUPERADA por la V20, ver Incidente siguiente):**
 
-| Capa | Antes (bug) | Después (fix) |
+| Capa | Antes (bug) | Después (fix de agosto 2026) |
 |---|---|---|
 | Backend `router.py` | `date.today()` | `datetime.now(MEXICO_TZ).date()` donde `MEXICO_TZ = timezone(timedelta(hours=-6))` |
 | Frontend `ProductStatsView.jsx` | `new Date().toISOString().split('T')[0]` | `Intl.DateTimeFormat('en-CA', {timeZone: 'America/Mexico_City'}).format(new Date())` |
@@ -384,9 +384,46 @@ new Date().toISOString() en JS:   2026-08-19T04:49:00.000Z ← ¡DÍA INCORRECTO
 > **Backend:** Está estrictamente prohibido el uso de `datetime.utcnow()`. Utiliza exclusivamente `datetime.now()`.
 > **Frontend:** Siempre que el dispositivo deba calcular "Hoy", se debe forzar explícitamente la zona horaria `America/Mexico_City`.
 
-**Nota sobre DST:** México eliminó el horario de verano en 2022 para la mayor parte del territorio (incluida Toluca). La constante `UTC-6` es correcta y estable para la operación actual. Si en el futuro se legislara un cambio, se deberá actualizar la constante `MEXICO_TZ` en el router.
+> ⚠️ **NOTA HISTÓRICA (actualizada 14/Sept/2026):** La constante `MEXICO_TZ = timezone(timedelta(hours=-6))` fue **ELIMINADA** por la migración V20 (Zona Horaria Global). Hoy la zona del negocio se lee de `system_settings.business_timezone` vía `core/timezone.py`. Ver Sección 9.3.
 
-> ⚠️ **REGLA DERIVADA:** Todo nuevo módulo o endpoint que necesite calcular "la fecha de hoy" en el backend **DEBE** usar `datetime.now(MEXICO_TZ).date()`, NUNCA `date.today()` ni `datetime.utcnow()`. En el frontend, siempre usar `Intl.DateTimeFormat` con `timeZone: 'America/Mexico_City'`.
+---
+
+### Incidente: `GroupingError` en Analytics — la Zona Horaria debe ser LITERAL SQL, no Bind Param (14/Septiembre/2026)
+
+**Commit:** `64ad5b9` (`apps/api/modules/analytics/service.py`).
+
+**Síntoma:** Tras la migración V20, los endpoints `/analytics/rankings` y `/analytics/product-daily-sales` devolvían **HTTP 500** con:
+`asyncpg.exceptions.GroupingError: column "tickets.created_at" must appear in the GROUP BY clause or be used in an aggregate function`.
+El SQL era **textualmente idéntico** en el `SELECT` y en el `GROUP BY`, por lo que el error resultaba desconcertante.
+
+**Causa raíz (la trampa):**
+La expresión de conversión a hora local se construía con `func.timezone(tz_name, Ticket.created_at)`, pasando `tz_name` como **bind parameter**. SQLAlchemy genera un **placeholder distinto por cada ocurrencia** de la expresión (`$1`, `$10`, `$12`...). Como `$1 ≠ $10`, PostgreSQL **no puede probar** que la expresión del `SELECT` es la misma que la del `GROUP BY` → `GroupingError`.
+
+**Solución implementada (patrón `_local_ts`):**
+Helper que incrusta la zona como **LITERAL SQL** (no bind param), de modo que todas las ocurrencias renderizan idénticas y el `GROUP BY` coincide:
+
+```python
+def _sql_str(value: str) -> str:
+    """Escapa un string para incrustarlo como literal SQL seguro (comillas simples)."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+def _local_ts(tz_name: str, col):
+    # Doble timezone(): la interna declara UTC (promueve a timestamptz),
+    # la externa aplica la zona del negocio. La zona va como LITERAL SQL.
+    tz_lit = literal_column(_sql_str(tz_name))
+    return func.timezone(tz_lit, func.timezone(literal_column("'UTC'"), col))
+```
+
+Se reemplazaron las **16 ocurrencias** de `func.timezone(tz_name, ...)` por `_local_ts(tz_name, ...)` en `get_time_series_metrics`, `execute_custom_query` y `get_product_daily_sales`.
+
+**Bug secundario descubierto (enmascarado por el anterior):**
+`execute_custom_query` acumulaba `item.subtotal` (`Numeric` → `Decimal`) en un acumulador `float`, causando `TypeError: unsupported operand type(s) for +=: 'float' and 'decimal.Decimal'`. Se corrigió acumulando en `Decimal("0")` y convirtiendo a `float` **solo al serializar** la respuesta.
+
+**Evidencia de aceptación:**
+- **Smoke (HTTP real):** 3/3 endpoints **200** con datos — `rankings` (`by_date=31 by_hour=17`), `product-daily-sales` (`dates=31 products=245`), `POST /query` (`products=245`).
+- **pytest:** `84 passed` (suite completa, tras resolver también los 2 fallos de aislamiento de `test_bloque9d_3bugs.py`).
+
+> ⚠️ **REGLA DERIVADA:** Toda expresión SQL que deba aparecer **idéntica** en `SELECT` y `GROUP BY` (conversiones de zona horaria, `date_trunc`, etc.) **DEBE** usar **literales SQL** (`literal_column`), **NUNCA** bind params. Un bind param genera un placeholder distinto por ocurrencia y PostgreSQL no puede probar la equivalencia → `GroupingError`. Al diagnosticar un `GroupingError` con SQL "idéntico", inspeccionar los **placeholders** (`$1` vs `$10`), no solo el texto.
 
 ---
 
@@ -400,10 +437,18 @@ Este módulo **JAMÁS** debe ejecutar `INSERT`, `UPDATE` ni `DELETE` sobre las t
 
 Todos los gráficos (barras, donut, pie, área bursátil) están dibujados en **SVG puro y CSS**. Esto mantiene el bundle ligero, evita conflictos de dependencias, y garantiza que los monitores táctiles de las terminales no carguen librerías pesadas innecesariamente.
 
-### 9.3 Zona Horaria México (Regla 4.6)
+### 9.3 Zona Horaria (Regla 4.6 + V20 — ACTUALIZADO 14/Sept/2026)
 
-- **Backend:** `datetime.now(MEXICO_TZ).date()` — NUNCA `date.today()` ni `datetime.utcnow()`
-- **Frontend:** `Intl.DateTimeFormat('en-CA', {timeZone: 'America/Mexico_City'})` — NUNCA `toISOString()`
+> **La V20 (Zona Horaria Global) reemplazó la constante hardcodeada `MEXICO_TZ`.** La zona del negocio es configurable por instancia en `system_settings.business_timezone` y se lee vía `core/timezone.py`.
+
+- **Backend (V20):** usar los helpers de [`core/timezone.py`](apps/api/core/timezone.py:1):
+  - `get_business_tz(db)` — lee `business_timezone` (cache 5 min)
+  - `local_day_bounds_utc(tz, target_date)` — devuelve `(start_utc, end_utc)` naive UTC (end exclusivo)
+  - `to_local_date_str(dt, tz)` — fecha local como string
+  - `utc_to_local(dt, tz)` / `tz_offset_hours(tz, at=None)`
+  - **PROHIBIDO** `date.today()`, `datetime.utcnow()` y la constante `MEXICO_TZ` (eliminada).
+- **SQL:** toda conversión de zona que deba aparecer idéntica en `SELECT` y `GROUP BY` usa el patrón `_local_ts` (literal SQL). Ver Sección 8.
+- **Frontend:** `Intl.DateTimeFormat` con la zona del negocio (vía `TimezoneContext` / `apps/shared/timezone.js`) — NUNCA `toISOString()`.
 
 ### 9.4 Privacidad Financiera
 
@@ -537,7 +582,7 @@ Segunda ronda de mejoras después de re-análisis crítico post-v2.1.
 |---|---|---|---|
 | **A1** | Import `Decimal` en loop → top | 🔴 Bug | `from decimal import Decimal` se ejecutaba N veces dentro de `for row in rows`. Movido al top de `service.py` |
 | **A2** | Validación rango de fechas | 🔴 Seguridad | Máximo 180 días. HTTP 400 si `end < start` o rango excede 180 |
-| **A3** | Error visible al usuario | 🔴 UX | Si el API falla, muestra ícono rojo + mensaje + botón "Reintentar" (antes: spinner infinito) |
+| **A3** | Error visible al usuario | 🔴 UX | Si el API falla, muestra ícono rojo + mensaje + botón "Reintentar" (antes: spinner infinito). **Reforzado (commit `ee2b4f4`, 14/Sept/2026):** estado de error explícito en [`EstadisticasVentasUI.jsx`](apps/analytics/EstadisticasVentasUI.jsx:752) con `setFetchError({...})` — el usuario ve la causa real (p. ej. el `GroupingError` 500) en vez de un spinner infinito |
 | **B5** | `func.date()` → range comparison | 🟡 Rendimiento | `Ticket.created_at >= datetime.combine(start, min_time)` permite uso de índice B-tree en PostgreSQL |
 | **B4** | `SalesKPIsView` con `useMemo` | 🟡 Rendimiento | 3 bloques memoizados: métricas principales, time series, rankings+categorías |
 | **B2** | CSV con días atípicos | 🟡 Completitud | Valores en fechas atípicas marcados como `X*` + nota al pie explicativa |
