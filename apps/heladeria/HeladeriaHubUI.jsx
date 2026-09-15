@@ -75,7 +75,7 @@ const GESTORES = [
         nombre: 'Gestor de Puntos de Venta de Heladería',
         nombreCorto: 'Puntos de Venta',
         descripcion: 'Administra los puntos de venta y la tienda interactiva',
-        icono: '⚡',
+        icono: '🍦',
         imagen: '/assets/heladeria/pos_card.jpg',
         num: '01',
         herramientas: [
@@ -83,7 +83,7 @@ const GESTORES = [
                 id: 'pos_heladeria',
                 nombre: 'POS Heladería',
                 descripcion: 'Punto de venta rápido para el personal de mostrador',
-                icono: '⚡',
+                icono: '🍦',
             },
             {
                 id: 'tienda',
@@ -98,7 +98,7 @@ const GESTORES = [
         nombre: 'Gestor de KDS de Heladería',
         nombreCorto: 'KDS',
         descripcion: 'Pantallas de preparación para estaciones de producción',
-        icono: '📋',
+        icono: '🥤',
         imagen: '/assets/heladeria/kds_card.jpg',
         num: '02',
         herramientas: [
@@ -106,7 +106,7 @@ const GESTORES = [
                 id: 'kds_helados',
                 nombre: 'KDS Estación Helados',
                 descripcion: 'Pantalla de preparación para helados artesanales',
-                icono: '📋',
+                icono: '🥤',
             },
             {
                 id: 'kds_malteadas',
@@ -121,7 +121,7 @@ const GESTORES = [
         nombre: 'Gestor de Displays de Heladería',
         nombreCorto: 'Displays',
         descripcion: 'Pantallas de contenido visual y precios para clientes',
-        icono: '📺',
+        icono: '🖥️',
         imagen: '/assets/heladeria/displays_card.jpg',
         num: '03',
         herramientas: [
@@ -129,7 +129,7 @@ const GESTORES = [
                 id: 'totem',
                 nombre: 'Display Tótem',
                 descripcion: 'Contenido visual sugestivo para atraer clientes',
-                icono: '📺',
+                icono: '🖥️',
             },
             {
                 id: 'precios',
