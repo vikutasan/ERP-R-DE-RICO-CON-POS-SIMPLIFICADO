@@ -356,7 +356,7 @@ const GestorSuiteUI = ({ gestor, onBack, onSelectTool }) => {
                     textTransform: 'uppercase', letterSpacing: '3px',
                     textDecoration: 'underline', textUnderlineOffset: '4px',
                 }}>
-                    Heladería R de Rico
+                    Hub de Heladería
                 </span>
             </div>
 
@@ -572,7 +572,7 @@ export const HeladeriaHubUI = ({ onBack, userPermissions }) => {
                     textTransform: 'uppercase', letterSpacing: '3px',
                     textDecoration: 'underline', textUnderlineOffset: '4px',
                 }}>
-                    Heladería R de Rico
+                    Hub de Heladería
                 </span>
             </div>
 
