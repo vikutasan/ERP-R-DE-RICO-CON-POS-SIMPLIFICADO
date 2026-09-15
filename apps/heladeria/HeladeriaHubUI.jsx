@@ -76,6 +76,7 @@ const GESTORES = [
         nombreCorto: 'Puntos de Venta',
         descripcion: 'Administra los puntos de venta y la tienda interactiva',
         icono: '⚡',
+        imagen: '/assets/heladeria/pos_card.png',
         num: '01',
         herramientas: [
             {
@@ -98,6 +99,7 @@ const GESTORES = [
         nombreCorto: 'KDS',
         descripcion: 'Pantallas de preparación para estaciones de producción',
         icono: '📋',
+        imagen: '/assets/heladeria/kds_card.png',
         num: '02',
         herramientas: [
             {
@@ -120,6 +122,7 @@ const GESTORES = [
         nombreCorto: 'Displays',
         descripcion: 'Pantallas de contenido visual y precios para clientes',
         icono: '📺',
+        imagen: '/assets/heladeria/displays_card.png',
         num: '03',
         herramientas: [
             {
@@ -662,79 +665,122 @@ const GestorCard = ({ gestor, idx, total, onClick }) => {
                 border: 'none',
                 borderRight: idx < total - 1 ? '1px solid #e5e7eb' : 'none',
                 borderBottom: '1px solid #e5e7eb',
-                padding: '40px 32px',
                 cursor: 'pointer',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'flex-start',
-                gap: '14px',
                 transition: 'background 0.15s ease',
                 textAlign: 'left',
                 outline: 'none',
+                position: 'relative',
+                overflow: 'hidden',
+                padding: 0, // Padding goes to inner container
             }}
         >
-            {/* Number + icon row */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'flex-start' }}>
-                <span style={{
-                    fontSize: '11px', fontWeight: '800', color: isHovered ? '#6b7280' : '#d1d5db',
-                    letterSpacing: '1px', transition: 'color 0.15s',
+            {/* Contenido Superior (Textos) */}
+            <div style={{
+                padding: '40px 32px 0px',
+                width: '100%',
+                boxSizing: 'border-box',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '14px',
+                position: 'relative',
+                zIndex: 2,
+            }}>
+                {/* Number + icon row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'flex-start' }}>
+                    <span style={{
+                        fontSize: '11px', fontWeight: '800', color: isHovered ? '#6b7280' : '#d1d5db',
+                        letterSpacing: '1px', transition: 'color 0.15s',
+                    }}>
+                        {gestor.num}
+                    </span>
+                    <span style={{ fontSize: '28px', lineHeight: 1 }}>{gestor.icono}</span>
+                </div>
+
+                {/* Name */}
+                <h3 style={{
+                    margin: 0,
+                    fontSize: '1.15rem',
+                    fontWeight: '900',
+                    color: isHovered ? '#ffffff' : '#0f0f0f',
+                    lineHeight: '1.2',
+                    letterSpacing: '-0.3px',
+                    transition: 'color 0.15s',
                 }}>
-                    {gestor.num}
+                    {gestor.nombre}
+                </h3>
+
+                {/* Description */}
+                <p style={{
+                    margin: 0,
+                    color: isHovered ? '#9ca3af' : '#6b7280',
+                    fontSize: '12px',
+                    lineHeight: '1.5',
+                    fontWeight: '400',
+                    transition: 'color 0.15s',
+                }}>
+                    {gestor.descripcion}
+                </p>
+
+                {/* Chip with tool count */}
+                <span style={{
+                    fontSize: '10px',
+                    fontWeight: '800',
+                    color: isHovered ? '#9ca3af' : '#6b7280',
+                    background: isHovered ? '#1a1a1a' : '#f3f4f6',
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    letterSpacing: '0.5px',
+                    textTransform: 'uppercase',
+                    transition: 'all 0.15s',
+                }}>
+                    {gestor.herramientas.length} herramientas
                 </span>
-                <span style={{ fontSize: '28px', lineHeight: 1 }}>{gestor.icono}</span>
+
+                {/* Arrow */}
+                <span style={{
+                    fontSize: '18px',
+                    color: isHovered ? '#ffffff' : '#d1d5db',
+                    transition: 'color 0.15s, transform 0.15s',
+                    transform: isHovered ? 'translateX(4px)' : 'translateX(0)',
+                    display: 'inline-block',
+                    marginTop: '20px',
+                }}>
+                    →
+                </span>
             </div>
 
-            {/* Name */}
-            <h3 style={{
-                margin: 0,
-                fontSize: '1.15rem',
-                fontWeight: '900',
-                color: isHovered ? '#ffffff' : '#0f0f0f',
-                lineHeight: '1.2',
-                letterSpacing: '-0.3px',
-                transition: 'color 0.15s',
-            }}>
-                {gestor.nombre}
-            </h3>
-
-            {/* Description */}
-            <p style={{
-                margin: 0,
-                color: isHovered ? '#9ca3af' : '#6b7280',
-                fontSize: '12px',
-                lineHeight: '1.5',
-                fontWeight: '400',
-                transition: 'color 0.15s',
-            }}>
-                {gestor.descripcion}
-            </p>
-
-            {/* Chip with tool count */}
-            <span style={{
-                fontSize: '10px',
-                fontWeight: '800',
-                color: isHovered ? '#9ca3af' : '#6b7280',
-                background: isHovered ? '#1a1a1a' : '#f3f4f6',
-                padding: '4px 10px',
-                borderRadius: '20px',
-                letterSpacing: '0.5px',
-                textTransform: 'uppercase',
-                transition: 'all 0.15s',
-            }}>
-                {gestor.herramientas.length} herramientas
-            </span>
-
-            {/* Arrow */}
-            <span style={{
-                fontSize: '18px',
-                color: isHovered ? '#ffffff' : '#d1d5db',
-                transition: 'color 0.15s, transform 0.15s',
-                transform: isHovered ? 'translateX(4px)' : 'translateX(0)',
-                display: 'inline-block',
+            {/* Imagen Desvanecida (Bottom) */}
+            <div style={{
+                position: 'relative',
+                width: '100%',
+                height: '220px',
                 marginTop: 'auto',
+                zIndex: 1,
             }}>
-                →
-            </span>
+                <img
+                    src={gestor.imagen}
+                    alt={gestor.nombre}
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        objectPosition: 'center',
+                        WebkitMaskImage: isHovered 
+                            ? 'linear-gradient(to bottom, transparent 0%, black 100%)'
+                            : 'linear-gradient(to bottom, transparent 10%, black 100%)',
+                        maskImage: isHovered 
+                            ? 'linear-gradient(to bottom, transparent 0%, black 100%)'
+                            : 'linear-gradient(to bottom, transparent 10%, black 100%)',
+                        transition: 'transform 0.4s ease, filter 0.4s ease',
+                        transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+                        filter: isHovered ? 'grayscale(0%) contrast(1.1)' : 'grayscale(100%) opacity(0.8)',
+                    }}
+                />
+            </div>
         </button>
     );
 };
