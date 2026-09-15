@@ -76,7 +76,7 @@ const GESTORES = [
         nombreCorto: 'Puntos de Venta',
         descripcion: 'Administra los puntos de venta y la tienda interactiva',
         icono: '⚡',
-        imagen: '/assets/heladeria/pos_card.png',
+        imagen: '/assets/heladeria/pos_card.jpg',
         num: '01',
         herramientas: [
             {
@@ -99,7 +99,7 @@ const GESTORES = [
         nombreCorto: 'KDS',
         descripcion: 'Pantallas de preparación para estaciones de producción',
         icono: '📋',
-        imagen: '/assets/heladeria/kds_card.png',
+        imagen: '/assets/heladeria/kds_card.jpg',
         num: '02',
         herramientas: [
             {
@@ -122,7 +122,7 @@ const GESTORES = [
         nombreCorto: 'Displays',
         descripcion: 'Pantallas de contenido visual y precios para clientes',
         icono: '📺',
-        imagen: '/assets/heladeria/displays_card.png',
+        imagen: '/assets/heladeria/displays_card.jpg',
         num: '03',
         herramientas: [
             {
