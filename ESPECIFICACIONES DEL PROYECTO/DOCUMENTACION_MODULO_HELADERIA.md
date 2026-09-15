@@ -2,7 +2,7 @@
 
 > **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Heladería **DEBE** leer este documento. Aquí se detalla la arquitectura, el flujo de datos, las reglas de negocio y las decisiones técnicas del módulo.
 >
-> **Última actualización:** 2026-09-14 (V15 KDS Inteligente — cierre de la Oleada 1)
+> **Última actualización:** 2026-09-14 (Hub Editorial B&W + Branding Editable + Permiso `editar_ui_heladeria`)
 > **Archivos gobernados:**
 > - Backend: `apps/api/modules/heladeria/*` (models, schemas, service, router)
 > - Frontend: `apps/heladeria/*` (Hub, secciones, hooks, services, components)
@@ -39,18 +39,41 @@ El Módulo de Heladería extiende el ERP R de Rico para gestionar la operación 
 │         ▼                                                           │
 │   ┌───────────────────────────────────────────────────────────┐     │
 │   │                  HeladeriaHubUI.jsx                        │     │
-│   │            (Landing page del módulo)                       │     │
+│   │      (Landing editorial B&W — branding editable)          │     │
 │   │                                                           │     │
-│   │   React.lazy() + ErrorBoundary ── Barrera 2 (por sección) │     │
-│   │         │           │           │           │             │     │
-│   │         ▼           ▼           ▼           ▼             │     │
-│   │   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐       │     │
-│   │   │ POS     │ │ KDS     │ │ KDS     │ │ Tienda  │       │     │
-│   │   │Heladería│ │ Helados │ │Malteadas│ │Interact.│       │     │
-│   │   └─────────┘ └─────────┘ └─────────┘ └─────────┘       │     │
+│   │   Nivel 1: Landing con 3 Gestores                         │     │
+│   │   ┌────────────────┬────────────────┬──────────────────┐  │     │
+│   │   │ 01 Gestor POS  │ 02 Gestor KDS  │ 03 Gestor Display│  │     │
+│   │   └───────┬────────┴───────┬────────┴───────┬──────────┘  │     │
+│   │           │                │                │             │     │
+│   │   Nivel 2: Sub-suite (GestorSuiteUI)                      │     │
+│   │   ┌───────┴──────┐ ┌──────┴───────┐ ┌──────┴───────┐     │     │
+│   │   │POS    Tienda │ │KDS     KDS   │ │Tótem  Precios│     │     │
+│   │   │Helad. Interac│ │Helados Malte.│ │Display Display│     │     │
+│   │   └──────────────┘ └──────────────┘ └──────────────┘     │     │
+│   │                                                           │     │
+│   │   Nivel 3: Herramienta real (React.lazy + ErrorBoundary)  │     │
 │   └───────────────────────────────────────────────────────────┘     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### 2.1.1 Navegación de 3 Niveles
+
+El Hub implementa una navegación jerárquica de 3 niveles:
+
+| Nivel | Componente | Descripción |
+|---|---|---|
+| **1 — Landing** | `HeladeriaHubUI` | 3 tarjetas de gestores con branding editable en el encabezado |
+| **2 — Sub-suite** | `GestorSuiteUI` | 2 herramientas por gestor, con botón "← Volver" |
+| **3 — Herramienta** | `React.lazy(Sección)` | La sección real (POS, KDS, Display, etc.) |
+
+### 2.1.2 Los 3 Gestores
+
+| Gestor | ID | Herramientas |
+|---|---|---|
+| **Gestor de Puntos de Venta** | `gestor_pos` | POS Heladería + Tienda Interactiva |
+| **Gestor de KDS** | `gestor_kds` | KDS Helados + KDS Malteadas |
+| **Gestor de Displays** | `gestor_displays` | Display Tótem + Display Precios |
 
 ### 2.2 Doble Barrera de Aislamiento
 
@@ -148,6 +171,29 @@ Prefijo: `/api/v1/heladeria`
 | `GET` | `/display/menu` | Menú formateado para pantalla de precios. **Agrupa por `component_type`** (RECIPIENTE, TAMAÑO, SABOR, EXTRA, BEBIDA_BASE). `price` llega como **NÚMERO** (ej. `65.0`), no como string |
 | `POST` | `/totem/upload` | **(V16 Fase 16.2)** Sube una imagen del tótem (`multipart/form-data`, campo `file`). Valida MIME (JPEG/PNG/WebP), peso (≤ 8 MB) y no-vacío. Devuelve `{ filename, url }` |
 | `DELETE` | `/totem/upload/{filename}` | **(V16 Fase 16.2)** Borra una imagen del tótem. Devuelve `{ deleted, filename }` |
+
+### Branding Editable (Encabezado del Hub)
+
+El nombre y eslogan del módulo viven en `system_settings` bajo la clave `heladeria_branding`:
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/settings/` | Devuelve TODAS las settings; el frontend extrae la clave `heladeria_branding` |
+| `PATCH` | `/settings/heladeria_branding` | Guarda nombre y eslogan. Body: `{ "value": "<json string>" }` |
+| `POST` | `/settings/seed` | Siembra la clave si no existe (idempotente). **El frontend llama auto-seed si PATCH devuelve 404** |
+
+Forma del `value` (JSON serializado):
+
+```json
+{
+    "nombre": "Heladería\nR de Rico.",
+    "eslogan": "Haciendo tu vida más dulce."
+}
+```
+
+- `nombre`: el salto de línea `\n` se renderiza como `<br />` en el encabezado.
+- `eslogan`: se muestra como subtítulo bajo el nombre.
+- **Permiso requerido:** `editar_ui_heladeria` o `all = "full"` (Master Access).
 
 ### Configuración del Display (V17)
 
@@ -408,6 +454,29 @@ Los SABORES no tienen precio adicional — están incluidos en el precio del rec
 
 ---
 
+## 7.5 Branding Editable del Encabezado
+
+- El nombre de la heladería y el eslogan se guardan en `system_settings` (clave `heladeria_branding`) y se cargan al montar el Hub.
+- Solo los usuarios con el permiso `editar_ui_heladeria` (o `all = "full"`) ven el botón ✏️ en la esquina superior derecha del encabezado.
+- Al hacer clic, se abre un modal (`BrandingEditorModal`) que permite editar ambos campos. Los cambios se guardan con PATCH y se reflejan inmediatamente.
+- Si la clave no existe en la BD (primer uso), el frontend llama automáticamente a `POST /settings/seed` y reintenta.
+- **Permiso:** Se configura desde **Seguridad y Acceso → Gestión de Perfiles** → casilla **"Editar UI de Heladería"** (`editar_ui_heladeria`).
+
+### Estética: Editorial B&W
+
+El Hub utiliza una estética **editorial blanco y negro** (tipo revista de moda):
+
+| Elemento | Valor |
+|---|---|
+| Fondo | `#ffffff` (blanco puro) |
+| Texto principal | `#0f0f0f` (negro casi puro) |
+| Subtítulos | `#6b7280` (gris medio) |
+| Divisores | `1px solid #0f0f0f` (líneas editoriales) |
+| Tipografía | Inter, peso 900 (ultra-bold) |
+| Hover de tarjetas | Inversión completa (fondo negro, texto blanco) |
+| Animaciones | Solo transición de color/fondo (0.15s ease). **Sin animaciones infinitas** |
+
+
 ## 8. INTEGRACIÓN CON OTROS MÓDULOS
 
 ### 8.1 Con POS Panadería
@@ -425,6 +494,11 @@ Los SABORES no tienen precio adicional — están incluidos en el precio del rec
 ### 8.4 Con Almacenes (Futuro — Plan V6)
 - El outbox pattern generará `WarehouseEvent` para tickets de heladería igual que para panadería.
 - Se necesitarán almacenes tipo CONGELADO para stock de helados.
+
+### 8.5 Con Gestión de Perfiles
+- El permiso `editar_ui_heladeria` se registra en `SYSTEM_MODULES` de [`PerfilesAccessSuite.jsx`](apps/auth/PerfilesAccessSuite.jsx) con ícono `🍦✏️`.
+- `ExperimentCenterUI.jsx` pasa `userPermissions` al `HeladeriaHubUI` para la validación del botón de edición.
+- El chequeo sigue el patrón estándar: `userPermissions?.editar_ui_heladeria === 'full' || userPermissions?.all === 'full'`.
 
 ---
 
@@ -484,6 +558,9 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 | **`CONFIG.API_BASE_URL`** | Prohibido `window.location.hostname`. Todas las URLs centralizadas |
 | **Precio = recipiente + extras** (sabores incluidos) | Modelo de precios simple y predecible para el cajero |
 | **(V18 Fase 18.1) Normalizar timestamps en serialización, no en la columna** | `core/serialization.py::iso_utc()` añade `Z` a los naive. Evita una migración de alto riesgo sobre `tickets` (compartida con el POS IA) y unifica el contrato con el POS (v12 Fase 12.4) |
+| **Branding en `system_settings`** (no hardcodeado) | El nombre y eslogan del Hub son editables sin tocar código. El frontend carga defaults si la clave no existe |
+| **Auto-seed en 404** | Si el PATCH de branding devuelve 404, el frontend llama automáticamente a `POST /settings/seed` y reintenta. Elimina la dependencia de reiniciar el API manualmente |
+| **Permiso `editar_ui_heladeria` como permiso de función** | Sigue el patrón existente de `editar_info_negocio`: un permiso granular que controla un botón específico, no un módulo completo |
 
 ---
 
@@ -556,6 +633,8 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 | **Display Tótem** | V16 (Fases 16.0–16.4) | 🟢 Funcional — doble landing (admin + kiosco `?mode=output`), manifiesto persistido en `system_settings` (`heladeria_totem_content`), subida/borrado de imágenes con validación de MIME + tamaño (8 MB), servido estático en `/media/totem/`, offline-first con caché en `localStorage`, `totemSequencer.js` puro con 36 tests. **Sin animaciones infinitas** (Incidente 16.1) |
 | **KDS Inteligente** | V15 (Fases 15.1–15.5) | 🟢 Funcional — urgencia visual por color (NORMAL/WARNING/CRITICAL) en ambos KDS, umbrales configurables en `system_settings` (`heladeria_kds_urgency_config`), `kdsUrgency.js` puro con 25 tests. **Solo color, sin animación** (Incidente 16.1). El asistente de lotes se eliminó (D1: no existen alérgenos en el sistema) |
 | **Contrato de serialización UTC** | V18 (Fase 18.1) | 🟢 Funcional — `core/serialization.py::iso_utc()` compartido con el POS. Heladería serializa `created_at` con sufijo `Z`; el POS conserva su alias `_iso_utc` sin cambios. 8 tests. Cierra BUG 4 |
+| **Hub Editorial B&W** | — | 🟢 Funcional — Rediseño del Hub con estética editorial blanco y negro. Navegación de 3 niveles (Landing → Gestor → Herramienta). 3 gestores: POS, KDS, Displays |
+| **Branding Editable** | — | 🟢 Funcional — Nombre y eslogan editables desde el Hub. Persistencia en `system_settings` (`heladeria_branding`). Botón ✏️ condicionado al permiso `editar_ui_heladeria`. Auto-seed si la clave no existe (manejo de 404) |
 
 ### Oleada 2 (pendiente de revisión)
 
