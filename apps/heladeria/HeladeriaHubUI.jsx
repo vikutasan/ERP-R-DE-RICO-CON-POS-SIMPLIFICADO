@@ -75,7 +75,7 @@ const GESTORES = [
         nombre: 'Gestor de Puntos de Venta de Heladería',
         nombreCorto: 'Puntos de Venta',
         descripcion: 'Administra los puntos de venta y la tienda interactiva',
-        icono: '🍦',
+        icono: '🖥️',
         imagen: '/assets/heladeria/pos_card.jpg',
         num: '01',
         herramientas: [
@@ -98,7 +98,7 @@ const GESTORES = [
         nombre: 'Gestor de KDS de Heladería',
         nombreCorto: 'KDS',
         descripcion: 'Pantallas de preparación para estaciones de producción',
-        icono: '🥤',
+        icono: '🍦',
         imagen: '/assets/heladeria/kds_card.jpg',
         num: '02',
         herramientas: [
@@ -121,21 +121,21 @@ const GESTORES = [
         nombre: 'Gestor de Displays de Heladería',
         nombreCorto: 'Displays',
         descripcion: 'Pantallas de contenido visual y precios para clientes',
-        icono: '🖥️',
+        icono: '📺',
         imagen: '/assets/heladeria/displays_card.jpg',
         num: '03',
         herramientas: [
-            {
-                id: 'totem',
-                nombre: 'Display Tótem',
-                descripcion: 'Contenido visual sugestivo para atraer clientes',
-                icono: '🖥️',
-            },
             {
                 id: 'precios',
                 nombre: 'Display de Precios',
                 descripcion: 'Menú digital con precios en tiempo real',
                 icono: '💰',
+            },
+            {
+                id: 'totem',
+                nombre: 'Display Tótem',
+                descripcion: 'Contenido visual sugestivo para atraer clientes',
+                icono: '🖥️',
             },
         ],
     },
@@ -725,20 +725,7 @@ const GestorCard = ({ gestor, idx, total, onClick }) => {
                     {gestor.descripcion}
                 </p>
 
-                {/* Chip with tool count */}
-                <span style={{
-                    fontSize: '10px',
-                    fontWeight: '800',
-                    color: isHovered ? '#9ca3af' : '#6b7280',
-                    background: isHovered ? '#1a1a1a' : '#f3f4f6',
-                    padding: '4px 10px',
-                    borderRadius: '20px',
-                    letterSpacing: '0.5px',
-                    textTransform: 'uppercase',
-                    transition: 'all 0.15s',
-                }}>
-                    {gestor.herramientas.length} herramientas
-                </span>
+                {/* Eliminar temporalmente o permanentemente la cuenta de herramientas según requerimiento */}
 
                 {/* Arrow */}
                 <span style={{
@@ -757,7 +744,7 @@ const GestorCard = ({ gestor, idx, total, onClick }) => {
             <div style={{
                 position: 'relative',
                 width: '100%',
-                height: '220px',
+                height: '320px',
                 marginTop: 'auto',
                 zIndex: 1,
             }}>
