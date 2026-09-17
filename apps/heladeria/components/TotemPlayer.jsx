@@ -5,6 +5,7 @@ import {
     totalDurationSec,
 } from '../utils/totemSequencer';
 import { totemContentService } from '../services/totemContentService';
+import { TotemStage, TotemEmptyState } from './TotemStage';
 
 /**
  * TotemPlayer — Reproductor del Display Tótem (V16, Fase 16.4).
@@ -100,23 +101,6 @@ export function TotemPlayer({ onExit }) {
         };
     }, [index, sequence, manifest.config.transitionMs]);
 
-    // ── Estilos de transición (FINITOS, sin @keyframes) ──────
-    const transitionMs = Math.max(0, Number(manifest.config.transitionMs) || 0);
-    const isHorizontal = manifest.config.format === 'horizontal';
-    const current = sequence.length > 0 ? sequence[index % sequence.length] : null;
-
-    const transitionStyle = {
-        transition: `opacity ${transitionMs}ms ease, transform ${transitionMs}ms ease`,
-        opacity: visible ? 1 : 0,
-        transform: visible
-            ? 'translate(0, 0) scale(1)'
-            : manifest.config.transition === 'slide'
-                ? 'translateX(40px)'
-                : manifest.config.transition === 'zoom'
-                    ? 'scale(0.92)'
-                    : 'translate(0, 0) scale(1)',
-    };
-
     // ── Render ───────────────────────────────────────────────
     if (source === 'loading') {
         return (
@@ -128,81 +112,38 @@ export function TotemPlayer({ onExit }) {
 
     if (sequence.length === 0) {
         return (
-            <div style={styles.stage}>
-                <div style={styles.emptyBox}>
-                    <div style={styles.emptyIcon}>📺</div>
-                    <h2 style={styles.emptyTitle}>Tótem sin contenido</h2>
-                    <p style={styles.emptyText}>
-                        Sube imágenes macro y hero desde el gestor de contenido del tótem.
-                    </p>
-                    {onExit && (
-                        <button type="button" style={styles.exitBtn} onClick={onExit}>
-                            Salir
-                        </button>
-                    )}
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div style={styles.stage}>
-            <div
-                style={{
-                    ...styles.frame,
-                    flexDirection: isHorizontal ? 'row' : 'column',
-                }}
-            >
-                <div style={{ ...styles.mediaWrap, ...transitionStyle }}>
-                    <img
-                        src={current.image.url}
-                        alt={current.image.label || 'tótem'}
-                        style={styles.media}
-                    />
-                </div>
-                {current.image.label && (
-                    <div
-                        style={{
-                            ...styles.caption,
-                            borderColor: current.image.accentColor || manifest.config.accentColor,
-                        }}
-                    >
-                        <span
-                            style={{
-                                ...styles.captionText,
-                                color: current.image.accentColor || manifest.config.accentColor,
-                            }}
-                        >
-                            {current.image.label}
-                        </span>
-                        <span style={styles.captionKind}>
-                            {current.kind === 'hero' ? 'DESTACADO' : 'PRODUCTO'}
-                        </span>
-                    </div>
-                )}
-            </div>
-
-            {/* Barra de progreso FINITA (sin animación infinita). */}
-            <div style={styles.progressTrack}>
-                <div
-                    style={{
-                        ...styles.progressFill,
-                        width: `${((index + 1) / sequence.length) * 100}%`,
-                        background: manifest.config.accentColor,
-                    }}
-                />
-            </div>
-
-            <div style={styles.footer}>
-                <span style={styles.footerText}>
-                    {index + 1} / {sequence.length} · {totalSec}s · {source === 'cache' ? 'offline' : 'en línea'}
-                </span>
+            <TotemEmptyState>
                 {onExit && (
-                    <button type="button" style={styles.exitBtnSmall} onClick={onExit}>
+                    <button type="button" style={styles.exitBtn} onClick={onExit}>
                         Salir
                     </button>
                 )}
-            </div>
+            </TotemEmptyState>
+        );
+    }
+
+    const current = sequence[index % sequence.length];
+
+    return (
+        <div style={styles.stage}>
+            <TotemStage
+                step={current}
+                config={manifest.config}
+                visible={visible}
+                index={index}
+                total={sequence.length}
+                totalSec={totalSec}
+                source={source}
+                style={styles.stageFill}
+            />
+
+            {onExit && (
+                <div style={styles.exitBar}>
+                    <button type="button" style={styles.exitBtnSmall} onClick={onExit}>
+                        Salir
+                    </button>
+                </div>
+            )}
         </div>
     );
 }
@@ -220,100 +161,19 @@ const styles = {
         overflow: 'hidden',
         position: 'relative',
     },
+    stageFill: {
+        position: 'absolute',
+        inset: 0,
+    },
     loading: {
         color: '#94a3b8',
         fontSize: '18px',
     },
-    emptyBox: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: '16px',
-        textAlign: 'center',
-        padding: '32px',
-    },
-    emptyIcon: {
-        fontSize: '72px',
-    },
-    emptyTitle: {
-        margin: 0,
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '2rem',
-        color: '#f9fafb',
-    },
-    emptyText: {
-        margin: 0,
-        color: '#9ca3af',
-        maxWidth: '420px',
-        lineHeight: 1.6,
-    },
-    frame: {
-        flex: 1,
-        width: '100%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '24px',
-        padding: '32px',
-        boxSizing: 'border-box',
-    },
-    mediaWrap: {
-        maxWidth: '90%',
-        maxHeight: '80%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        willChange: 'opacity, transform',
-    },
-    media: {
-        maxWidth: '100%',
-        maxHeight: '70vh',
-        objectFit: 'contain',
-        borderRadius: '16px',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
-    },
-    caption: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        padding: '16px 24px',
-        borderLeft: '4px solid #fbbf24',
-        background: 'rgba(0,0,0,0.35)',
-        borderRadius: '12px',
-    },
-    captionText: {
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.6rem',
-        fontWeight: 700,
-    },
-    captionKind: {
-        fontSize: '11px',
-        letterSpacing: '2px',
-        color: '#9ca3af',
-        textTransform: 'uppercase',
-    },
-    progressTrack: {
-        width: '80%',
-        height: '4px',
-        background: 'rgba(255,255,255,0.1)',
-        borderRadius: '2px',
-        overflow: 'hidden',
-        marginBottom: '12px',
-    },
-    progressFill: {
-        height: '100%',
-        transition: 'width 400ms ease',
-    },
-    footer: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        paddingBottom: '16px',
-    },
-    footerText: {
-        color: '#64748b',
-        fontSize: '12px',
-        letterSpacing: '1px',
+    exitBar: {
+        position: 'absolute',
+        top: '16px',
+        right: '16px',
+        zIndex: 2,
     },
     exitBtn: {
         padding: '10px 20px',

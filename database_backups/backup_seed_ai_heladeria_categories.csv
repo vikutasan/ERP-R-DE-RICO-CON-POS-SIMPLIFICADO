@@ -1,0 +1,3 @@
+id,name,icon,vision_enabled,is_system,position,channel,heladeria_enabled
+19,Heladería,🍦,f,f,99,PANADERIA,t
+20,Heladería Extras,✨,f,f,100,PANADERIA,t

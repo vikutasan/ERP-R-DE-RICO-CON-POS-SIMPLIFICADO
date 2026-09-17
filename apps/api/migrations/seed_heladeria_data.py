@@ -199,4 +199,28 @@ async def seed():
 
 
 if __name__ == "__main__":
+    # ═══════════════════════════════════════════════════════════════
+    # GUARD v8: este script sembró datos DEMO que el usuario nunca creó
+    # (categorías "Heladería"/"Heladería Extras" + 29 productos HEL-*).
+    # Esos datos fueron purgados. El script se conserva solo como
+    # referencia histórica y exige --force explícito para volver a correr.
+    #
+    # Uso: python migrations/seed_heladeria_data.py --force
+    # ═══════════════════════════════════════════════════════════════
+    if "--force" not in sys.argv:
+        logger.warning("=" * 60)
+        logger.warning("⛔ SEED BLOQUEADO")
+        logger.warning("=" * 60)
+        logger.warning(
+            "Este script siembra datos DEMO de heladería que NO fueron "
+            "creados por el usuario y ya fueron purgados de la base."
+        )
+        logger.warning(
+            "Si realmente quieres volver a sembrarlos, ejecuta con --force:"
+        )
+        logger.warning("  python migrations/seed_heladeria_data.py --force")
+        logger.warning("=" * 60)
+        sys.exit(1)
+
+    logger.warning("⚠️  --force detectado: sembrando datos DEMO de heladería.")
     asyncio.run(seed())

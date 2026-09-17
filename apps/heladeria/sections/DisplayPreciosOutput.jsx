@@ -3,55 +3,72 @@ import { CONFIG } from '../../pos/config';
 import { withRetries } from '../../pos/utils/withRetries';
 import {
     buildDisplayViewModel,
-    DEFAULT_DISPLAY_CONFIG,
-    normalizeDisplayConfig,
+    DEFAULT_SCREEN_CONFIG,
+    normalizeScreenConfig,
 } from '../utils/displayMappers';
 import {
     cacheDisplayMenu,
     getCachedDisplayMenu,
     getDisplayMenuCacheAge,
 } from '../services/heladeriaOfflineStore';
-import { fetchDisplayConfig } from '../services/displayConfigService';
+import { loadDisplayScreens } from '../services/displayConfigService';
+import { DisplayPreciosBody, resolveTheme } from '../components/DisplayPreciosBody';
 
 /**
- * DisplayPreciosOutput — Pantalla de precios para clientes (V17, Fase 17.3).
+ * DisplayPreciosOutput — Pantalla de precios para clientes (V17 → V8 multi-pantalla).
  *
  * MODO KIOSCO: solo lectura, sin botones de navegación, pensada para un
- * monitor/tablet en la heladería. Se abre con `?mode=output`.
+ * monitor/tablet en la heladería. Se abre con `?mode=output&screen=<id>`.
+ *
+ * V8 — MULTI-PANTALLA:
+ *   Cada TV puede proyectar una PANTALLA NOMBRADA distinta. El `screenId`
+ *   llega por prop (resuelto desde el deep-link `?screen=`). Si no se
+ *   especifica, se usa la primera pantalla habilitada.
  *
  * OFFLINE-FIRST:
  *   1. Intenta la red (GET /heladeria/display/menu).
  *   2. Si falla, usa el caché IndexedDB (TTL 24h, clave 'display_menu').
  *   3. Si no hay caché, muestra un estado vacío honesto.
  *
- * REFRESCO: cada 5 minutos (configurable). NO usa animaciones CSS infinitas
- * (Incident 16.1 — Efecto Estrobo).
+ * REFRESCO: cada 5 minutos. NO usa animaciones CSS infinitas (Incident 16.1).
  *
  * REGLA: CERO PRECIOS HARDCODEADOS. Todo precio viene del menú de la API.
+ *
+ * @param {function} [props.onExit]   Callback para salir del modo kiosco.
+ * @param {string}   [props.screenId] Id de la pantalla nombrada a proyectar.
  */
 const REFRESH_MS = 5 * 60 * 1000; // 5 minutos
 
-export function DisplayPreciosOutput({ onExit }) {
+export function DisplayPreciosOutput({ onExit, screenId = 'screen_1' }) {
     const [viewModel, setViewModel] = useState({
         groups: [],
         totalItems: 0,
-        config: { ...DEFAULT_DISPLAY_CONFIG },
+        config: { ...DEFAULT_SCREEN_CONFIG },
         isEmpty: true,
     });
+    const [screen, setScreen] = useState(null);
     const [source, setSource] = useState('loading'); // 'network' | 'cache' | 'empty'
     const [cacheAge, setCacheAge] = useState(null);
     const [now, setNow] = useState(Date.now());
     const mountedRef = useRef(true);
 
-    // ── Carga de datos (red → caché) ─────────────────────────
+    // ── Carga de datos (pantalla → menú) ─────────────────────
     const loadData = async () => {
-        let config = { ...DEFAULT_DISPLAY_CONFIG };
+        let resolvedScreen = null;
         try {
-            const cfgRes = await fetchDisplayConfig();
-            config = normalizeDisplayConfig(cfgRes.config);
+            const doc = await loadDisplayScreens();
+            // Defensivo: `loadDisplayScreens` puede devolver un documento sin
+            // `screens` si la API responde algo inesperado (Incident 16.8).
+            const screens = Array.isArray(doc?.screens) ? doc.screens : [];
+            const found = screens.find((s) => s.id === screenId);
+            resolvedScreen = found || screens[0] || null;
         } catch {
-            // Sin config: seguimos con los defaults (el Display nunca se bloquea).
+            // Sin documento: seguimos con los defaults (el Display nunca se bloquea).
         }
+
+        const config = resolvedScreen
+            ? normalizeScreenConfig(resolvedScreen.config)
+            : { ...DEFAULT_SCREEN_CONFIG };
 
         let menuData = null;
         let src = 'empty';
@@ -76,6 +93,7 @@ export function DisplayPreciosOutput({ onExit }) {
 
         if (!mountedRef.current) return;
 
+        setScreen(resolvedScreen);
         setViewModel(buildDisplayViewModel(menuData, config));
         setSource(src);
         setCacheAge(src === 'cache' ? await getDisplayMenuCacheAge() : null);
@@ -96,11 +114,10 @@ export function DisplayPreciosOutput({ onExit }) {
             clearInterval(clockTimer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [screenId]);
 
     // ── Helpers de presentación ──────────────────────────────
-    const isDark = viewModel.config.theme === 'DARK';
-    const theme = isDark ? darkTheme : lightTheme;
+    const theme = resolveTheme(viewModel.config.theme);
 
     const formatAge = (ms) => {
         if (ms == null) return '';
@@ -114,7 +131,7 @@ export function DisplayPreciosOutput({ onExit }) {
     // ── Render ───────────────────────────────────────────────
     if (source === 'loading') {
         return (
-            <div style={{ ...styles.fullscreen, background: theme.bg }}>
+            <div style={{ ...styles.fullscreen, position: onExit ? 'absolute' : 'fixed', background: theme.bg }}>
                 <div style={{ ...styles.statusText, color: theme.accent }}>
                     Cargando precios…
                 </div>
@@ -124,7 +141,7 @@ export function DisplayPreciosOutput({ onExit }) {
 
     if (viewModel.isEmpty) {
         return (
-            <div style={{ ...styles.fullscreen, background: theme.bg }}>
+            <div style={{ ...styles.fullscreen, position: onExit ? 'absolute' : 'fixed', background: theme.bg }}>
                 <div style={styles.emptyBox}>
                     <div style={{ fontSize: '64px' }}>🍦</div>
                     <h2 style={{ ...styles.emptyTitle, color: theme.text }}>
@@ -136,7 +153,10 @@ export function DisplayPreciosOutput({ onExit }) {
                             : 'La configuración actual no incluye ningún grupo visible.'}
                     </p>
                     {onExit && (
-                        <button style={{ ...styles.exitBtn, color: theme.accent, borderColor: theme.accent }} onClick={onExit}>
+                        <button
+                            style={{ ...styles.exitBtn, color: theme.accent, borderColor: theme.accent }}
+                            onClick={onExit}
+                        >
                             Salir del modo pantalla
                         </button>
                     )}
@@ -146,117 +166,52 @@ export function DisplayPreciosOutput({ onExit }) {
     }
 
     return (
-        <div style={{ ...styles.fullscreen, background: theme.bg }}>
-            {/* ── Encabezado ── */}
-            <header style={{ ...styles.header, borderBottom: `1px solid ${theme.border}` }}>
-                <h1 style={{ ...styles.brand, color: theme.text }}>
-                    🍦 R de Rico — Precios
-                </h1>
-                <div style={styles.headerRight}>
-                    {source === 'cache' && (
-                        <span style={{ ...styles.badge, color: theme.warn, borderColor: theme.warn }}>
-                            Sin conexión · {formatAge(cacheAge)}
-                        </span>
-                    )}
-                    {source === 'network' && (
-                        <span style={{ ...styles.badge, color: theme.ok, borderColor: theme.ok }}>
-                            En línea
-                        </span>
-                    )}
-                    {onExit && (
-                        <button
-                            style={{ ...styles.exitBtn, color: theme.muted, borderColor: theme.border }}
-                            onClick={onExit}
-                        >
-                            Salir
-                        </button>
-                    )}
-                </div>
-            </header>
+        <div style={{ ...styles.fullscreen, position: onExit ? 'absolute' : 'fixed', background: theme.bg }}>
+            {/* ── Barra de estado (solo kiosco) ── */}
+            <div style={styles.statusBar}>
+                {source === 'cache' && (
+                    <span style={{ ...styles.badge, color: theme.warn, borderColor: theme.warn }}>
+                        Sin conexión · {formatAge(cacheAge)}
+                    </span>
+                )}
+                {source === 'network' && (
+                    <span style={{ ...styles.badge, color: theme.ok, borderColor: theme.ok }}>
+                        En línea
+                    </span>
+                )}
+                {onExit && (
+                    <button
+                        style={{ ...styles.exitBtn, color: theme.muted, borderColor: theme.border }}
+                        onClick={onExit}
+                    >
+                        Salir
+                    </button>
+                )}
+            </div>
 
-            {/* ── Grupos ── */}
-            <main style={styles.main}>
-                {viewModel.groups.map((group) => (
-                    <section key={group.componentType} style={styles.group}>
-                        <h2 style={{ ...styles.groupTitle, color: theme.accent }}>
-                            {group.label}
-                        </h2>
-                        <div
-                            style={{
-                                ...styles.grid,
-                                gridTemplateColumns: `repeat(${viewModel.config.columns}, minmax(0, 1fr))`,
-                            }}
-                        >
-                            {group.items.map((item) => (
-                                <article
-                                    key={`${group.componentType}-${item.configId ?? item.productId ?? item.name}`}
-                                    style={{
-                                        ...styles.card,
-                                        background: theme.card,
-                                        border: `1px solid ${theme.border}`,
-                                        opacity: item.isAvailable ? 1 : 0.45,
-                                    }}
-                                >
-                                    {viewModel.config.showImages && item.image && (
-                                        <img
-                                            src={item.image}
-                                            alt={item.name}
-                                            style={styles.cardImage}
-                                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                                        />
-                                    )}
-                                    <div style={styles.cardBody}>
-                                        <span style={{ ...styles.cardName, color: theme.text }}>
-                                            {item.name}
-                                        </span>
-                                        <span style={{ ...styles.cardPrice, color: theme.accent }}>
-                                            {item.priceLabel}
-                                        </span>
-                                    </div>
-                                    {!item.isAvailable && (
-                                        <span style={{ ...styles.agotado, color: theme.warn }}>
-                                            AGOTADO
-                                        </span>
-                                    )}
-                                </article>
-                            ))}
-                        </div>
-                    </section>
-                ))}
-            </main>
+            {/* ── Cuerpo compartido (mismo diseño que la vista previa) ── */}
+            <div style={styles.bodyScroll}>
+                <DisplayPreciosBody
+                    viewModel={viewModel}
+                    theme={theme}
+                    screen={screen}
+                    scale={1}
+                />
+            </div>
 
-            {/* ── Pie ── */}
-            <footer style={{ ...styles.footer, borderTop: `1px solid ${theme.border}`, color: theme.muted }}>
+            {/* ── Pie de estado ── */}
+            <footer
+                style={{
+                    ...styles.footer,
+                    borderTop: `1px solid ${theme.border}`,
+                    color: theme.muted,
+                }}
+            >
                 {viewModel.totalItems} producto(s) · Actualizado {formatAge(now - (cacheAge ?? 0)) || 'ahora'}
             </footer>
         </div>
     );
 }
-
-// ─────────────────────────────────────────────────────────────
-// Temas
-// ─────────────────────────────────────────────────────────────
-const darkTheme = {
-    bg: 'linear-gradient(135deg, #0a0a0a 0%, #08101a 50%, #0a0a0a 100%)',
-    card: 'rgba(15, 23, 42, 0.7)',
-    text: '#f9fafb',
-    muted: '#9ca3af',
-    accent: '#38bdf8',
-    border: 'rgba(56, 189, 248, 0.18)',
-    ok: '#4ade80',
-    warn: '#fbbf24',
-};
-
-const lightTheme = {
-    bg: 'linear-gradient(135deg, #f8fafc 0%, #e0f2fe 50%, #f8fafc 100%)',
-    card: 'rgba(255, 255, 255, 0.9)',
-    text: '#0f172a',
-    muted: '#64748b',
-    accent: '#0284c7',
-    border: 'rgba(2, 132, 199, 0.18)',
-    ok: '#16a34a',
-    warn: '#d97706',
-};
 
 // ─────────────────────────────────────────────────────────────
 // Estilos
@@ -275,22 +230,12 @@ const styles = {
         fontSize: '18px',
         fontWeight: '700',
     },
-    header: {
+    statusBar: {
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '18px 32px',
-        gap: '16px',
-    },
-    headerRight: {
-        display: 'flex',
-        alignItems: 'center',
+        justifyContent: 'flex-end',
         gap: '12px',
-    },
-    brand: {
-        margin: 0,
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.6rem',
+        padding: '10px 24px',
     },
     badge: {
         padding: '6px 14px',
@@ -309,64 +254,9 @@ const styles = {
         fontWeight: '700',
         fontSize: '12px',
     },
-    main: {
+    bodyScroll: {
         flex: 1,
         overflowY: 'auto',
-        padding: '24px 32px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '32px',
-    },
-    group: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '14px',
-    },
-    groupTitle: {
-        margin: 0,
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.4rem',
-    },
-    grid: {
-        display: 'grid',
-        gap: '16px',
-    },
-    card: {
-        borderRadius: '16px',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-    },
-    cardImage: {
-        width: '100%',
-        height: '110px',
-        objectFit: 'cover',
-    },
-    cardBody: {
-        padding: '14px 16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-    },
-    cardName: {
-        fontSize: '15px',
-        fontWeight: '700',
-    },
-    cardPrice: {
-        fontSize: '22px',
-        fontWeight: '800',
-    },
-    agotado: {
-        position: 'absolute',
-        top: '10px',
-        right: '10px',
-        fontSize: '10px',
-        fontWeight: '800',
-        letterSpacing: '1px',
-        background: 'rgba(0,0,0,0.55)',
-        padding: '4px 8px',
-        borderRadius: '8px',
     },
     footer: {
         padding: '12px 32px',

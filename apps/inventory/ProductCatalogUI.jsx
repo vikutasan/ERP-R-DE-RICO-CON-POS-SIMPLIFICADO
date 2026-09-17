@@ -3,6 +3,15 @@ import ReactDOM from 'react-dom';
 import { CONFIG } from '../shared/config.js';
 // v20 (Fase 20.4): fecha local del negocio para nombres de archivo exportados.
 import { todayLocal } from '../shared/timezone.js';
+// v8 (HEL-P): contrato de la proyección producto → heladeria_product_config.
+// Espejo en frontend de apps/api/modules/heladeria/sync.py.
+import {
+    COMPONENT_TYPE_OPTIONS,
+    HELADERIA_KEYS,
+    patchHeladeriaIntent,
+    shouldShowHeladeriaBlock,
+    validateHeladeriaIntent,
+} from './utils/heladeriaIntent.js';
 
 /**
  * R DE RICO - PRODUCT MASTER & CATALOG MANAGER (API SYNC)
@@ -164,7 +173,15 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
             if (catName && !dbCat) {
                 console.warn("Categoría solicitada no encontrada:", catName);
             }
-            
+
+            // v8 (HEL-P): validar la intención de heladería antes de enviar.
+            // Si el usuario marcó el checkbox pero no eligió tipo, abortamos.
+            const heladeriaError = validateHeladeriaIntent(updatedProduct.technical_data);
+            if (heladeriaError) {
+                alert(heladeriaError);
+                return;
+            }
+
             // Sanitización de technical_data (Imperial Hardening)
             const rawTD = updatedProduct.technical_data || {};
             const techData = {
@@ -191,7 +208,15 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 recipe_procedure: rawTD.recipe_procedure || null,
                 forming_procedure: rawTD.forming_procedure || null,
                 provider: rawTD.provider || null,
-                original_barcode: rawTD.original_barcode || null
+                original_barcode: rawTD.original_barcode || null,
+
+                // v8 (HEL-P): proyección a heladeria_product_config.
+                // Al desmarcar el checkbox se envía component_type=null para
+                // que el backend elimine la fila puente (ver sync.py).
+                [HELADERIA_KEYS.ENABLED]: !!rawTD[HELADERIA_KEYS.ENABLED],
+                [HELADERIA_KEYS.COMPONENT_TYPE]: rawTD[HELADERIA_KEYS.ENABLED]
+                    ? (rawTD[HELADERIA_KEYS.COMPONENT_TYPE] || null)
+                    : null
             };
             
             const payload = {
@@ -462,7 +487,12 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 body: JSON.stringify({
                     name: cat.name,
                     icon: cat.icon,
-                    vision_enabled: !cat.vision_enabled
+                    vision_enabled: !cat.vision_enabled,
+                    // v8 (HEL-P): preservar el nivel 1 de la proyección.
+                    heladeria_enabled: !!cat.heladeria_enabled,
+                    // v8 (POS-SELECTOR): preservar el destino y el rol.
+                    pos_target: cat.pos_target || 'PANADERIA',
+                    heladeria_default_role: cat.heladeria_default_role || null
                 })
             });
             if (res.ok) {
@@ -472,6 +502,83 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
             }
         } catch (err) {
             console.error("Toggle visibility error:", err);
+        }
+    };
+
+    // v8 (POS-SELECTOR): persiste el destino de la categoría hacia los POS.
+    // `pos_target` es la ÚNICA decisión que el usuario toma por categoría:
+    // al arrastrar productos dentro, heredan el destino sin editar ficha por ficha.
+    //   - PANADERIA -> solo POS Panadería (GET /catalog/products)
+    //   - HELADERIA -> solo POS Heladería (GET /heladeria/menu)
+    //   - AMBOS     -> los dos
+    // `heladeria_enabled` se deriva del destino para mantener la coherencia del
+    // nivel 1 de la proyección (nunca queda un estado contradictorio).
+    const handleSetCategoryPosTarget = async (cat, posTarget) => {
+        const nextTarget = String(posTarget || 'PANADERIA').toUpperCase();
+        const projectsToHeladeria = nextTarget === 'HELADERIA' || nextTarget === 'AMBOS';
+        try {
+            const res = await fetch(`${API_BASE}/categories/${cat.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: cat.name,
+                    icon: cat.icon,
+                    vision_enabled: !!cat.vision_enabled,
+                    heladeria_enabled: projectsToHeladeria,
+                    pos_target: nextTarget,
+                    // El rol solo tiene sentido si la categoría proyecta a Heladería.
+                    heladeria_default_role: projectsToHeladeria
+                        ? (cat.heladeria_default_role || null)
+                        : null
+                })
+            });
+            if (!res.ok) {
+                // v8 (POS-SELECTOR): no tragarse el error. Si el backend rechaza
+                // el cambio, el usuario debe saberlo en vez de ver un selector
+                // que "no responde".
+                console.error("Set category pos target failed:", res.status);
+                alert("No se pudo cambiar el POS de la categoría. Revisa la conexión con el servidor.");
+                return;
+            }
+            const updated = await res.json();
+            setCategories(categories.map(c => c.id === cat.id ? updated : c));
+            setRenamingCategory(prev => prev && prev.id === cat.id ? updated : prev);
+        } catch (err) {
+            console.error("Set category pos target error:", err);
+            alert("Error de red al cambiar el POS de la categoría.");
+        }
+    };
+
+    // v8 (POS-SELECTOR): persiste el rol por defecto de los productos de esta
+    // categoría dentro del menú de Heladería. Permite arrastrar 14 productos a
+    // una categoría marcada como HELADERIA y proyectarlos todos como SABOR de
+    // un solo golpe, sin editar producto por producto.
+    const handleSetCategoryHeladeriaRole = async (cat, role) => {
+        const nextRole = role || null;
+        try {
+            const res = await fetch(`${API_BASE}/categories/${cat.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: cat.name,
+                    icon: cat.icon,
+                    vision_enabled: !!cat.vision_enabled,
+                    heladeria_enabled: !!cat.heladeria_enabled,
+                    pos_target: cat.pos_target || 'PANADERIA',
+                    heladeria_default_role: nextRole
+                })
+            });
+            if (!res.ok) {
+                console.error("Set category heladeria role failed:", res.status);
+                alert("No se pudo cambiar el rol de Heladería. Revisa la conexión con el servidor.");
+                return;
+            }
+            const updated = await res.json();
+            setCategories(categories.map(c => c.id === cat.id ? updated : c));
+            setRenamingCategory(prev => prev && prev.id === cat.id ? updated : prev);
+        } catch (err) {
+            console.error("Set category heladeria role error:", err);
+            alert("Error de red al cambiar el rol de Heladería.");
         }
     };
 
@@ -485,7 +592,12 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 body: JSON.stringify({
                     name: renameValue.toUpperCase(),
                     icon: '',
-                    vision_enabled: renamingCategory.vision_enabled
+                    vision_enabled: renamingCategory.vision_enabled,
+                    // v8 (HEL-P): preservar el nivel 1 de la proyección.
+                    heladeria_enabled: !!renamingCategory.heladeria_enabled,
+                    // v8 (POS-SELECTOR): preservar el destino y el rol.
+                    pos_target: renamingCategory.pos_target || 'PANADERIA',
+                    heladeria_default_role: renamingCategory.heladeria_default_role || null
                 })
             });
             if (res.ok) {
@@ -555,6 +667,40 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
     const handleProductDragStart = (e, index) => {
         setDraggedProdIndex(index);
         e.dataTransfer.effectAllowed = "move";
+    };
+
+    // v8 (POS-SELECTOR): mover un producto a OTRA categoría arrastrándolo sobre
+    // el chip de la categoría destino. Al cambiar `category_id`, el backend
+    // re-proyecta el producto a la tabla puente de Heladería con el rol por
+    // defecto de la nueva categoría. Esto es lo que permite "crear la categoría,
+    // arrastrarle productos y listo", sin editar producto por producto.
+    const handleProductDropOnCategory = async (e, targetCategory) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (draggedProdIndex === null) return;
+        if (targetCategory.is_system) return;
+
+        const dragged = filteredProducts[draggedProdIndex];
+        if (!dragged) return;
+        if (dragged.categories && dragged.categories.includes(targetCategory.name)) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/products/${dragged.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category_id: targetCategory.id })
+            });
+            if (res.ok) {
+                setProducts(products.map(p => p.id === dragged.id
+                    ? { ...p, categories: [targetCategory.name] }
+                    : p
+                ));
+            }
+        } catch (err) {
+            console.error("Error moviendo producto a categoría:", err);
+        } finally {
+            setDraggedProdIndex(null);
+        }
     };
 
     const handleProductDrop = async (e, targetIndex) => {
@@ -658,6 +804,81 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                     {renamingCategory.vision_enabled ? '👁️ Visible' : '🕶️ Oculta'}
                                 </button>
                             </div>
+
+                            {/* v8 (POS-SELECTOR): destino de la categoría hacia los POS.
+                                Es la ÚNICA decisión por categoría. Al arrastrar productos
+                                dentro, heredan el destino sin editar ficha por ficha. */}
+                            <div className="border border-gray-800 bg-black/40 p-4 rounded-2xl">
+                                <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">
+                                    🎯 ¿En qué POS se muestra?
+                                </h4>
+                                <p className="text-[8px] font-bold text-gray-500 uppercase mb-3">
+                                    Los productos que arrastres aquí heredan este destino.
+                                </p>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { key: 'PANADERIA', label: 'Panadería', icon: '🥖' },
+                                        { key: 'HELADERIA', label: 'Heladería', icon: '🍦' },
+                                        { key: 'AMBOS', label: 'Ambos', icon: '🔀' }
+                                    ].map((opt) => {
+                                        const active = (renamingCategory.pos_target || 'PANADERIA') === opt.key;
+                                        return (
+                                            <button
+                                                key={opt.key}
+                                                onClick={() => handleSetCategoryPosTarget(renamingCategory, opt.key)}
+                                                className={`py-3 rounded-xl text-[9px] font-black uppercase transition-all flex flex-col items-center gap-1 border ${
+                                                    active
+                                                        ? 'bg-emerald-500 text-black border-emerald-500'
+                                                        : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'
+                                                }`}
+                                            >
+                                                <span className="text-base leading-none">{opt.icon}</span>
+                                                {opt.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* v8 (POS-SELECTOR): rol por defecto en el menú de Heladería.
+                                Solo visible si la categoría proyecta a Heladería. Permite
+                                proyectar todos sus productos con un rol de un solo golpe. */}
+                            {((renamingCategory.pos_target || 'PANADERIA') === 'HELADERIA' ||
+                              (renamingCategory.pos_target || 'PANADERIA') === 'AMBOS') && (
+                                <div className="border border-pink-500/30 bg-pink-900/10 p-4 rounded-2xl">
+                                    <h4 className="text-[10px] font-black text-pink-400 uppercase tracking-widest mb-1">
+                                        🍦 Rol en Heladería
+                                    </h4>
+                                    <p className="text-[8px] font-bold text-gray-500 uppercase mb-3">
+                                        Cómo se proyectan sus productos en el menú de Heladería.
+                                    </p>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {[
+                                            { key: 'SABOR', label: 'Sabor' },
+                                            { key: 'RECIPIENTE', label: 'Recipiente' },
+                                            { key: 'TAMAÑO', label: 'Tamaño' },
+                                            { key: 'EXTRA', label: 'Extra' },
+                                            { key: 'BEBIDA_BASE', label: 'Bebida' },
+                                            { key: null, label: 'Sin rol' }
+                                        ].map((opt) => {
+                                            const active = (renamingCategory.heladeria_default_role || null) === opt.key;
+                                            return (
+                                                <button
+                                                    key={opt.key || 'NONE'}
+                                                    onClick={() => handleSetCategoryHeladeriaRole(renamingCategory, opt.key)}
+                                                    className={`py-2 rounded-xl text-[9px] font-black uppercase transition-all border ${
+                                                        active
+                                                            ? 'bg-pink-500 text-black border-pink-500'
+                                                            : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'
+                                                    }`}
+                                                >
+                                                    {opt.label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex flex-col gap-4">
@@ -923,6 +1144,118 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                     </div>
                                 )}
                             </div>
+
+                            {/* --- CONFIGURACIÓN DE HELADERÍA (v8 HEL-P) --- */}
+                            {/* Nivel 2 de la proyección: declara qué componente es
+                                este producto dentro del POS de Heladería. Solo se
+                                muestra si la categoría está marcada como Heladería
+                                (nivel 1) o si el producto ya tiene proyección.
+                                El catálogo de categorías se pasa explícitamente
+                                porque el formulario solo conserva el NOMBRE. */}
+                            {shouldShowHeladeriaBlock(editingProduct, categories) && (
+                                <div className={`p-6 rounded-[24px] border transition-all ${editingProduct.technical_data?.[HELADERIA_KEYS.ENABLED] ? 'bg-pink-900/10 border-pink-500/30' : 'bg-gray-900/20 border-gray-800'}`}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-pink-400">
+                                            <span>🍦</span> Heladería
+                                        </h4>
+                                        <label className="flex items-center cursor-pointer gap-2">
+                                            <span className="text-[10px] font-black text-gray-500 uppercase">Mostrar en POS</span>
+                                            <div className={`relative w-12 h-6 rounded-full transition-colors ${editingProduct.technical_data?.[HELADERIA_KEYS.ENABLED] ? 'bg-pink-500' : 'bg-gray-700'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="sr-only"
+                                                    checked={!!editingProduct.technical_data?.[HELADERIA_KEYS.ENABLED]}
+                                                    onChange={(e) => setEditingProduct({
+                                                        ...editingProduct,
+                                                        technical_data: patchHeladeriaIntent(
+                                                            editingProduct.technical_data,
+                                                            e.target.checked,
+                                                            editingProduct.technical_data?.[HELADERIA_KEYS.COMPONENT_TYPE]
+                                                        )
+                                                    })}
+                                                />
+                                                <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${editingProduct.technical_data?.[HELADERIA_KEYS.ENABLED] ? 'translate-x-6' : ''}`}></div>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-4">
+                                        Aparecerá en el POS de Heladería y en el Display de Precios
+                                    </p>
+                                    {editingProduct.technical_data?.[HELADERIA_KEYS.ENABLED] && (
+                                        <div className="mt-4 pt-4 border-t border-pink-900/20">
+                                            <label className="text-[10px] font-black text-pink-500 uppercase block mb-3">Tipo de Componente</label>
+                                            <div className="flex flex-wrap gap-2">
+                                                {COMPONENT_TYPE_OPTIONS.map((opt) => {
+                                                    const activo = editingProduct.technical_data?.[HELADERIA_KEYS.COMPONENT_TYPE] === opt.value;
+                                                    return (
+                                                        <button
+                                                            key={opt.value}
+                                                            type="button"
+                                                            onClick={() => setEditingProduct({
+                                                                ...editingProduct,
+                                                                technical_data: patchHeladeriaIntent(
+                                                                    editingProduct.technical_data,
+                                                                    true,
+                                                                    opt.value
+                                                                )
+                                                            })}
+                                                            className={`px-4 py-3 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all border ${activo ? 'bg-pink-500 text-black border-pink-500' : 'bg-black/40 text-gray-400 border-gray-700 hover:border-pink-500/50 hover:text-pink-400'}`}
+                                                        >
+                                                            {opt.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* --- DÓNDE SE MUESTRA ESTE PRODUCTO (v8 POS-SELECTOR) --- */}
+                            {/* Bloque SOLO LECTURA. El destino se decide en la
+                                categoría, no aquí: así se arma el catálogo creando
+                                categorías y arrastrándoles productos, sin editar
+                                ficha por ficha. */}
+                            {(() => {
+                                const catName = (editingProduct.categories && editingProduct.categories[0]) || null;
+                                const cat = categories.find(c => c.name === catName) || null;
+                                const target = (cat && cat.pos_target) || 'PANADERIA';
+                                const role = (cat && cat.heladeria_default_role) || null;
+                                const enPanaderia = target === 'PANADERIA' || target === 'AMBOS';
+                                const enHeladeria = target === 'HELADERIA' || target === 'AMBOS';
+                                return (
+                                    <div className="p-6 rounded-[24px] border border-gray-800 bg-gray-900/20">
+                                        <h4 className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-emerald-400 mb-4">
+                                            <span>📍</span> Dónde se muestra
+                                        </h4>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className={`p-4 rounded-2xl border ${enPanaderia ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-black/40 border-gray-800 opacity-40'}`}>
+                                                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400 mb-1">🥖 POS Panadería</div>
+                                                <div className="text-[9px] font-bold text-gray-400 uppercase">
+                                                    {enPanaderia ? (catName || 'Sin categoría') : 'No aparece'}
+                                                </div>
+                                            </div>
+                                            <div className={`p-4 rounded-2xl border ${enHeladeria ? 'bg-pink-900/10 border-pink-500/30' : 'bg-black/40 border-gray-800 opacity-40'}`}>
+                                                <div className="text-[10px] font-black uppercase tracking-widest text-pink-400 mb-1">🍦 POS Heladería</div>
+                                                <div className="text-[9px] font-bold text-gray-400 uppercase">
+                                                    {enHeladeria ? (catName || 'Sin categoría') : 'No aparece'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {enHeladeria && (
+                                            <div className="mt-3 pt-3 border-t border-gray-800 flex items-center justify-between">
+                                                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Rol en Heladería</span>
+                                                <span className="text-[10px] font-black text-pink-400 uppercase">
+                                                    {editingProduct.technical_data?.[HELADERIA_KEYS.COMPONENT_TYPE] || role || 'Sin rol'}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <p className="text-[9px] text-gray-600 uppercase tracking-wider mt-3">
+                                            Se define en la categoría. Arrastra el producto a otra categoría para cambiarlo.
+                                        </p>
+                                    </div>
+                                );
+                            })()}
 
                             {/* --- CAMPOS DINAMICOS POR NATURALEZA --- */}
                             
@@ -1280,12 +1613,20 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                         Todos
                     </button>
                     {categories.map((cat, idx) => (
-                        <div 
+                        <div
                             key={cat.id}
                             draggable
                             onDragStart={(e) => handleCategoryDragStart(e, idx)}
                             onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => handleCategoryDrop(e, idx)}
+                            onDrop={(e) => {
+                                // v8 (POS-SELECTOR): si viene un PRODUCTO arrastrado,
+                                // se mueve a esta categoría. Si no, se reordena la categoría.
+                                if (draggedProdIndex !== null) {
+                                    handleProductDropOnCategory(e, cat);
+                                } else {
+                                    handleCategoryDrop(e, idx);
+                                }
+                            }}
                             onClick={() => setActiveCategory(cat.name)}
                             className={`
                                 group relative px-6 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest text-center transition-all 

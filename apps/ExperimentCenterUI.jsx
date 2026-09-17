@@ -68,7 +68,12 @@ const INITIAL_CATEGORIES = [
 export const ExperimentCenterUI = () => {
     const { timezone } = useTimezone();
     const initialTerminal = new URLSearchParams(window.location.search).get('terminal');
-    const defaultModule = initialTerminal === 'DRIVER' ? 'reparto_grandeza' : 'overview';
+    // Deep-link V8: `?module=heladeria&mode=output&screen=<id>` abre la sub-suite
+    // de Heladería directamente (proyección de una pantalla nombrada en otra TV).
+    const initialModuleParam = new URLSearchParams(window.location.search).get('module');
+    const defaultModule = initialTerminal === 'DRIVER'
+        ? 'reparto_grandeza'
+        : (initialModuleParam === 'heladeria' ? 'heladeria' : 'overview');
     const defaultSidebar = initialTerminal === 'DRIVER' || window.innerWidth < 768;
 
     const [isAuthenticated, setIsAuthenticated] = useState(false);

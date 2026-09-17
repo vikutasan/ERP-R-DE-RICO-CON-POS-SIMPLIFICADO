@@ -39,18 +39,29 @@ class AvailabilityToggle(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 class MenuItemResponse(BaseModel):
-    """Un producto del menú de heladería con su config."""
+    """
+    Un producto del menú de heladería con su config.
+
+    v8 (POS-CATEGORIAS): se añade la identidad de CATEGORÍA (`category_id`,
+    `category_name`). El POS de Heladería navega por categoría —igual que el POS
+    de Panadería—, así que el frontend necesita saber a qué categoría pertenece
+    cada item. `component_type` se conserva porque describe el COMPORTAMIENTO
+    del producto al armar un helado (receta), no la navegación.
+    """
     config_id: int
     product_id: int
     name: str
     price: Decimal
     image: Optional[str] = None
+    sku: Optional[str] = None
     component_type: str
     is_available: bool
     max_scoops: Optional[int] = None
     base_price: Optional[Decimal] = None
     price_per_scoop: Optional[Decimal] = None
     position: int = 0
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
 
 
 class MenuGroupResponse(BaseModel):
@@ -59,10 +70,31 @@ class MenuGroupResponse(BaseModel):
     items: List[MenuItemResponse]
 
 
+class MenuCategoryResponse(BaseModel):
+    """
+    Índice de navegación por categoría para el POS de Heladería.
+
+    Espeja lo que el POS de Panadería obtiene de `GET /catalog/categories`:
+    una lista ordenada de categorías con su conteo de items proyectados.
+    """
+    id: int
+    name: str
+    icon: Optional[str] = None
+    position: int = 0
+    item_count: int = 0
+
+
 class FullMenuResponse(BaseModel):
-    """Respuesta completa del menú de heladería."""
+    """
+    Respuesta completa del menú de heladería.
+
+    `groups` se conserva EXACTAMENTE (agrupado por `component_type`) porque es el
+    contrato que consumen la Tienda (`getMenuItemsByType`) y los Displays.
+    `categories` es un índice ADITIVO para la navegación del POS.
+    """
     groups: List[MenuGroupResponse]
     total_items: int
+    categories: List[MenuCategoryResponse] = []
 
 
 # ═══════════════════════════════════════════════════════════════

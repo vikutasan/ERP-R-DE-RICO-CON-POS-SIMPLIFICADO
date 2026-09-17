@@ -2,8 +2,14 @@
  * PosHeladeriaUI.jsx — Punto de Venta Heladería.
  * Estética editorial B&W: blanco, divisores lineales, sin gradientes.
  * Layout: [Catálogo] | [Armado Rápido] | [Ticket]
+ *
+ * v8 (POS-CATEGORIAS): la navegación es por CATEGORÍA, igual que el POS de
+ * Panadería. Ya NO existen las tres secciones fijas (Recipientes/Sabores/
+ * Extras): el usuario crea las categorías en el Maestro de Productos y arrastra
+ * los productos. `component_type` se conserva como COMPORTAMIENTO del item al
+ * armar el helado (receta), no como eje de navegación.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useHeladeriaMenu } from '../hooks/useHeladeriaMenu';
 import { useQuickBuilder } from '../hooks/useQuickBuilder';
 import { useHeladeriaCart } from '../hooks/useHeladeriaCart';
@@ -11,9 +17,28 @@ import { FlavorGrid } from '../components/FlavorGrid';
 import { QuickIceCreamPanel } from '../components/QuickIceCreamPanel';
 import { HeladeriaTicketPanel } from '../components/HeladeriaTicketPanel';
 import { FlavorAvailabilityToggle } from '../components/FlavorAvailabilityToggle';
+import {
+    buildCategoryNav,
+    getItemsByCategory,
+    resolveInitialCategoryId,
+} from '../utils/heladeriaCategoryNav';
+import {
+    buildImageChain,
+    resolveActiveImage,
+    initialImageStatus,
+} from '../utils/heladeriaImageResolver';
+
+/** Emoji por rol de receta (comportamiento), no por categoría. */
+const ROLE_EMOJI = {
+    RECIPIENTE: '🥤',
+    TAMAÑO: '📐',
+    SABOR: '🍨',
+    EXTRA: '✨',
+    BEBIDA_BASE: '🥛',
+};
 
 export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, employeeName = '' }) {
-    const { recipientes, sabores, extras, loading, error, refresh } = useHeladeriaMenu();
+    const { menu, loading, error, refresh } = useHeladeriaMenu();
     const builder = useQuickBuilder();
     const cart = useHeladeriaCart({
         sessionId: null,
@@ -21,8 +46,33 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
         capturedById: employeeId,
     });
 
-    const [activeTab, setActiveTab] = useState('sabores');
+    const [activeCategoryId, setActiveCategoryId] = useState(null);
     const [showAvailability, setShowAvailability] = useState(false);
+
+    // Índice de navegación por categoría (derivado del menú).
+    const nav = useMemo(() => buildCategoryNav(menu), [menu]);
+
+    // Fijar la categoría activa cuando el menú llega o cambia.
+    useEffect(() => {
+        if (nav.length === 0) {
+            setActiveCategoryId(null);
+            return;
+        }
+        const stillExists = nav.some((c) => c.id === activeCategoryId);
+        if (!stillExists) setActiveCategoryId(resolveInitialCategoryId(nav));
+    }, [nav, activeCategoryId]);
+
+    // Items de la categoría activa.
+    const visibleItems = useMemo(
+        () => getItemsByCategory(menu, activeCategoryId),
+        [menu, activeCategoryId]
+    );
+
+    // Sabores visibles (para el panel de disponibilidad y el armado rápido).
+    const visibleSabores = useMemo(
+        () => visibleItems.filter((i) => i.component_type === 'SABOR'),
+        [visibleItems]
+    );
 
     const handleAddToTicket = useCallback(async () => {
         const summary = builder.getSummary();
@@ -67,12 +117,6 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
             </div>
         );
     }
-
-    const TABS = [
-        { key: 'recipientes', label: 'Recipientes', count: recipientes.length },
-        { key: 'sabores', label: 'Sabores', count: sabores.length },
-        { key: 'extras', label: 'Extras', count: extras.length },
-    ];
 
     return (
         <div style={{
@@ -130,7 +174,7 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
                             textTransform: 'uppercase', letterSpacing: '0.5px',
                         }}
                     >
-                        ⛔ Agotar Sabor
+                        ⛔ Agotar Producto
                     </button>
                 </div>
             </div>
@@ -147,209 +191,28 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
                     borderRight: '1px solid #0f0f0f',
                     overflow: 'hidden',
                 }}>
-                    {/* Tabs */}
-                    <div style={{
-                        display: 'flex', borderBottom: '1px solid #e5e7eb',
-                    }}>
-                        {TABS.map(tab => (
-                            <button
-                                key={tab.key}
-                                onClick={() => setActiveTab(tab.key)}
-                                style={{
-                                    flex: 1,
-                                    background: activeTab === tab.key ? '#0f0f0f' : '#ffffff',
-                                    border: 'none',
-                                    borderRight: '1px solid #e5e7eb',
-                                    padding: '14px 8px',
-                                    color: activeTab === tab.key ? '#ffffff' : '#6b7280',
-                                    fontSize: '11px',
-                                    fontWeight: '800',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '1px',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease',
-                                }}
-                            >
-                                {tab.label}
-                                <span style={{
-                                    display: 'block', fontSize: '16px', fontWeight: '900',
-                                    color: activeTab === tab.key ? '#ffffff' : '#9ca3af',
-                                    marginTop: '2px',
-                                }}>
-                                    {tab.count}
-                                </span>
-                            </button>
-                        ))}
-                    </div>
+                    <CategoryBar
+                        nav={nav}
+                        activeCategoryId={activeCategoryId}
+                        onSelect={setActiveCategoryId}
+                    />
 
                     {/* Contenido */}
                     <div style={{ flex: 1, overflowY: 'auto' }}>
-                        {activeTab === 'recipientes' && (
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-                            }}>
-                                {recipientes.map(r => {
-                                    const isSelected = builder.recipiente?.config_id === r.config_id;
-                                    return (
-                                        <button
-                                            key={r.config_id}
-                                            onClick={() => builder.selectRecipiente({
-                                                ...r,
-                                                config_id: r.config_id,
-                                                product_id: r.product_id,
-                                            })}
-                                            style={{
-                                                position: 'relative',
-                                                background: isSelected ? '#0f0f0f' : '#ffffff',
-                                                border: 'none',
-                                                borderRight: '1px solid #e5e7eb',
-                                                borderBottom: '1px solid #e5e7eb',
-                                                padding: '28px 14px 20px',
-                                                cursor: 'pointer',
-                                                display: 'flex', flexDirection: 'column',
-                                                alignItems: 'center', gap: '8px',
-                                                transition: 'all 0.15s ease',
-                                                minHeight: '110px',
-                                            }}
-                                        >
-                                            {/* Price badge */}
-                                            <span style={{
-                                                position: 'absolute', top: '10px', right: '10px',
-                                                background: isSelected ? '#ffffff' : '#0f0f0f',
-                                                color: isSelected ? '#0f0f0f' : '#ffffff',
-                                                fontSize: '10px', fontWeight: '800',
-                                                padding: '3px 9px', borderRadius: '100px',
-                                            }}>
-                                                ${parseFloat(r.base_price || r.price).toFixed(0)}
-                                            </span>
-                                            <span style={{ fontSize: '32px' }}>🥤</span>
-                                            <span style={{
-                                                fontSize: '12px', fontWeight: '800',
-                                                color: isSelected ? '#ffffff' : '#0f0f0f',
-                                                textAlign: 'center', lineHeight: '1.2',
-                                            }}>
-                                                {r.name}
-                                            </span>
-                                            {r.max_scoops && (
-                                                <span style={{
-                                                    fontSize: '10px',
-                                                    color: isSelected ? '#9ca3af' : '#9ca3af',
-                                                }}>
-                                                    Máx {r.max_scoops} bolas
-                                                </span>
-                                            )}
-                                            {isSelected && (
-                                                <span style={{
-                                                    position: 'absolute', bottom: '8px', right: '10px',
-                                                    color: '#ffffff', fontSize: '14px', fontWeight: '900',
-                                                }}>✓</span>
-                                            )}
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                        {showAvailability && visibleSabores.length > 0 && (
+                            <AvailabilityPanel
+                                sabores={visibleSabores}
+                                onToggled={refresh}
+                            />
                         )}
 
-                        {activeTab === 'sabores' && (
-                            <>
-                                {/* Panel disponibilidad */}
-                                {showAvailability && (
-                                    <div style={{
-                                        background: '#fef2f2',
-                                        borderBottom: '1px solid #fecaca',
-                                        padding: '14px 16px',
-                                    }}>
-                                        <span style={{
-                                            fontSize: '10px', color: '#ef4444', fontWeight: '800',
-                                            textTransform: 'uppercase', letterSpacing: '2px',
-                                            display: 'block', marginBottom: '10px',
-                                        }}>
-                                            Control de Disponibilidad
-                                        </span>
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                            {sabores.map(s => (
-                                                <FlavorAvailabilityToggle
-                                                    key={s.config_id}
-                                                    configId={s.config_id}
-                                                    name={s.name}
-                                                    isAvailable={s.is_available}
-                                                    onToggled={() => refresh()}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                <FlavorGrid
-                                    sabores={sabores}
-                                    onSelect={(sabor) => builder.addBola({
-                                        config_id: sabor.config_id,
-                                        product_id: sabor.product_id,
-                                        name: sabor.name,
-                                        price: sabor.price,
-                                    })}
-                                    selectedBolas={builder.bolas}
-                                    maxBolas={builder.maxBolas}
-                                />
-                            </>
-                        )}
-
-                        {activeTab === 'extras' && (
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-                            }}>
-                                {extras.map(e => {
-                                    const isSelected = builder.extras.some(x => x.config_id === e.config_id);
-                                    return (
-                                        <button
-                                            key={e.config_id}
-                                            onClick={() => builder.toggleExtra({
-                                                config_id: e.config_id,
-                                                product_id: e.product_id,
-                                                name: e.name,
-                                                price: e.price,
-                                            })}
-                                            disabled={!e.is_available}
-                                            style={{
-                                                position: 'relative',
-                                                background: isSelected ? '#0f0f0f' : '#ffffff',
-                                                border: 'none',
-                                                borderRight: '1px solid #e5e7eb',
-                                                borderBottom: '1px solid #e5e7eb',
-                                                padding: '28px 14px 20px',
-                                                color: isSelected ? '#fff' : e.is_available ? '#0f0f0f' : '#9ca3af',
-                                                cursor: e.is_available ? 'pointer' : 'not-allowed',
-                                                display: 'flex', flexDirection: 'column',
-                                                alignItems: 'center', gap: '8px',
-                                                opacity: e.is_available ? 1 : 0.45,
-                                                transition: 'all 0.15s ease',
-                                                minHeight: '110px',
-                                            }}
-                                        >
-                                            <span style={{
-                                                position: 'absolute', top: '10px', right: '10px',
-                                                background: isSelected ? '#ffffff' : '#0f0f0f',
-                                                color: isSelected ? '#0f0f0f' : '#ffffff',
-                                                fontSize: '10px', fontWeight: '800',
-                                                padding: '3px 9px', borderRadius: '100px',
-                                            }}>
-                                                +${parseFloat(e.price).toFixed(0)}
-                                            </span>
-                                            <span style={{ fontSize: '32px' }}>✨</span>
-                                            <span style={{ fontSize: '12px', fontWeight: '800', textAlign: 'center' }}>
-                                                {e.name}
-                                            </span>
-                                            {isSelected && (
-                                                <span style={{
-                                                    position: 'absolute', bottom: '8px', right: '10px',
-                                                    color: '#ffffff', fontSize: '14px', fontWeight: '900',
-                                                }}>✓</span>
-                                            )}
-                                        </button>
-                                    );
-                                })}
-                            </div>
+                        {visibleItems.length === 0 ? (
+                            <EmptyCategory />
+                        ) : (
+                            <ItemGrid
+                                items={visibleItems}
+                                builder={builder}
+                            />
                         )}
                     </div>
                 </div>
@@ -369,7 +232,9 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
                     isValid={builder.isValid}
                     maxBolas={builder.maxBolas}
                     bolasRestantes={builder.bolasRestantes}
-                    availableExtras={extras.filter(e => e.is_available)}
+                    availableExtras={visibleItems.filter(
+                        (i) => i.component_type === 'EXTRA' && i.is_available
+                    )}
                 />
 
                 {/* COLUMNA 3: Ticket */}
@@ -385,4 +250,229 @@ export function PosHeladeriaUI({ onBack, terminalId = 'H1', employeeId = null, e
             </div>
         </div>
     );
+}
+
+/**
+ * Barra de categorías — espeja el comportamiento del POS de Panadería.
+ * Se alimenta del índice `nav` derivado del menú.
+ */
+function CategoryBar({ nav, activeCategoryId, onSelect }) {
+    if (nav.length === 0) return null;
+
+    return (
+        <div style={{
+            display: 'flex', borderBottom: '1px solid #e5e7eb',
+            overflowX: 'auto', flexShrink: 0,
+        }}>
+            {nav.map((cat) => {
+                const isActive = cat.id === activeCategoryId;
+                return (
+                    <button
+                        key={cat.id}
+                        onClick={() => onSelect(cat.id)}
+                        style={{
+                            flex: '1 0 auto',
+                            background: isActive ? '#0f0f0f' : '#ffffff',
+                            border: 'none',
+                            borderRight: '1px solid #e5e7eb',
+                            padding: '14px 16px',
+                            color: isActive ? '#ffffff' : '#6b7280',
+                            fontSize: '11px',
+                            fontWeight: '800',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {cat.icon ? `${cat.icon} ` : ''}{cat.name}
+                        <span style={{
+                            display: 'block', fontSize: '16px', fontWeight: '900',
+                            color: isActive ? '#ffffff' : '#9ca3af',
+                            marginTop: '2px',
+                        }}>
+                            {cat.itemCount}
+                        </span>
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+/** Panel de control de disponibilidad (Agotar Producto). */
+function AvailabilityPanel({ sabores, onToggled }) {
+    return (
+        <div style={{
+            background: '#fef2f2',
+            borderBottom: '1px solid #fecaca',
+            padding: '14px 16px',
+        }}>
+            <span style={{
+                fontSize: '10px', color: '#ef4444', fontWeight: '800',
+                textTransform: 'uppercase', letterSpacing: '2px',
+                display: 'block', marginBottom: '10px',
+            }}>
+                Control de Disponibilidad
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {sabores.map((s) => (
+                    <FlavorAvailabilityToggle
+                        key={s.config_id}
+                        configId={s.config_id}
+                        name={s.name}
+                        isAvailable={s.is_available}
+                        onToggled={onToggled}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/** Estado vacío cuando una categoría no tiene productos. */
+function EmptyCategory() {
+    return (
+        <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            justifyContent: 'center', padding: '60px 20px', gap: '10px',
+            color: '#9ca3af',
+        }}>
+            <span style={{ fontSize: '40px' }}>📦</span>
+            <span style={{ fontSize: '12px', fontWeight: '700', letterSpacing: '1px' }}>
+                SIN PRODUCTOS EN ESTA CATEGORÍA
+            </span>
+            <span style={{ fontSize: '11px', textAlign: 'center', maxWidth: '280px' }}>
+                Agrega productos desde el Maestro de Productos y arrástralos a esta categoría.
+            </span>
+        </div>
+    );
+}
+
+/**
+ * Grid de items de la categoría activa.
+ * El comportamiento al hacer clic se decide por `component_type` (receta):
+ *   - RECIPIENTE / TAMAÑO → selecciona el recipiente del armado
+ *   - SABOR               → agrega una bola
+ *   - EXTRA               → alterna el extra
+ *   - BEBIDA_BASE         → agrega una bola (base líquida)
+ */
+function ItemGrid({ items, builder }) {
+    return (
+        <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+        }}>
+            {items.map((item) => {
+                const role = item.component_type;
+                const isSelected = isItemSelected(item, builder, role);
+                const disabled = !item.is_available;
+
+                return (
+                    <button
+                        key={item.config_id}
+                        onClick={() => handleItemClick(item, builder, role)}
+                        disabled={disabled}
+                        style={{
+                            position: 'relative',
+                            background: isSelected ? '#0f0f0f' : '#ffffff',
+                            border: 'none',
+                            borderRight: '1px solid #e5e7eb',
+                            borderBottom: '1px solid #e5e7eb',
+                            padding: '28px 14px 20px',
+                            color: isSelected ? '#fff' : disabled ? '#9ca3af' : '#0f0f0f',
+                            cursor: disabled ? 'not-allowed' : 'pointer',
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', gap: '8px',
+                            opacity: disabled ? 0.45 : 1,
+                            transition: 'all 0.15s ease',
+                            minHeight: '110px',
+                        }}
+                    >
+                        <span style={{
+                            position: 'absolute', top: '10px', right: '10px',
+                            background: isSelected ? '#ffffff' : '#0f0f0f',
+                            color: isSelected ? '#0f0f0f' : '#ffffff',
+                            fontSize: '10px', fontWeight: '800',
+                            padding: '3px 9px', borderRadius: '100px',
+                        }}>
+                            ${parseFloat(item.base_price || item.price).toFixed(0)}
+                        </span>
+                        <ItemThumb item={item} role={role} />
+                        <span style={{
+                            fontSize: '12px', fontWeight: '800',
+                            textAlign: 'center', lineHeight: '1.2',
+                        }}>
+                            {item.name}
+                        </span>
+                        {isSelected && (
+                            <span style={{
+                                position: 'absolute', bottom: '8px', right: '10px',
+                                color: '#ffffff', fontSize: '14px', fontWeight: '900',
+                            }}>✓</span>
+                        )}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
+
+/**
+ * Miniatura del item: cascada de imágenes idéntica al POS de Panadería
+ * (API → SKU.png → SKU.jpg → Legacy → Emoji). Si toda la cascada falla,
+ * cae al emoji del rol de receta.
+ */
+function ItemThumb({ item, role }) {
+    const [status, setStatus] = useState(() => initialImageStatus(item));
+    const chain = useMemo(() => buildImageChain(item), [item]);
+    const active = resolveActiveImage(chain, status);
+
+    if (!active) {
+        return <span style={{ fontSize: '32px' }}>{ROLE_EMOJI[role] || '🍦'}</span>;
+    }
+
+    return (
+        <img
+            src={active.src}
+            alt={item.name}
+            onError={() => setStatus(active.next)}
+            style={{
+                width: '56px', height: '56px',
+                objectFit: 'contain',
+            }}
+        />
+    );
+}
+
+/** ¿El item ya está seleccionado en el armado actual? */
+function isItemSelected(item, builder, role) {
+    if (role === 'RECIPIENTE' || role === 'TAMAÑO') {
+        return builder.recipiente?.config_id === item.config_id;
+    }
+    if (role === 'EXTRA') {
+        return builder.extras.some((x) => x.config_id === item.config_id);
+    }
+    return builder.bolas.some((b) => b.config_id === item.config_id);
+}
+
+/** Despacha la acción de armado según el rol de receta del item. */
+function handleItemClick(item, builder, role) {
+    const payload = {
+        config_id: item.config_id,
+        product_id: item.product_id,
+        name: item.name,
+        price: item.price,
+    };
+
+    if (role === 'RECIPIENTE' || role === 'TAMAÑO') {
+        builder.selectRecipiente(payload);
+        return;
+    }
+    if (role === 'EXTRA') {
+        builder.toggleExtra(payload);
+        return;
+    }
+    builder.addBola(payload);
 }

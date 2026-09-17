@@ -162,7 +162,10 @@ async def test_bug2_ranking_y_tickets_coinciden_en_el_mismo_dia_local(db):
     await _crear_ticket(db, f"{ACC_PREFIX}FUERA", datetime(2026, 9, 15, 18, 0, 0))
 
     svc = pos_service.POSService()
-    tickets_d = await svc.get_tickets(db, search_date="2026-09-14")
+    # Aislamiento: sin `search` la consulta devuelve TODOS los tickets del día
+    # (incluidos los reales de producción) y la aserción de abajo se contamina.
+    # Se filtra por el prefijo de prueba, igual que test_bug1.
+    tickets_d = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
     accs_d = {t.account_num for t in tickets_d}
     assert f"{ACC_PREFIX}DENTRO" in accs_d
     assert f"{ACC_PREFIX}FUERA" not in accs_d

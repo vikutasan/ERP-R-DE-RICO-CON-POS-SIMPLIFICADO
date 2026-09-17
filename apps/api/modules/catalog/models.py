@@ -11,6 +11,31 @@ class Category(Base):
     position = Column(Integer, nullable=True)
     vision_enabled = Column(Boolean, default=False)
     is_system = Column(Boolean, default=False)
+    # v8 (HEL-P): Declara que esta categoria pertenece al dominio Heladeria.
+    # Es el primer nivel de la proyeccion producto -> heladeria_product_config:
+    #   1. La CATEGORIA declara "pertenezco a Heladeria" (este flag).
+    #   2. El PRODUCTO declara "soy un SABOR dentro de ella"
+    #      (technical_data.heladeria_component_type).
+    # Sin este flag, el bloque de Heladeria no aparece en el modal de producto,
+    # evitando ruido en productos de panaderia/reventa.
+    heladeria_enabled = Column(Boolean, default=False)
+
+    # v8 (POS-SELECTOR): Destino de proyeccion de la categoria hacia los POS.
+    # Valores: 'PANADERIA' | 'HELADERIA' | 'AMBOS'. Default 'PANADERIA'.
+    # Es la UNICA decision que el usuario toma por categoria: al arrastrar un
+    # producto dentro, este hereda el destino sin editar la ficha del producto.
+    #   - PANADERIA -> solo aparece en GET /catalog/products (POS Panaderia).
+    #   - HELADERIA -> solo aparece en GET /heladeria/menu (POS Heladeria).
+    #   - AMBOS     -> aparece en los dos.
+    pos_target = Column(String, default="PANADERIA", nullable=False)
+
+    # v8 (POS-SELECTOR): Rol por defecto de los productos de esta categoria
+    # dentro del menu de Heladeria. Valores: 'SABOR' | 'RECIPIENTE' | 'EXTRA'
+    # | 'BEBIDA_BASE' | 'TAMAÑO' | None.
+    # Permite que arrastrar 14 productos a una categoria marcada como HELADERIA
+    # los proyecte todos como SABOR de un solo golpe, sin editar producto por
+    # producto. Solo aplica cuando pos_target incluye HELADERIA.
+    heladeria_default_role = Column(String, nullable=True)
 
     products = relationship("Product", back_populates="category")
 

@@ -9,6 +9,15 @@ class CategoryBase(BaseModel):
     position: Optional[int] = None
     vision_enabled: bool = False
     is_system: bool = False
+    # v8 (HEL-P): primer nivel de la proyeccion a heladeria_product_config.
+    # Declara que la categoria pertenece al dominio Heladeria.
+    heladeria_enabled: bool = False
+    # v8 (POS-SELECTOR): destino de la categoria hacia los POS.
+    # 'PANADERIA' | 'HELADERIA' | 'AMBOS'. Default 'PANADERIA'.
+    pos_target: str = "PANADERIA"
+    # v8 (POS-SELECTOR): rol por defecto de los productos de la categoria
+    # dentro del menu de Heladeria. Solo aplica si pos_target incluye HELADERIA.
+    heladeria_default_role: Optional[str] = None
 
 class CategoryCreate(CategoryBase):
     pass

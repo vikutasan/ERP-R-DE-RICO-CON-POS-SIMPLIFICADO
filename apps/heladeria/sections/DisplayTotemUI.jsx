@@ -1,20 +1,31 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { TotemContentManager } from '../components/TotemContentManager';
 import { TotemPlayer } from '../components/TotemPlayer';
+import { DisplayTotemSuiteUI } from './DisplayTotemSuiteUI';
+import { TotemProjectionSelectorUI } from './TotemProjectionSelectorUI';
 
 /**
- * DisplayTotemUI — Sección del Display Tótem Sugestivo (V16, Fase 16.4).
+ * DisplayTotemUI — Enrutador de la sub-suite Display Tótem (V16, Fase 16.4).
  *
- * DOBLE LANDING (mismo patrón que el Display de Precios V17):
- *   - `?mode=output`  → TotemPlayer (modo kiosco, solo lectura).
- *   - sin parámetro   → TotemContentManager (gestor de contenido para el admin).
+ * NAVEGACIÓN DE 3 NIVELES (mismo patrón que el Display de Precios V8):
+ *   - `?mode=output`   → TotemPlayer (kiosco, solo lectura, fullscreen).
+ *   - `?mode=selector` → TotemProjectionSelectorUI (abrir en varios monitores).
+ *   - (sin parámetro)  → Landing de la sub-suite (2 herramientas).
+ *   - tool = 'config'  → TotemContentManager (configurador de contenido).
+ *   - tool = 'selector'→ TotemProjectionSelectorUI.
+ *
+ * COMPATIBILIDAD: `?mode=output` sin `totem` sigue funcionando y proyecta el
+ * único manifiesto del tótem, igual que antes de la suite.
  *
  * ANIMACIONES (Incident 16.1 — Efecto Estrobo):
  *   Se ELIMINÓ el `@keyframes float` del placeholder anterior. Esta sección no
  *   define ninguna animación CSS infinita.
+ *
+ * @param {function} props.onBack
  */
 export const DisplayTotemUI = ({ onBack }) => {
     const [mode, setMode] = useState(() => resolveMode());
+    const [tool, setTool] = useState(null); // null | 'config' | 'selector'
 
     // Reacciona a cambios de URL (p.ej. si el admin abre la salida en otra pestaña).
     useEffect(() => {
@@ -23,12 +34,6 @@ export const DisplayTotemUI = ({ onBack }) => {
         return () => window.removeEventListener('popstate', onPop);
     }, []);
 
-    const openOutput = () => {
-        const url = new URL(window.location.href);
-        url.searchParams.set('mode', 'output');
-        window.open(url.toString(), '_blank', 'noopener');
-    };
-
     const exitOutput = () => {
         const url = new URL(window.location.href);
         url.searchParams.delete('mode');
@@ -36,79 +41,46 @@ export const DisplayTotemUI = ({ onBack }) => {
         setMode('manager');
     };
 
+    // ── Modo kiosco (deep-link directo) ──────────────────────
     if (mode === 'output') {
         return <TotemPlayer onExit={exitOutput} />;
     }
 
+    // ── Herramienta: Selector de proyección ──────────────────
+    if (mode === 'selector' || tool === 'selector') {
+        return <TotemProjectionSelectorUI onBack={() => { setTool(null); setMode('manager'); }} />;
+    }
+
+    // ── Herramienta: Configurador de contenido ───────────────
+    if (tool === 'config') {
+        return (
+            <TotemContentManager
+                onBack={() => setTool(null)}
+                onOpenSelector={() => setTool('selector')}
+            />
+        );
+    }
+
+    // ── Landing de la sub-suite ──────────────────────────────
     return (
-        <div style={styles.wrapper}>
-            <div style={styles.header}>
-                <button
-                    type="button"
-                    onClick={onBack}
-                    style={styles.backBtn}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(251, 191, 36, 0.2)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(251, 191, 36, 0.1)'; }}
-                >
-                    ← Regresar
-                </button>
-                <h1 style={styles.title}>Display Tótem Sugestivo</h1>
-            </div>
-            <div style={styles.scroll}>
-                <TotemContentManager onOpenOutput={openOutput} />
-            </div>
-        </div>
+        <DisplayTotemSuiteUI
+            onBack={onBack}
+            onSelectTool={(id) => setTool(id)}
+        />
     );
 };
 
-/** Determina el modo a partir del query string (`?mode=output`). */
+/** Determina el modo a partir del query string (`?mode=output|selector`). */
 function resolveMode() {
     try {
         const params = new URLSearchParams(window.location.search);
-        return params.get('mode') === 'output' ? 'output' : 'manager';
+        const value = params.get('mode');
+        if (value === 'output') return 'output';
+        if (value === 'selector') return 'selector';
+        return 'manager';
     } catch {
         return 'manager';
     }
 }
-
-const styles = {
-    wrapper: {
-        height: '100%',
-        background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1008 50%, #0a0a0a 100%)',
-        display: 'flex',
-        flexDirection: 'column',
-        fontFamily: "'Inter', sans-serif",
-    },
-    header: {
-        padding: '20px 30px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        borderBottom: '1px solid rgba(251, 191, 36, 0.15)',
-    },
-    backBtn: {
-        background: 'rgba(251, 191, 36, 0.1)',
-        border: '1px solid rgba(251, 191, 36, 0.2)',
-        color: '#fbbf24',
-        padding: '10px 20px',
-        borderRadius: '12px',
-        cursor: 'pointer',
-        fontWeight: 700,
-        fontSize: '13px',
-        transition: 'background 0.3s ease',
-    },
-    title: {
-        margin: 0,
-        fontFamily: "'Playfair Display', serif",
-        fontSize: '1.5rem',
-        background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-        WebkitBackgroundClip: 'text',
-        WebkitTextFillColor: 'transparent',
-    },
-    scroll: {
-        flex: 1,
-        overflowY: 'auto',
-    },
-};
 
 export default DisplayTotemUI;

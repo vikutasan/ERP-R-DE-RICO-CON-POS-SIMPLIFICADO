@@ -1156,6 +1156,82 @@ tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
 
 ---
 
+### 16.12 `MissingGreenlet` al Guardar un Producto: Lazy-Load de Relaciones en Contexto Async (17/Septiembre/2026)
+
+**Commit:** `apps/api/modules/catalog/service.py` (`_project_heladeria`) + `apps/api/modules/heladeria/sync.py` (`_safe_category`).
+
+**Contexto del Problema:**
+Al crear la categorÃ­a `BOLAS DE HELADO`, marcarla como visible en HeladerÃ­a y guardar un producto nuevo, el Maestro de Productos mostraba un **modal de error crÃ­tico**. Sin embargo, la categorÃ­a y el producto **sÃ­ aparecÃ­an** en el POS de HeladerÃ­a: el `INSERT`/`UPDATE` del producto se habÃ­a confirmado, pero la **proyecciÃ³n hacia HeladerÃ­a** explotaba despuÃ©s.
+
+**SÃ­ntoma (log del contenedor `rderico-api-dev`):**
+
+```
+File "/app/modules/heladeria/sync.py", line 187, in projects_to_heladeria
+    category = getattr(product, "category", None)
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called;
+can't call await_only() here. Was IO attempted in an unexpected place?
+```
+
+**Causa RaÃ­z:**
+`CatalogService._project_heladeria()` recibÃ­a el objeto `db_product` reciÃ©n persistido y llamaba a `sync_product_config(db, db_product)`. Dentro de esa cadena, `projects_to_heladeria(product)` hacÃ­a `getattr(product, "category", None)`. La relaciÃ³n `Product.category` **no estaba cargada** (no hubo `selectinload`), asÃ­ que SQLAlchemy intentaba un **lazy-load implÃ­cito** para resolverla. En un contexto **async** (asyncpg + greenlet), un lazy-load sÃ­ncrono es **imposible**: no hay greenlet activo para suspender la corrutina â†’ `MissingGreenlet`.
+
+Es el mismo patrÃ³n que el Incidente 16.3 (modelo no importado) en su variante de **I/O implÃ­cito**: el ORM intenta tocar la base de datos en un punto donde el event loop no lo permite.
+
+**SoluciÃ³n (doble blindaje):**
+
+1. **Eager-load explÃ­cito en el origen** â€” `_project_heladeria()` **re-consulta** el producto con la relaciÃ³n ya cargada antes de proyectar:
+
+```python
+# apps/api/modules/catalog/service.py
+from sqlalchemy.orm import selectinload
+
+async def _project_heladeria(self, db, db_product):
+    from modules.heladeria.sync import sync_product_config  # lazy import (evita circularidad)
+    result = await db.execute(
+        select(models.Product)
+        .options(selectinload(models.Product.category))
+        .where(models.Product.id == db_product.id)
+    )
+    fresh = result.scalar_one_or_none()
+    if fresh is None:
+        return
+    await sync_product_config(db, fresh)
+```
+
+2. **GuardiÃ³n defensivo en el consumidor** â€” `sync.py` incorpora `_safe_category(product)`, que **inspecciona el estado del ORM** y devuelve `None` en lugar de disparar el lazy-load:
+
+```python
+# apps/api/modules/heladeria/sync.py
+from sqlalchemy import inspect
+
+def _safe_category(product):
+    """Devuelve product.category SOLO si ya estÃ¡ cargada. Nunca dispara lazy-load."""
+    try:
+        state = inspect(product)
+        if "category" in state.unloaded:
+            return None
+        return getattr(product, "category", None)
+    except Exception:
+        return None
+```
+
+`resolve_effective_role()` usa `_safe_category()` en lugar de `product.category` directo.
+
+**Evidencia de AceptaciÃ³n:**
+- **pytest:** `113 passed` (antes: 112 passed + 1 fallo preexistente de aislamiento, resuelto en el mismo ciclo).
+- **vitest:** `443 passed` en 12 archivos (antes: 426).
+- **`npx vite build`:** exit 0, 1816 mÃ³dulos.
+- **`git status --porcelain apps/pos/`:** vacÃ­o â€” el POS de PanaderÃ­a **no se tocÃ³**.
+- **VerificaciÃ³n en vivo:** `PUT /api/v1/catalog/products/500` â†’ **HTTP 200** (la ruta que antes devolvÃ­a 500). `docker logs rderico-api-dev` â†’ **sin** `MissingGreenlet`.
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **PROHIBIDO** acceder a una relaciÃ³n de SQLAlchemy (`obj.relacion`) en contexto async si no fue **eager-loaded** (`selectinload`/`joinedload`). Un lazy-load sÃ­ncrono en async lanza `MissingGreenlet`.
+- **OBLIGATORIO** que toda funciÃ³n que reciba un objeto ORM de otra capa y vaya a leer relaciones use un **guardiÃ³n de estado** (`sqlalchemy.inspect(obj).unloaded`) que degrade a `None` en lugar de disparar I/O implÃ­cito.
+- **OBLIGATORIO** que la capa que **origina** la proyecciÃ³n (el servicio de catÃ¡logo) re-consulte con `selectinload` la relaciÃ³n que la capa consumidora necesita. El guardiÃ³n del consumidor es la red de seguridad, **no** la soluciÃ³n principal.
+- **REGLA DE DIAGNÃ“STICO:** si un `POST`/`PUT` devuelve 500 pero el registro **sÃ­ se persistiÃ³**, el fallo estÃ¡ en un **efecto secundario posterior al commit** (proyecciÃ³n, sincronizaciÃ³n, notificaciÃ³n), no en la escritura. Buscar en `docker logs` el mÃ³dulo del efecto secundario.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:

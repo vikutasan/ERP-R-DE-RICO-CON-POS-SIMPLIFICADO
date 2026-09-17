@@ -2,7 +2,7 @@
 
 > **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite interactuar, depurar o extender el Módulo de Heladería **DEBE** leer este documento. Aquí se detalla la arquitectura, el flujo de datos, las reglas de negocio y las decisiones técnicas del módulo.
 >
-> **Última actualización:** 2026-09-14 (Hub Editorial B&W + Branding Editable + Permiso `editar_ui_heladeria`)
+> **Última actualización:** 2026-09-17 (Proyección Catálogo→Heladería + POS por Categorías + Cascada de Imágenes)
 > **Archivos gobernados:**
 > - Backend: `apps/api/modules/heladeria/*` (models, schemas, service, router)
 > - Frontend: `apps/heladeria/*` (Hub, secciones, hooks, services, components)
@@ -98,19 +98,88 @@ El módulo utiliza el campo `channel` en la tabla `tickets` para separar flujos:
 
 ## 3. MODELO DE DATOS
 
-### 3.1 Tabla `heladeria_product_config`
+### 3.0 ARQUITECTURA DE PROYECCIÓN (V19 — cambio de paradigma)
 
-Extiende la tabla `products` del catálogo existente con configuración específica de heladería.
+> [!IMPORTANT]
+> **La fuente de verdad es el Catálogo (`products` + `categories`).** El POS de Heladería y el Display de Precios leen **exactamente igual que el POS de Panadería**: de `products` filtrado por `categories`. La tabla `heladeria_product_config` **ya NO es la fuente de verdad**: es un **espejo** que conserva únicamente `is_available` (agotado) y los overrides de precio.
+
+#### Modelo de dos niveles
+
+| Nivel | Dónde vive | Campos | Quién lo edita |
+|---|---|---|---|
+| **Nivel 1 — Categoría** | `categories` | `pos_target` (`PANADERIA` \| `HELADERIA` \| `AMBOS`), `heladeria_default_role`, `heladeria_enabled` | Modal de edición de categoría (Maestro de Productos) |
+| **Nivel 2 — Producto** | `products.technical_data` | `heladeria_enabled` (bool), `heladeria_component_type` | Ficha del producto (Maestro de Productos) |
+
+#### Funciones puras de decisión ([`sync.py`](apps/api/modules/heladeria/sync.py:1))
+
+| Función | Responsabilidad |
+|---|---|
+| `read_heladeria_intent(product)` | Lee la intención del producto desde `technical_data`. Devuelve el `component_type` o `None` |
+| `resolve_effective_role(product)` | **Intención del producto → rol por defecto de la categoría → `None`** |
+| `projects_to_heladeria(product)` | `category.pos_target ∈ {HELADERIA, AMBOS}` **Y** `resolve_effective_role(product) is not None` |
+| `_safe_category(product)` | Devuelve `product.category` **solo si ya está cargada** (nunca dispara lazy-load). Ver Incidente 16.12 |
+
+#### Flujo de escritura (único escritor)
+
+```
+Maestro de Productos (POST/PUT /catalog/products)
+        │
+        ▼
+CatalogService.create_product() / update_product()
+        │
+        ▼
+CatalogService._project_heladeria()   ← re-consulta con selectinload(Product.category)
+        │
+        ▼
+heladeria/sync.py::sync_product_config()   ← ÚNICO escritor de heladeria_product_config
+        │
+        ▼
+heladeria_product_config (espejo: is_available + overrides de precio)
+```
+
+> [!WARNING]
+> **PROHIBIDO** escribir en `heladeria_product_config` desde cualquier otro punto. `sync_product_config()` es el **único** escritor desde la UI. Cualquier escritura paralela rompe la idempotencia de la proyección.
+
+#### Flujo de lectura (idéntico al POS de Panadería)
+
+```
+GET /api/v1/heladeria/menu
+        │
+        ▼
+heladeria/service.py::get_menu()
+        │
+        ├── SELECT products JOIN categories  (selectinload(Product.category))
+        ├── filtra por projects_to_heladeria(product)
+        ├── agrupa por resolve_effective_role(product)  → groups[]  (contrato de la Tienda)
+        └── agrupa por category_id                      → categories[]  (navegación del POS)
+```
+
+### 3.1 Tabla `heladeria_product_config` (ESPEJO, no fuente de verdad)
 
 | Campo | Tipo | Descripción |
 |---|---|---|
 | `id` | `Integer PK` | Autoincremental |
-| `product_id` | `FK → products.id` | Producto del catálogo base |
-| `component_type` | `String` | `SABOR`, `RECIPIENTE`, `EXTRA`, `BEBIDA_BASE` |
+| `product_id` | `FK → products.id` (UNIQUE, NOT NULL) | Producto del catálogo base |
+| `component_type` | `String NOT NULL` | `RECIPIENTE`, `TAMAÑO`, `SABOR`, `EXTRA`, `BEBIDA_BASE` |
 | `max_scoops` | `Integer nullable` | Máximo de bolas (solo RECIPIENTE) |
 | `base_price` | `Float nullable` | Precio base del recipiente |
-| `is_available` | `Boolean default True` | Disponibilidad (botón AGOTAR SABOR) |
+| `price_per_scoop` | `Float nullable` | Precio por bola adicional |
+| `is_available` | `Boolean default True` | Disponibilidad (botón AGOTAR). **Único dato que vive solo aquí** |
 | `position` | `Integer default 0` | Orden de visualización |
+
+#### Orden canónico de `component_type`
+
+`COMPONENT_TYPE_ORDER`: **RECIPIENTE → TAMAÑO → SABOR → EXTRA → BEBIDA_BASE**
+
+### 3.1.1 Columnas agregadas a `categories` (V19)
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `heladeria_enabled` | `Boolean default False` | Compatibilidad con la primera iteración (HEL-P) |
+| `pos_target` | `String default 'PANADERIA'` | `PANADERIA` \| `HELADERIA` \| `AMBOS` |
+| `heladeria_default_role` | `String nullable` | Rol por defecto para los productos de la categoría |
+
+Migración: [`add_category_pos_target.py`](apps/api/migrations/add_category_pos_target.py:1) — 6 pasos, **idempotente**.
 
 ### 3.2 Tabla `ticket_item_components`
 
@@ -264,6 +333,9 @@ Forma del `value` (JSON serializado):
 
 ### Respuesta de `/menu`
 
+> [!IMPORTANT]
+> La respuesta tiene **DOS índices** sobre los mismos items: `groups[]` (por `component_type`, contrato de la Tienda Interactiva) y `categories[]` (por categoría del catálogo, navegación del POS). **Ninguno de los dos puede eliminarse**: la Tienda consume `groups[]` vía [`tiendaConfigurator.js:87`](apps/heladeria/utils/tiendaConfigurator.js:87) y el POS consume `categories[]` vía [`heladeriaCategoryNav.js`](apps/heladeria/utils/heladeriaCategoryNav.js:1).
+
 ```json
 {
     "groups": [
@@ -271,12 +343,16 @@ Forma del `value` (JSON serializado):
             "component_type": "SABOR",
             "items": [
                 {
+                    "config_id": 12,
                     "product_id": 150,
                     "name": "Chocolate",
                     "price": 40.0,
                     "is_available": true,
                     "position": 1,
-                    "image_url": null
+                    "image_url": null,
+                    "category_id": 21,
+                    "category_name": "BOLAS DE HELADO",
+                    "sku": "SKU-2782"
                 }
             ]
         },
@@ -285,9 +361,37 @@ Forma del `value` (JSON serializado):
             "items": [...]
         }
     ],
+    "categories": [
+        { "id": 21, "name": "BOLAS DE HELADO", "icon": null, "position": 3, "item_count": 8 }
+    ],
     "total_items": 29
 }
 ```
+
+#### Campos por item (contrato congelado)
+
+| Campo | Tipo | Consumidor | Nota |
+|---|---|---|---|
+| `config_id` | `int` | POS / Tienda | ID en `heladeria_product_config` (para `PATCH /availability/{config_id}`) |
+| `product_id` | `int` | POS / Tienda | ID en `products` |
+| `name` | `str` | POS / Tienda | Nombre comercial |
+| `price` | `float` | POS / Tienda | **Número**, no string |
+| `is_available` | `bool` | POS / Tienda | Espejo de `heladeria_product_config.is_available` |
+| `position` | `int` | POS / Tienda | Orden |
+| `image_url` | `str \| null` | POS / Tienda | Ruta relativa del catálogo |
+| `category_id` | `int \| null` | **POS** | Categoría del catálogo (navegación) |
+| `category_name` | `str \| null` | **POS** | Nombre de la categoría (barra superior) |
+| `sku` | `str \| null` | **POS** | **Fallback de la cascada de imágenes** (ver §5.0.1) |
+
+#### Campos por categoría (`categories[]`)
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `id` | `int` | ID de la categoría del catálogo |
+| `name` | `str` | Nombre (MAYÚSCULAS) |
+| `icon` | `str \| null` | Reservado |
+| `position` | `int` | Orden de la barra |
+| `item_count` | `int` | Nº de items proyectados en esa categoría |
 
 ---
 
@@ -299,6 +403,28 @@ Forma del `value` (JSON serializado):
 |---|---|
 | `utils/kdsUrgency.js` | **(V15 Fase 15.1)** Guardián del contrato de urgencia del KDS. Lógica **pura** (no importa React, no toca el DOM, no hace `fetch`). Exporta `URGENCY_LEVELS` (NORMAL/WARNING/CRITICAL), `DEFAULT_URGENCY_THRESHOLDS` (`{warningSec:180, criticalSec:420}`), `DEFAULT_TZ_OFFSET_HOURS` (0), `normalizeTzOffset()`, `normalizeThresholds()`, `computeElapsedSec()`, `classifyUrgency()`, `urgencyColor()`, `formatElapsed()`, `sortOrdersByUrgency()` y `countByUrgency()`. **Solo color, nunca animación** (Incidente 16.1). 25 tests |
 | `utils/kdsUrgency.test.js` | **(V15 Fase 15.1)** 25 tests de `kdsUrgency.js`, incluyendo guardianes: `urgencyColor()` no devuelve claves de animación y `sortOrdersByUrgency()` no muta la entrada |
+| `utils/heladeriaCategoryNav.js` | **(V19)** Guardián del contrato de navegación por categoría del POS. Lógica **pura**. Exporta `buildCategoryNav(menu)` (construye la barra desde `menu.categories[]` + `menu.groups[].items[]`), `filterItemsByCategory(menu, categoryId)` y `countItemsByCategory(menu)`. **Nunca** asume la forma del menú sin validarla. 13 tests |
+| `utils/heladeriaCategoryNav.test.js` | **(V19)** 13 tests, incluyendo guardianes: `buildCategoryNav()` no muta la entrada y devuelve `[]` ante un menú malformado |
+| `utils/heladeriaImageResolver.js` | **(V19)** Guardián de la **cascada de imágenes** del POS Heladería. Lógica **pura**. Exporta `IMAGE_STEPS`, `resolveImageUrl()`, `buildImageChain()`, `resolveActiveImage()` e `initialImageStatus()`. Replica **exactamente** la cascada del POS de Panadería ([`ProductCard.jsx:25`](apps/pos/components/ProductCard.jsx:25)). 17 tests |
+| `utils/heladeriaImageResolver.test.js` | **(V19)** 17 tests de la cascada, incluyendo el orden de los 6 pasos y el fallback final |
+
+#### 5.0.1 Cascada de imágenes del POS Heladería (V19)
+
+El POS de Heladería **replica la cascada canónica del POS de Panadería** en lugar de inventar una propia. Orden de los 6 pasos (`IMAGE_STEPS`):
+
+| # | Paso | Patrón |
+|---|---|---|
+| 1 | `API_IMG` | `image_url` tal cual llega del API |
+| 2 | `TRY_PNG` | `/assets/productos/<sku>.png` |
+| 3 | `TRY_JPG` | `/assets/productos/<sku>.jpg` |
+| 4 | `LEGACY_PNG` | `/assets/productos/Img1118_<sku>.png` |
+| 5 | `LEGACY_JPG` | `/assets/productos/Img1118_<sku>.jpg` |
+| 6 | `FALLBACK` | Placeholder local |
+
+El componente `ItemThumb` avanza al siguiente paso en el evento `onError` de la `<img>`. **Por eso `sku` debe viajar en la respuesta de `/menu`**: sin él, los pasos 2–5 son inalcanzables.
+
+> [!NOTE]
+> **Antes de V19** el `ItemGrid` del POS Heladería renderizaba **solo un emoji** (`ROLE_EMOJI[role]`) e **ignoraba por completo `item.image_url`**. Ese era el motivo real de "la imagen del producto no se muestra" (ver BUG 6).
 
 ### 5.1 Servicios (capa de datos)
 
@@ -616,6 +742,37 @@ Estas decisiones fueron tomadas entre el dueño y el equipo técnico durante la 
 
 **Regla de Oro:** *Un datetime naive se asume UTC y SIEMPRE se serializa con sufijo `Z`. La normalización va en la capa de serialización, no en la columna (evita migraciones de alto riesgo).*
 
+### 🐛 BUG 5: `MissingGreenlet` al guardar un producto con categoría de Heladería (V19)
+
+**Síntoma:** Al crear la categoría `BOLAS DE HELADO`, marcarla visible en Heladería y guardar un producto nuevo, el Maestro de Productos mostraba un **modal de error crítico**. La categoría y el producto **sí aparecían** en el POS de Heladería (el registro se había persistido), pero la petición devolvía 500.
+
+**Causa Raíz:** `CatalogService._project_heladeria()` pasaba el objeto `db_product` recién persistido a `sync_product_config()`. Dentro de esa cadena, `projects_to_heladeria(product)` ejecutaba `getattr(product, "category", None)` sobre una relación **no cargada**. SQLAlchemy intentaba un **lazy-load implícito** (I/O síncrono) dentro de un contexto **async** (asyncpg + greenlet) → `sqlalchemy.exc.MissingGreenlet` en [`sync.py:187`](apps/api/modules/heladeria/sync.py:187).
+
+**Solución (doble blindaje):**
+1. **Eager-load en el origen** — `_project_heladeria()` **re-consulta** el producto con `selectinload(models.Product.category)` antes de proyectar.
+2. **Guardián en el consumidor** — `sync.py` incorpora `_safe_category(product)`, que usa `sqlalchemy.inspect(product).unloaded` para devolver `None` en lugar de disparar el lazy-load. `resolve_effective_role()` lo consume.
+
+**Evidencia:** `PUT /api/v1/catalog/products/500` → **HTTP 200** (antes 500). `docker logs rderico-api-dev` → sin `MissingGreenlet`. 113 pytest / 443 vitest / build exit 0.
+
+**Regla de Oro:** *En contexto async, NUNCA acceder a una relación de SQLAlchemy que no fue eager-loaded. Un lazy-load síncrono lanza `MissingGreenlet`.* Ver Incidente 16.12 del [`CONTEXTO_SISTEMA_IA.md`](ESPECIFICACIONES%20DEL%20PROYECTO/CONTEXTO_SISTEMA_IA.md:1).
+
+### 🐛 BUG 6: La imagen del producto no se mostraba en el POS de Heladería (V19)
+
+**Síntoma:** El producto aparecía correctamente en el POS de Heladería (nombre, precio, categoría), pero **sin fotografía**. El usuario lo reportó como "la imagen del producto no se muestra".
+
+**Causa Raíz:** Doble defecto acumulado:
+1. **El componente ignoraba la imagen.** `ItemGrid` en [`PosHeladeriaUI.jsx`](apps/heladeria/sections/PosHeladeriaUI.jsx:361) renderizaba **únicamente** `ROLE_EMOJI[role]` (un emoji por rol) y **nunca** leía `item.image_url`. El dato llegaba del API pero se descartaba en el render.
+2. **El fallback por SKU era inalcanzable.** La cascada canónica del POS de Panadería ([`ProductCard.jsx:25`](apps/pos/components/ProductCard.jsx:25)) intenta `/assets/productos/<sku>.png`, `<sku>.jpg`, `Img1118_<sku>.png`, `Img1118_<sku>.jpg`. Pero `MenuItemResponse` **no exponía `sku`**, así que los pasos 2–5 no podían construirse.
+
+**Solución:**
+1. Se creó el helper **puro** [`heladeriaImageResolver.js`](apps/heladeria/utils/heladeriaImageResolver.js:1) que replica **exactamente** la cascada de 6 pasos del POS de Panadería (`IMAGE_STEPS`, `resolveImageUrl()`, `buildImageChain()`, `resolveActiveImage()`, `initialImageStatus()`). 17 tests.
+2. Se añadió el componente `ItemThumb` a `PosHeladeriaUI.jsx`, que renderiza la cascada y avanza de paso en el evento `onError` de la `<img>`.
+3. Se añadió `sku: Optional[str] = None` a `MenuItemResponse` y se pobló con `sku=product.sku` en `get_menu()`.
+
+**Evidencia:** `GET /api/v1/heladeria/menu` devuelve `"sku":"SKU-2782"` y `"category_name":"BOLAS DE HELADO"`. Imagen `/static/catalog/ba39e...jpeg` → HTTP 200 (26 798 bytes). 17 tests nuevos de la cascada.
+
+**Regla de Oro:** *Si un dato viaja en la respuesta del API pero el componente no lo consume, el bug está en el render, no en el backend. Antes de tocar el backend, verificar que el componente lea el campo.*
+
 ### Estado actual: 🟢 Sin bugs abiertos
 
 El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme se presentan.
@@ -635,6 +792,9 @@ El módulo fue implementado el 2026-09-07. Los bugs se documentan aquí conforme
 | **Contrato de serialización UTC** | V18 (Fase 18.1) | 🟢 Funcional — `core/serialization.py::iso_utc()` compartido con el POS. Heladería serializa `created_at` con sufijo `Z`; el POS conserva su alias `_iso_utc` sin cambios. 8 tests. Cierra BUG 4 |
 | **Hub Editorial B&W** | — | 🟢 Funcional — Rediseño del Hub con estética editorial blanco y negro. Navegación de 3 niveles (Landing → Gestor → Herramienta). 3 gestores: POS, KDS, Displays |
 | **Branding Editable** | — | 🟢 Funcional — Nombre y eslogan editables desde el Hub. Persistencia en `system_settings` (`heladeria_branding`). Botón ✏️ condicionado al permiso `editar_ui_heladeria`. Auto-seed si la clave no existe (manejo de 404) |
+| **Proyección Catálogo→Heladería** | V19 | 🟢 Funcional — La fuente de verdad es `products` + `categories`. Modelo de 2 niveles (`categories.pos_target` + `products.technical_data.heladeria_enabled`). `heladeria_product_config` pasa a ser **espejo** (solo `is_available` + overrides). `sync.py` es el único escritor. Cierra BUG 5 |
+| **POS Heladería por Categorías** | V19 | 🟢 Funcional — El POS navega por categoría del catálogo (barra superior) igual que el POS de Panadería. **Sin secciones preconfiguradas**: las categorías las define el usuario desde el Maestro de Productos. `heladeriaCategoryNav.js` puro con 13 tests |
+| **Cascada de Imágenes del POS** | V19 | 🟢 Funcional — `heladeriaImageResolver.js` puro replica la cascada de 6 pasos del POS de Panadería. `ItemThumb` avanza de paso en `onError`. `sku` expuesto en `/menu`. 17 tests. Cierra BUG 6 |
 
 ### Oleada 2 (pendiente de revisión)
 

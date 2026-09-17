@@ -71,6 +71,7 @@ export const DEFAULT_DISPLAY_CONFIG = {
     theme: 'LIGHT',        // 'LIGHT' | 'DARK'
     showImages: true,
     showUnavailable: true, // true = mostrar agotados (atenuados)
+    groupLabels: {},       // v8: overrides de etiqueta por componentType
 };
 
 /** Límites de columnas aceptados por la UI. */
@@ -125,12 +126,31 @@ function isMenuItem(obj) {
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * Normaliza un mapa de etiquetas personalizadas de grupo (v8).
+ * Solo conserva pares `{ [componentType]: stringNoVacío }`. NUNCA lanza.
+ *
+ * @param {object|null} raw
+ * @returns {object} Mapa saneado (posiblemente vacío).
+ */
+export function normalizeGroupLabels(raw) {
+    if (!isPlainObject(raw)) return {};
+    const out = {};
+    for (const [key, value] of Object.entries(raw)) {
+        if (typeof key === 'string' && key.trim().length > 0
+            && typeof value === 'string' && value.trim().length > 0) {
+            out[key.trim()] = value.trim();
+        }
+    }
+    return out;
+}
+
+/**
  * Normaliza una configuración cruda (de la API, de IndexedDB o de un formulario)
  * a la forma canónica. NUNCA lanza: ante basura devuelve los valores por defecto.
  *
  * @param {object|string|null} raw - Objeto, JSON string o null.
  * @returns {{groups: string[], columns: number, theme: string,
- *            showImages: boolean, showUnavailable: boolean}}
+ *            showImages: boolean, showUnavailable: boolean, groupLabels: object}}
  */
 export function normalizeDisplayConfig(raw) {
     let source = raw;
@@ -177,7 +197,10 @@ export function normalizeDisplayConfig(raw) {
         ? source.showUnavailable
         : DEFAULT_DISPLAY_CONFIG.showUnavailable;
 
-    return { groups, columns, theme, showImages, showUnavailable };
+    // groupLabels: mapa de overrides de etiqueta por componentType (v8).
+    const groupLabels = normalizeGroupLabels(source.groupLabels);
+
+    return { groups, columns, theme, showImages, showUnavailable, groupLabels };
 }
 
 /**
@@ -418,4 +441,291 @@ export function resolveDisplayMode(search) {
  */
 export function serializeDisplayConfig(config) {
     return JSON.stringify(normalizeDisplayConfig(config));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Multi-pantalla (V8 — sub-suite del Display de Precios)
+// ─────────────────────────────────────────────────────────────
+
+/** Máximo de pantallas nombradas soportadas. */
+export const MAX_SCREENS = 3;
+
+/** Alineaciones válidas del encabezado. */
+export const VALID_HEADER_ALIGNS = ['LEFT', 'CENTER', 'RIGHT'];
+
+/** Tamaños válidos de imagen. */
+export const VALID_IMAGE_SIZES = ['SMALL', 'MEDIUM', 'LARGE'];
+
+/** Formas válidas de imagen. */
+export const VALID_IMAGE_SHAPES = ['SQUARE', 'ROUNDED', 'CIRCLE'];
+
+/** Estrategias de fallback cuando el producto no tiene imagen. */
+export const VALID_IMAGE_FALLBACKS = ['NONE', 'INITIALS'];
+
+/** Encabezado por defecto (v4). */
+export const DEFAULT_HEADER = {
+    title: '',
+    subtitle: '',
+    logo: true,
+    align: 'LEFT',
+};
+
+/** Presentación de imágenes por defecto (v4). */
+export const DEFAULT_IMAGES = {
+    enabled: true,
+    size: 'MEDIUM',
+    shape: 'ROUNDED',
+    fallback: 'INITIALS',
+};
+
+/** Configuración de impresión por defecto (v7). */
+export const DEFAULT_PRINT = {
+    format: 'LETTER',
+    orientation: 'PORTRAIT',
+    footerNote: '',
+    validUntil: null,
+    showQr: false,
+    showCropMarks: false,
+};
+
+/** Configuración completa por defecto de una pantalla (base + v4 + v7). */
+export const DEFAULT_SCREEN_CONFIG = {
+    ...DEFAULT_DISPLAY_CONFIG,
+    header: { ...DEFAULT_HEADER },
+    fontFamily: 'CLASSIC',
+    images: { ...DEFAULT_IMAGES },
+    print: { ...DEFAULT_PRINT },
+};
+
+/** IDs canónicos de las 3 pantallas. */
+export const SCREEN_IDS = ['screen_1', 'screen_2', 'screen_3'];
+
+/**
+ * Normaliza el encabezado (v4). NUNCA lanza.
+ * @param {object|null} raw
+ * @returns {{title: string, subtitle: string, logo: boolean, align: string}}
+ */
+export function normalizeHeader(raw) {
+    const src = isPlainObject(raw) ? raw : {};
+    return {
+        title: typeof src.title === 'string' ? src.title : DEFAULT_HEADER.title,
+        subtitle: typeof src.subtitle === 'string' ? src.subtitle : DEFAULT_HEADER.subtitle,
+        logo: typeof src.logo === 'boolean' ? src.logo : DEFAULT_HEADER.logo,
+        align: VALID_HEADER_ALIGNS.includes(src.align) ? src.align : DEFAULT_HEADER.align,
+    };
+}
+
+/**
+ * Normaliza la presentación de imágenes (v4). NUNCA lanza.
+ * @param {object|null} raw
+ * @returns {{enabled: boolean, size: string, shape: string, fallback: string}}
+ */
+export function normalizeImages(raw) {
+    const src = isPlainObject(raw) ? raw : {};
+    return {
+        enabled: typeof src.enabled === 'boolean' ? src.enabled : DEFAULT_IMAGES.enabled,
+        size: VALID_IMAGE_SIZES.includes(src.size) ? src.size : DEFAULT_IMAGES.size,
+        shape: VALID_IMAGE_SHAPES.includes(src.shape) ? src.shape : DEFAULT_IMAGES.shape,
+        fallback: VALID_IMAGE_FALLBACKS.includes(src.fallback)
+            ? src.fallback
+            : DEFAULT_IMAGES.fallback,
+    };
+}
+
+/**
+ * Normaliza la configuración de impresión (v7). NUNCA lanza.
+ * @param {object|null} raw
+ * @returns {{format: string, orientation: string, footerNote: string,
+ *            validUntil: string|null, showQr: boolean, showCropMarks: boolean}}
+ */
+export function normalizePrint(raw) {
+    const src = isPlainObject(raw) ? raw : {};
+    return {
+        format: typeof src.format === 'string' && src.format.length > 0
+            ? src.format
+            : DEFAULT_PRINT.format,
+        orientation: src.orientation === 'LANDSCAPE' ? 'LANDSCAPE' : 'PORTRAIT',
+        footerNote: typeof src.footerNote === 'string' ? src.footerNote : DEFAULT_PRINT.footerNote,
+        validUntil: typeof src.validUntil === 'string' && src.validUntil.length > 0
+            ? src.validUntil
+            : null,
+        showQr: typeof src.showQr === 'boolean' ? src.showQr : DEFAULT_PRINT.showQr,
+        showCropMarks: typeof src.showCropMarks === 'boolean'
+            ? src.showCropMarks
+            : DEFAULT_PRINT.showCropMarks,
+    };
+}
+
+/**
+ * Normaliza la configuración COMPLETA de una pantalla (base + v4 + v7).
+ * Extiende `normalizeDisplayConfig` con los campos de diseño e impresión.
+ * NUNCA lanza.
+ *
+ * @param {object|string|null} raw
+ * @returns {object} Config canónica completa.
+ */
+export function normalizeScreenConfig(raw) {
+    const base = normalizeDisplayConfig(raw);
+    const src = isPlainObject(raw) ? raw : {};
+    return {
+        ...base,
+        header: normalizeHeader(src.header),
+        fontFamily: typeof src.fontFamily === 'string' && src.fontFamily.length > 0
+            ? src.fontFamily
+            : DEFAULT_SCREEN_CONFIG.fontFamily,
+        images: normalizeImages(src.images),
+        print: normalizePrint(src.print),
+    };
+}
+
+/**
+ * Normaliza una pantalla nombrada. NUNCA lanza.
+ * @param {object|null} raw
+ * @param {string} fallbackId - ID a usar si el crudo no trae uno válido.
+ * @returns {{id: string, name: string, enabled: boolean, config: object}}
+ */
+export function normalizeScreen(raw, fallbackId = SCREEN_IDS[0]) {
+    const src = isPlainObject(raw) ? raw : {};
+    const id = typeof src.id === 'string' && src.id.trim().length > 0
+        ? src.id.trim()
+        : fallbackId;
+    const name = typeof src.name === 'string' && src.name.trim().length > 0
+        ? src.name.trim()
+        : 'Pantalla';
+    return {
+        id,
+        name,
+        enabled: src.enabled === true,
+        config: normalizeScreenConfig(src.config),
+    };
+}
+
+/**
+ * Normaliza el documento completo de pantallas (`heladeria_display_screens`).
+ * Garantiza SIEMPRE `MAX_SCREENS` pantallas (rellena con defaults) y que los
+ * IDs sean únicos. NUNCA lanza.
+ *
+ * @param {object|string|null} raw
+ * @returns {{version: number, screens: Array}}
+ */
+export function normalizeDisplayScreens(raw) {
+    let source = raw;
+    if (typeof source === 'string') {
+        try {
+            source = JSON.parse(source);
+        } catch {
+            source = null;
+        }
+    }
+
+    const rawScreens = isPlainObject(source) && Array.isArray(source.screens)
+        ? source.screens
+        : [];
+
+    const screens = [];
+    const usedIds = new Set();
+
+    for (let i = 0; i < MAX_SCREENS; i += 1) {
+        const fallbackId = SCREEN_IDS[i];
+        const candidate = normalizeScreen(rawScreens[i], fallbackId);
+        // Garantiza unicidad: si el ID ya se usó, cae al canónico.
+        const id = usedIds.has(candidate.id) ? fallbackId : candidate.id;
+        usedIds.add(id);
+        screens.push({ ...candidate, id });
+    }
+
+    return { version: 1, screens };
+}
+
+/**
+ * Serializa el documento de pantallas a string JSON listo para
+ * `PATCH /settings/heladeria_display_screens` (body `{ value }`).
+ *
+ * @param {object} doc
+ * @returns {string}
+ */
+export function serializeDisplayScreens(doc) {
+    return JSON.stringify(normalizeDisplayScreens(doc));
+}
+
+/**
+ * Resuelve el ID de pantalla a partir del query string (`?screen=screen_2`).
+ * Devuelve `null` si no hay `screen` o si no es uno de los IDs canónicos.
+ *
+ * @param {string} search - `window.location.search`.
+ * @returns {string|null}
+ */
+export function resolveScreenFromQuery(search) {
+    if (typeof search !== 'string' || search.length === 0) return null;
+    const query = search.startsWith('?') ? search.slice(1) : search;
+    for (const pair of query.split('&')) {
+        const [rawKey, rawValue = ''] = pair.split('=');
+        if (decodeURIComponent(rawKey) === 'screen') {
+            const value = decodeURIComponent(rawValue);
+            return SCREEN_IDS.includes(value) ? value : null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Construye la URL de proyección de una pantalla. Contiene SIEMPRE los tres
+ * parámetros (`module`, `mode`, `screen`); si falta `module=heladeria`, el
+ * kiosco monta el Dashboard en vez del Display (fallo crítico de la v2).
+ *
+ * @param {string} pathname - `window.location.pathname`.
+ * @param {string} screenId - ID canónico de la pantalla.
+ * @returns {string}
+ */
+export function buildScreenProjectionUrl(pathname, screenId) {
+    const base = typeof pathname === 'string' && pathname.length > 0 ? pathname : '/';
+    const id = SCREEN_IDS.includes(screenId) ? screenId : SCREEN_IDS[0];
+    return `${base}?module=heladeria&mode=output&screen=${encodeURIComponent(id)}`;
+}
+
+/**
+ * Resuelve la etiqueta visible de un grupo, respetando el override por pantalla.
+ *
+ * @param {string} componentType
+ * @param {object|null} groupLabels - Mapa `{ [componentType]: string }`.
+ * @returns {string}
+ */
+export function resolveGroupLabel(componentType, groupLabels) {
+    const ct = typeof componentType === 'string' ? componentType : '';
+    if (isPlainObject(groupLabels)) {
+        const override = groupLabels[ct];
+        if (typeof override === 'string' && override.trim().length > 0) {
+            return override.trim();
+        }
+    }
+    return COMPONENT_TYPE_LABELS[ct] || ct;
+}
+
+/**
+ * Resuelve la presentación de la imagen de un item según la config de imágenes.
+ *
+ * @param {object} item - Item normalizado (con `image`, `name`).
+ * @param {object|null} imagesConfig - `config.images`.
+ * @returns {{url: string|null, fallbackText: string|null, size: string, shape: string}}
+ */
+export function resolveImagePresentation(item, imagesConfig) {
+    const cfg = normalizeImages(imagesConfig);
+    const it = isPlainObject(item) ? item : {};
+
+    if (!cfg.enabled) {
+        return { url: null, fallbackText: null, size: cfg.size, shape: cfg.shape };
+    }
+
+    const hasImage = typeof it.image === 'string' && it.image.length > 0;
+    if (hasImage) {
+        return { url: it.image, fallbackText: null, size: cfg.size, shape: cfg.shape };
+    }
+
+    let fallbackText = null;
+    if (cfg.fallback === 'INITIALS') {
+        const name = typeof it.name === 'string' ? it.name.trim() : '';
+        fallbackText = name.length > 0 ? name.charAt(0).toUpperCase() : null;
+    }
+
+    return { url: null, fallbackText, size: cfg.size, shape: cfg.shape };
 }

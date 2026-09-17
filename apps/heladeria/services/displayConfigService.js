@@ -19,10 +19,19 @@ import {
     DEFAULT_DISPLAY_CONFIG,
     normalizeDisplayConfig,
     serializeDisplayConfig,
+    normalizeDisplayScreens,
+    serializeDisplayScreens,
 } from '../utils/displayMappers';
 
 /** Clave en `system_settings` (fuente de verdad de la configuración). */
 export const DISPLAY_CONFIG_KEY = 'heladeria_display_precios_config';
+
+/**
+ * Clave de las pantallas nombradas (V8). Convive con `DISPLAY_CONFIG_KEY`:
+ * la clave antigua se mantiene intacta para no romper el Display actual ni
+ * el POS; la nueva es ADITIVA.
+ */
+export const DISPLAY_SCREENS_KEY = 'heladeria_display_screens';
 
 /**
  * Lee TODAS las settings y extrae la del Display.
@@ -110,5 +119,81 @@ export async function loadDisplayConfig() {
         return retry.config;
     } catch {
         return { ...DEFAULT_DISPLAY_CONFIG };
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// V8 — Pantallas nombradas (sub-suite multi-pantalla)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Lee TODAS las settings y extrae el documento de pantallas nombradas.
+ * Si la clave no existe, devuelve el documento normalizado con defaults
+ * (3 pantallas) en lugar de lanzar: la sub-suite debe poder arrancar siempre.
+ *
+ * @returns {Promise<{doc: object, found: boolean}>}
+ */
+export async function fetchDisplayScreens() {
+    return withRetries(async () => {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/settings/`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Error cargando pantallas del Display');
+
+        const settings = await res.json();
+        const list = Array.isArray(settings) ? settings : [];
+        const entry = list.find((s) => s && s.key === DISPLAY_SCREENS_KEY);
+
+        if (!entry) {
+            return { doc: normalizeDisplayScreens(null), found: false };
+        }
+        return { doc: normalizeDisplayScreens(entry.value), found: true };
+    }, { label: 'fetchDisplayScreens' });
+}
+
+/**
+ * Persiste el documento de pantallas nombradas.
+ * Usa PATCH (el PUT NO existe en el router de settings).
+ *
+ * @param {object} doc - Documento crudo (se normaliza antes de enviar).
+ * @returns {Promise<object>} El documento normalizado que quedó guardado.
+ */
+export async function saveDisplayScreens(doc) {
+    const value = serializeDisplayScreens(doc);
+
+    return withRetries(async () => {
+        const res = await fetch(
+            `${CONFIG.API_BASE_URL}/settings/${DISPLAY_SCREENS_KEY}`,
+            {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value }),
+            },
+        );
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Error guardando pantallas del Display');
+        }
+        return normalizeDisplayScreens(doc);
+    }, { label: 'saveDisplayScreens' });
+}
+
+/**
+ * Carga el documento de pantallas con auto-reparación:
+ *   1. Intenta leerlo.
+ *   2. Si no existe, siembra y vuelve a leer.
+ *   3. Si algo falla, devuelve el documento con defaults (3 pantallas).
+ *
+ * @returns {Promise<object>} Documento normalizado.
+ */
+export async function loadDisplayScreens() {
+    try {
+        const { doc, found } = await fetchDisplayScreens();
+        if (found) return doc;
+
+        // Auto-reparación: la clave no está en la BD.
+        await seedDisplayConfig();
+        const retry = await fetchDisplayScreens();
+        return retry.doc;
+    } catch {
+        return normalizeDisplayScreens(null);
     }
 }

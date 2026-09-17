@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     DEFAULT_TOTEM_CONFIG,
     FORMAT,
@@ -17,6 +17,7 @@ import {
     validateImageFile,
 } from '../utils/totemSequencer';
 import { totemContentService } from '../services/totemContentService';
+import { TotemPreview } from './TotemPreview';
 
 /**
  * TotemContentManager — Gestor de contenido del Display Tótem (V16, Fase 16.3).
@@ -34,7 +35,7 @@ import { totemContentService } from '../services/totemContentService';
  * NOTA (Incident 16.1): PROHIBIDO usar animaciones CSS infinitas. Este panel
  * no define ningún @keyframes; las transiciones del reproductor son finitas.
  */
-export function TotemContentManager({ onOpenOutput }) {
+export function TotemContentManager({ onBack, onOpenOutput, onOpenSelector }) {
     const [manifest, setManifest] = useState(() => normalizeTotemManifest(null));
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -152,9 +153,12 @@ export function TotemContentManager({ onOpenOutput }) {
         setFeedback({ type: 'info', text: 'Configuración restaurada. Pulsa Guardar para aplicar.' });
     };
 
-    // ── Derivados ────────────────────────────────────────────
-    const sequence = buildSequence(manifest.macros, manifest.heroes, manifest.config);
-    const totalSec = totalDurationSec(sequence);
+    // ── Derivados (memoizados: buildSequence es puro y costoso) ──
+    const sequence = useMemo(
+        () => buildSequence(manifest.macros, manifest.heroes, manifest.config),
+        [manifest],
+    );
+    const totalSec = useMemo(() => totalDurationSec(sequence), [sequence]);
 
     // ── Render ───────────────────────────────────────────────
     if (loading) {
@@ -167,6 +171,11 @@ export function TotemContentManager({ onOpenOutput }) {
 
     return (
         <div style={styles.wrapper}>
+            {onBack && (
+                <button type="button" style={styles.backBtn} onClick={onBack}>
+                    ← Volver a la suite
+                </button>
+            )}
             <div style={styles.header}>
                 <div>
                     <h2 style={styles.title}>Contenido del Tótem</h2>
@@ -174,11 +183,18 @@ export function TotemContentManager({ onOpenOutput }) {
                         Sube imágenes macro y hero, ajusta la reproducción y guarda el manifiesto.
                     </p>
                 </div>
-                {onOpenOutput && (
-                    <button type="button" style={styles.outputBtn} onClick={onOpenOutput}>
-                        Abrir salida del tótem
-                    </button>
-                )}
+                <div style={styles.headerActions}>
+                    {onOpenSelector && (
+                        <button type="button" style={styles.selectorBtn} onClick={onOpenSelector}>
+                            Selector de proyección
+                        </button>
+                    )}
+                    {onOpenOutput && (
+                        <button type="button" style={styles.outputBtn} onClick={onOpenOutput}>
+                            Abrir salida del tótem
+                        </button>
+                    )}
+                </div>
             </div>
 
             {feedback && (
@@ -186,6 +202,11 @@ export function TotemContentManager({ onOpenOutput }) {
                     {feedback.text}
                 </div>
             )}
+
+            {/* ── Vista previa EN VIVO (mismo renderizador que el kiosco) ── */}
+            <section style={styles.previewSection}>
+                <TotemPreview manifest={manifest} />
+            </section>
 
             {/* ── Imágenes MACRO ── */}
             <section style={styles.section}>
@@ -393,6 +414,18 @@ const styles = {
         margin: '0 auto',
         color: '#f8fafc',
     },
+    backBtn: {
+        alignSelf: 'flex-start',
+        background: 'transparent',
+        border: 'none',
+        color: '#94a3b8',
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: 700,
+        letterSpacing: '0.5px',
+        padding: '0 0 12px',
+        textTransform: 'uppercase',
+    },
     loading: {
         padding: '48px',
         textAlign: 'center',
@@ -416,6 +449,21 @@ const styles = {
         color: '#94a3b8',
         fontWeight: 500,
     },
+    headerActions: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        flexShrink: 0,
+    },
+    selectorBtn: {
+        padding: '10px 16px',
+        borderRadius: '8px',
+        border: '1px solid #334155',
+        background: 'transparent',
+        color: '#cbd5e1',
+        cursor: 'pointer',
+        fontWeight: 600,
+    },
     outputBtn: {
         padding: '10px 16px',
         borderRadius: '8px',
@@ -436,6 +484,15 @@ const styles = {
     feedback_success: { background: '#052e16', border: '1px solid #16a34a', color: '#86efac' },
     feedback_error: { background: '#450a0a', border: '1px solid #dc2626', color: '#fca5a5' },
     feedback_info: { background: '#0c4a6e', border: '1px solid #0284c7', color: '#7dd3fc' },
+    previewSection: {
+        background: '#0f172a',
+        border: '1px solid #1e293b',
+        borderRadius: '12px',
+        padding: '18px',
+        marginBottom: '18px',
+        display: 'flex',
+        justifyContent: 'center',
+    },
     section: {
         background: '#0f172a',
         border: '1px solid #1e293b',

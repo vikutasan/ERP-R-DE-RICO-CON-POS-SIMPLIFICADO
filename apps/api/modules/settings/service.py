@@ -159,6 +159,19 @@ async def seed_settings(db: AsyncSession):
             "description": "Nombre y eslogan editables del módulo Heladería.",
             "category": "heladeria",
             "input_type": "json"
+        },
+        # V8 (plan gestor de display): sub-suite multi-pantalla del Display de
+        # Precios. Hasta 3 pantallas nombradas, cada una con su propia config.
+        # Entrada ADITIVA: el bucle de abajo solo inserta si la clave no existe,
+        # por lo que NO altera `heladeria_display_precios_config` (clave legacy,
+        # que se conserva intacta para rollback, §2.4 del plan) ni ninguna clave
+        # que lea el POS de Panadería. CERO migraciones Alembic.
+        {
+            "key": "heladeria_display_screens",
+            "value": '{"version":1,"screens":[{"id":"screen_1","name":"Menú Completo","enabled":true,"config":{"groups":[],"columns":3,"theme":"LIGHT","showImages":true,"showUnavailable":true,"header":{"title":"","subtitle":"","logo":true,"align":"LEFT"},"fontFamily":"CLASSIC","images":{"enabled":true,"size":"MEDIUM","shape":"ROUNDED","fallback":"INITIALS"},"print":{"format":"LETTER","orientation":"PORTRAIT","footerNote":"","validUntil":null,"showQr":false,"showCropMarks":false}}},{"id":"screen_2","name":"Solo Helados","enabled":false,"config":{"groups":["RECIPIENTE","TAMAÑO","SABOR","EXTRA"],"columns":3,"theme":"LIGHT","showImages":true,"showUnavailable":true,"header":{"title":"","subtitle":"","logo":true,"align":"LEFT"},"fontFamily":"CLASSIC","images":{"enabled":true,"size":"MEDIUM","shape":"ROUNDED","fallback":"INITIALS"},"print":{"format":"LETTER","orientation":"PORTRAIT","footerNote":"","validUntil":null,"showQr":false,"showCropMarks":false}}},{"id":"screen_3","name":"Bebidas","enabled":false,"config":{"groups":["BEBIDA_BASE"],"columns":3,"theme":"LIGHT","showImages":true,"showUnavailable":true,"header":{"title":"","subtitle":"","logo":true,"align":"LEFT"},"fontFamily":"CLASSIC","images":{"enabled":true,"size":"MEDIUM","shape":"ROUNDED","fallback":"INITIALS"},"print":{"format":"LETTER","orientation":"PORTRAIT","footerNote":"","validUntil":null,"showQr":false,"showCropMarks":false}}}]}',
+            "description": "Pantallas nombradas del Display de Precios de Heladería (sub-suite multi-pantalla, V8).",
+            "category": "heladeria",
+            "input_type": "json"
         }
     ]
     

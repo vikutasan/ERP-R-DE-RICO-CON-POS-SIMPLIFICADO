@@ -16,6 +16,10 @@ import {
     MIN_COLUMNS,
     MAX_COLUMNS,
     DISPLAY_MODES,
+    MAX_SCREENS,
+    DEFAULT_IMAGES,
+    DEFAULT_PRINT,
+    DEFAULT_SCREEN_CONFIG,
     normalizeDisplayConfig,
     validateDisplayConfig,
     mapDisplayItem,
@@ -26,7 +30,25 @@ import {
     buildDisplayViewModel,
     resolveDisplayMode,
     serializeDisplayConfig,
+    resolveGroupLabel,
+    resolveImagePresentation,
+    normalizeDisplayScreens,
+    serializeDisplayScreens,
 } from './displayMappers';
+import {
+    mmToPt,
+    getPageSizePt,
+    normalizePrintConfig,
+} from './printFormats';
+import { collectUsedFonts } from './displayFonts';
+import { layoutPrintDocument, buildFileName } from './layoutPrintDocument';
+import { applyTemplate } from './displayTemplates';
+import {
+    exportScreen,
+    exportScreenToJson,
+    importScreen,
+    duplicateScreenConfig,
+} from './displayConfigIO';
 
 // ─────────────────────────────────────────────────────────────
 // Fixtures — simulan la respuesta REAL de GET /heladeria/display/menu
@@ -92,13 +114,14 @@ describe('Constantes del Display', () => {
         expect(COMPONENT_TYPE_ORDER[COMPONENT_TYPE_ORDER.length - 1]).toBe('BEBIDA_BASE');
     });
 
-    it('DEFAULT_DISPLAY_CONFIG espeja el seed de FASE 17.0', () => {
+    it('DEFAULT_DISPLAY_CONFIG espeja el seed de FASE 17.0 (+ groupLabels v8)', () => {
         expect(DEFAULT_DISPLAY_CONFIG).toEqual({
             groups: [],
             columns: 3,
             theme: 'LIGHT',
             showImages: true,
             showUnavailable: true,
+            groupLabels: {},
         });
     });
 });
@@ -123,6 +146,7 @@ describe('normalizeDisplayConfig', () => {
             theme: 'DARK',
             showImages: false,
             showUnavailable: false,
+            groupLabels: {},
         });
     });
 
@@ -412,12 +436,454 @@ describe('serializeDisplayConfig', () => {
             theme: 'LIGHT',
             showImages: true,
             showUnavailable: true,
+            groupLabels: {},
         });
     });
 
     it('es idempotente (normalizar dos veces da lo mismo)', () => {
         const once = serializeDisplayConfig({ columns: 2 });
         const twice = serializeDisplayConfig(JSON.parse(once));
+        expect(twice).toBe(once);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════
+// V8 — Sub-suite multi-pantalla, diseño y exportación a PDF
+// (casos 9 → 21). NO modifican los 43 tests anteriores.
+// ═════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────
+// 9. resolveGroupLabel — etiqueta personalizada por grupo
+// ─────────────────────────────────────────────────────────────
+
+describe('resolveGroupLabel', () => {
+    it('usa la etiqueta personalizada si existe', () => {
+        expect(resolveGroupLabel('SABOR', { SABOR: 'Nuestros Sabores' }))
+            .toBe('Nuestros Sabores');
+    });
+
+    it('cae al label por defecto si no hay personalizada', () => {
+        expect(resolveGroupLabel('SABOR', {})).toBe(COMPONENT_TYPE_LABELS.SABOR);
+    });
+
+    it('tolera groupLabels nulo o basura', () => {
+        expect(resolveGroupLabel('SABOR', null)).toBe(COMPONENT_TYPE_LABELS.SABOR);
+        expect(resolveGroupLabel('SABOR', 'basura')).toBe(COMPONENT_TYPE_LABELS.SABOR);
+    });
+
+    it('ignora etiquetas vacías o solo espacios', () => {
+        expect(resolveGroupLabel('SABOR', { SABOR: '   ' }))
+            .toBe(COMPONENT_TYPE_LABELS.SABOR);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 10. resolveImagePresentation — imagen, tamaño y forma
+// ─────────────────────────────────────────────────────────────
+
+describe('resolveImagePresentation', () => {
+    const item = { name: 'Chocolate', image: '/img/choco.png' };
+
+    it('devuelve url null si images.enabled es false', () => {
+        const r = resolveImagePresentation(item, { enabled: false });
+        expect(r.url).toBeNull();
+    });
+
+    it('devuelve url null si el item no tiene image', () => {
+        const r = resolveImagePresentation({ name: 'X' }, { enabled: true });
+        expect(r.url).toBeNull();
+    });
+
+    it('devuelve la url con tamaño y forma normalizados', () => {
+        const r = resolveImagePresentation(item, {
+            enabled: true, size: 'LARGE', shape: 'CIRCLE',
+        });
+        expect(r.url).toBe('/img/choco.png');
+        expect(r.size).toBe('LARGE');
+        expect(r.shape).toBe('CIRCLE');
+    });
+
+    it('normaliza tamaño/forma inválidos a los defaults', () => {
+        const r = resolveImagePresentation(item, {
+            enabled: true, size: 'GIGANTE', shape: 'TRIANGULO',
+        });
+        expect(r.size).toBe(DEFAULT_IMAGES.size);
+        expect(r.shape).toBe(DEFAULT_IMAGES.shape);
+    });
+
+    it('genera fallbackText con la inicial si fallback=INITIALS', () => {
+        const r = resolveImagePresentation({ name: 'fresa' }, {
+            enabled: true, fallback: 'INITIALS',
+        });
+        expect(r.fallbackText).toBe('F');
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 11. printFormats — mmToPt y getPageSizePt
+// ─────────────────────────────────────────────────────────────
+
+describe('printFormats (mmToPt / getPageSizePt)', () => {
+    it('convierte mm a puntos (1 mm = 2.8346 pt)', () => {
+        expect(mmToPt(10)).toBeCloseTo(28.346, 2);
+        expect(mmToPt(0)).toBe(0);
+    });
+
+    it('devuelve LETTER vertical 612×792 pt', () => {
+        expect(getPageSizePt('LETTER', 'PORTRAIT')).toEqual({ width: 612, height: 792 });
+    });
+
+    it('intercambia ancho/alto en LANDSCAPE', () => {
+        expect(getPageSizePt('LETTER', 'LANDSCAPE')).toEqual({ width: 792, height: 612 });
+    });
+
+    it('soporta A4 con decimales', () => {
+        const a4 = getPageSizePt('A4', 'PORTRAIT');
+        expect(a4.width).toBeCloseTo(595.28, 2);
+        expect(a4.height).toBeCloseTo(841.89, 2);
+    });
+
+    it('cae a LETTER ante formato desconocido', () => {
+        expect(getPageSizePt('NO_EXISTE', 'PORTRAIT')).toEqual({ width: 612, height: 792 });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 12. normalizePrintConfig — tolerancia a basura
+// ─────────────────────────────────────────────────────────────
+
+describe('normalizePrintConfig', () => {
+    it('devuelve defaults ante null', () => {
+        expect(normalizePrintConfig(null)).toEqual(DEFAULT_PRINT);
+    });
+
+    it('normaliza formato y orientación inválidos', () => {
+        const r = normalizePrintConfig({ format: 'XX', orientation: 'DIAGONAL' });
+        expect(r.format).toBe(DEFAULT_PRINT.format);
+        expect(r.orientation).toBe(DEFAULT_PRINT.orientation);
+    });
+
+    it('conserva valores válidos', () => {
+        const r = normalizePrintConfig({
+            format: 'TABLOID', orientation: 'LANDSCAPE', footerNote: 'Precios con IVA',
+        });
+        expect(r.format).toBe('TABLOID');
+        expect(r.orientation).toBe('LANDSCAPE');
+        expect(r.footerNote).toBe('Precios con IVA');
+    });
+
+    it('showQr por defecto es false (no se imprime QR salvo petición)', () => {
+        expect(normalizePrintConfig({}).showQr).toBe(false);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 13. layoutPrintDocument — paginación pura
+// ─────────────────────────────────────────────────────────────
+
+describe('layoutPrintDocument', () => {
+    const screenConfig = {
+        columns: 2,
+        print: { format: 'LETTER', orientation: 'PORTRAIT' },
+        header: { title: 'Heladería', subtitle: 'Menú', align: 'CENTER' },
+        fontFamily: 'CLASSIC',
+    };
+
+    it('devuelve la geometría de página correcta', () => {
+        const doc = layoutPrintDocument(API_RESPONSE, screenConfig);
+        expect(doc.pageSizePt).toEqual({ width: 612, height: 792 });
+        expect(doc.columns).toBe(2);
+        expect(doc.columnGap).toBeGreaterThan(0);
+    });
+
+    it('produce al menos una página con items', () => {
+        const doc = layoutPrintDocument(API_RESPONSE, screenConfig);
+        expect(Array.isArray(doc.pages)).toBe(true);
+        expect(doc.pages.length).toBeGreaterThanOrEqual(1);
+        expect(Array.isArray(doc.pages[0].items)).toBe(true);
+        expect(doc.pages[0].items.length).toBeGreaterThan(0);
+    });
+
+    it('cada página incluye HEADER y la última incluye FOOTER', () => {
+        const doc = layoutPrintDocument(API_RESPONSE, screenConfig);
+        const first = doc.pages[0].items;
+        expect(first[0].type).toBe('HEADER');
+        const lastPage = doc.pages[doc.pages.length - 1];
+        expect(lastPage.isLast).toBe(true);
+        expect(lastPage.items.some((i) => i.type === 'FOOTER')).toBe(true);
+    });
+
+    it('tolera viewModel vacío sin lanzar', () => {
+        const doc = layoutPrintDocument({ groups: [] }, screenConfig);
+        expect(doc.pages.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('tolera screenConfig nulo usando defaults', () => {
+        const doc = layoutPrintDocument(API_RESPONSE, null);
+        expect(doc.pageSizePt).toEqual({ width: 612, height: 792 });
+    });
+
+    it('respeta la orientación LANDSCAPE', () => {
+        const doc = layoutPrintDocument(API_RESPONSE, {
+            ...screenConfig,
+            print: { format: 'LETTER', orientation: 'LANDSCAPE' },
+        });
+        expect(doc.pageSizePt).toEqual({ width: 792, height: 612 });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 14. buildFileName — nombre de archivo seguro
+// ─────────────────────────────────────────────────────────────
+
+describe('buildFileName', () => {
+    const now = new Date('2026-09-16T12:00:00Z');
+
+    it('genera un nombre con formato y fecha', () => {
+        const name = buildFileName(
+            { print: { format: 'LETTER' } }, 'Menú Completo', now,
+        );
+        expect(name).toMatch(/^carta-menu-completo-letter-\d{8}\.pdf$/);
+    });
+
+    it('sanea acentos y caracteres especiales', () => {
+        const name = buildFileName({ print: { format: 'A4' } }, 'Bebidas/Frías #1', now);
+        expect(name).not.toMatch(/[\/#]/);
+        expect(name).toMatch(/\.pdf$/);
+    });
+
+    it('tolera nombre vacío', () => {
+        const name = buildFileName({ print: { format: 'LETTER' } }, '', now);
+        expect(name).toMatch(/^carta-.*\.pdf$/);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 15. collectUsedFonts — subconjunto único de tipografías
+// ─────────────────────────────────────────────────────────────
+
+describe('collectUsedFonts', () => {
+    it('devuelve las fuentes únicas usadas por las pantallas', () => {
+        const fonts = collectUsedFonts([
+            { config: { fontFamily: 'CLASSIC' } },
+            { config: { fontFamily: 'FUN' } },
+            { config: { fontFamily: 'CLASSIC' } },
+        ]);
+        expect(fonts.sort()).toEqual(['CLASSIC', 'FUN']);
+    });
+
+    it('cae a CLASSIC si no hay pantallas', () => {
+        expect(collectUsedFonts([])).toEqual(['CLASSIC']);
+    });
+
+    it('ignora fuentes desconocidas', () => {
+        const fonts = collectUsedFonts([{ config: { fontFamily: 'COMIC_SANS' } }]);
+        expect(fonts).toEqual(['CLASSIC']);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 16. normalizeDisplayConfig — regresión v4 (no romper contrato)
+// ─────────────────────────────────────────────────────────────
+
+describe('normalizeDisplayConfig (regresión v4 + groupLabels v8)', () => {
+    it('devuelve las claves del contrato base más groupLabels', () => {
+        const r = normalizeDisplayConfig({});
+        expect(Object.keys(r).sort()).toEqual(
+            ['columns', 'groupLabels', 'groups', 'showImages', 'showUnavailable', 'theme'],
+        );
+    });
+
+    it('no añade claves de diseño/impresión al contrato base', () => {
+        const r = normalizeDisplayConfig({ columns: 3 });
+        expect(r.header).toBeUndefined();
+        expect(r.print).toBeUndefined();
+    });
+
+    it('sanea groupLabels descartando valores vacíos o no-string', () => {
+        const r = normalizeDisplayConfig({
+            groupLabels: { SABOR: 'Sabores', EXTRA: '', TAMAÑO: 42 },
+        });
+        expect(r.groupLabels).toEqual({ SABOR: 'Sabores' });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 17. applyTemplate — cambia presentación, preserva grupos
+// ─────────────────────────────────────────────────────────────
+
+describe('applyTemplate', () => {
+    it('aplica la plantilla KIDS (fuente FUN, imágenes CIRCLE)', () => {
+        const r = applyTemplate({ groups: ['SABOR'] }, 'KIDS');
+        expect(r.fontFamily).toBe('FUN');
+        expect(r.images.shape).toBe('CIRCLE');
+    });
+
+    it('preserva los grupos seleccionados', () => {
+        const r = applyTemplate({ groups: ['SABOR', 'EXTRA'] }, 'MINIMAL');
+        expect(r.groups).toEqual(['SABOR', 'EXTRA']);
+    });
+
+    it('preserva groupLabels personalizados', () => {
+        const r = applyTemplate(
+            { groups: ['SABOR'], groupLabels: { SABOR: 'Sabores' } }, 'RETRO',
+        );
+        expect(r.groupLabels.SABOR).toBe('Sabores');
+    });
+
+    it('ante plantilla inválida devuelve config normalizada sin cambios', () => {
+        const r = applyTemplate({ groups: ['SABOR'] }, 'NO_EXISTE');
+        expect(r.groups).toEqual(['SABOR']);
+    });
+
+    it('PRICE_ONLY desactiva imágenes y sube columnas', () => {
+        const r = applyTemplate({ groups: ['SABOR'] }, 'PRICE_ONLY');
+        expect(r.showImages).toBe(false);
+        expect(r.columns).toBeGreaterThanOrEqual(4);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 18. duplicateScreenConfig — copiar config entre pantallas
+// ─────────────────────────────────────────────────────────────
+
+describe('duplicateScreenConfig', () => {
+    const doc = {
+        version: 1,
+        screens: [
+            { id: 'screen_1', name: 'Menú', enabled: true, config: { columns: 3, groups: ['SABOR'] } },
+            { id: 'screen_2', name: 'Bebidas', enabled: false, config: { columns: 2, groups: [] } },
+        ],
+    };
+
+    it('copia la config de origen al destino', () => {
+        const r = duplicateScreenConfig(doc, 'screen_1', 'screen_2');
+        const target = r.screens.find((s) => s.id === 'screen_2');
+        expect(target.config.columns).toBe(3);
+        expect(target.config.groups).toEqual(['SABOR']);
+    });
+
+    it('preserva id y nombre del destino', () => {
+        const r = duplicateScreenConfig(doc, 'screen_1', 'screen_2');
+        const target = r.screens.find((s) => s.id === 'screen_2');
+        expect(target.id).toBe('screen_2');
+        expect(target.name).toBe('Bebidas');
+    });
+
+    it('es no-op si origen y destino son iguales', () => {
+        const r = duplicateScreenConfig(doc, 'screen_1', 'screen_1');
+        expect(r.screens[0].config.columns).toBe(3);
+    });
+
+    it('es no-op si el destino no existe', () => {
+        const r = duplicateScreenConfig(doc, 'screen_1', 'screen_9');
+        expect(r.screens.length).toBe(2);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 19. exportScreen — documento de exportación
+// ─────────────────────────────────────────────────────────────
+
+describe('exportScreen', () => {
+    const screen = {
+        id: 'screen_1',
+        name: 'Menú Completo',
+        enabled: true,
+        config: { columns: 3, groups: ['SABOR'] },
+    };
+
+    it('incluye versión, fecha y pantalla', () => {
+        const doc = exportScreen(screen, new Date('2026-09-16T12:00:00Z'));
+        expect(doc.version).toBe(1);
+        expect(doc.exportedAt).toBeTruthy();
+        expect(doc.screen.name).toBe('Menú Completo');
+    });
+
+    it('no incluye el id en el documento exportado', () => {
+        const doc = exportScreen(screen);
+        expect(doc.screen.id).toBeUndefined();
+    });
+
+    it('exportScreenToJson produce JSON re-parseable', () => {
+        const json = exportScreenToJson(screen);
+        expect(() => JSON.parse(json)).not.toThrow();
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 20. importScreen — validación de entrada
+// ─────────────────────────────────────────────────────────────
+
+describe('importScreen', () => {
+    it('acepta un documento válido', () => {
+        const json = exportScreenToJson({
+            id: 'screen_1', name: 'Menú', config: { columns: 3 },
+        });
+        const r = importScreen(json);
+        expect(r.ok).toBe(true);
+        expect(r.screen.name).toBe('Menú');
+    });
+
+    it('rechaza JSON inválido', () => {
+        const r = importScreen('{no es json');
+        expect(r.ok).toBe(false);
+        expect(r.error).toBeTruthy();
+    });
+
+    it('rechaza un documento que no es objeto', () => {
+        const r = importScreen(JSON.stringify([1, 2, 3]));
+        expect(r.ok).toBe(false);
+    });
+
+    it('ignora el id del archivo y asigna el id canónico', () => {
+        const json = JSON.stringify({
+            version: 1, screen: { id: 'screen_9', name: 'X', config: {} },
+        });
+        const r = importScreen(json);
+        expect(r.ok).toBe(true);
+        expect(r.screen.id).toBe('screen_1');
+    });
+
+    it('acepta un documento plano sin envoltorio `screen`', () => {
+        const r = importScreen(JSON.stringify({ name: 'Plano', config: { columns: 2 } }));
+        expect(r.ok).toBe(true);
+        expect(r.screen.name).toBe('Plano');
+    });
+});
+
+// ─────────────────────────────────────────────────────────────
+// 21. normalizeDisplayScreens — contrato multi-pantalla
+// ─────────────────────────────────────────────────────────────
+
+describe('normalizeDisplayScreens', () => {
+    it('siempre devuelve exactamente 3 pantallas', () => {
+        const r = normalizeDisplayScreens(null);
+        expect(r.screens.length).toBe(MAX_SCREENS);
+    });
+
+    it('asigna ids canónicos screen_1..screen_3', () => {
+        const r = normalizeDisplayScreens(null);
+        expect(r.screens.map((s) => s.id)).toEqual(['screen_1', 'screen_2', 'screen_3']);
+    });
+
+    it('tolera basura y rellena con defaults', () => {
+        const r = normalizeDisplayScreens({ screens: 'basura' });
+        expect(r.screens.length).toBe(MAX_SCREENS);
+        expect(r.screens[0].config.columns).toBe(DEFAULT_SCREEN_CONFIG.columns);
+    });
+
+    it('conserva nombres y configs válidos', () => {
+        const r = normalizeDisplayScreens({
+            screens: [{ id: 'screen_1', name: 'Caja', config: { columns: 4 } }],
+        });
+        expect(r.screens[0].name).toBe('Caja');
+        expect(r.screens[0].config.columns).toBe(4);
+    });
+
+    it('serializeDisplayScreens es idempotente', () => {
+        const once = serializeDisplayScreens(null);
+        const twice = serializeDisplayScreens(JSON.parse(once));
         expect(twice).toBe(once);
     });
 });

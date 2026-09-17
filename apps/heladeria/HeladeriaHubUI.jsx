@@ -8,6 +8,8 @@ const KdsHeladosUI = React.lazy(() => import('./sections/KdsHeladosUI').then(m =
 const KdsMalteadasUI = React.lazy(() => import('./sections/KdsMalteadasUI').then(m => ({default: m.KdsMalteadasUI})));
 const DisplayTotemUI = React.lazy(() => import('./sections/DisplayTotemUI').then(m => ({default: m.DisplayTotemUI})));
 const DisplayPreciosUI = React.lazy(() => import('./sections/DisplayPreciosUI').then(m => ({default: m.DisplayPreciosUI})));
+// V8: proyección directa de una pantalla nombrada (deep-link ?mode=output&screen=).
+const DisplayPreciosOutput = React.lazy(() => import('./sections/DisplayPreciosOutput').then(m => ({default: m.DisplayPreciosOutput})));
 
 // ErrorBoundary local para secciones internas
 class SectionErrorBoundary extends React.Component {
@@ -140,6 +142,27 @@ const GESTORES = [
         ],
     },
 ];
+
+/**
+ * Resuelve el deep-link de proyección (V8).
+ * Devuelve `{ isOutput, screenId }`. Si no hay `mode=output`, `isOutput` es false.
+ * Tolera ausencia de `screen` (cae a `screen_1`).
+ *
+ * @returns {{isOutput: boolean, screenId: string}}
+ */
+const resolveDeepLink = () => {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const isOutput = params.get('mode') === 'output';
+        const raw = params.get('screen');
+        const screenId = typeof raw === 'string' && raw.trim().length > 0
+            ? raw.trim()
+            : 'screen_1';
+        return { isOutput, screenId };
+    } catch {
+        return { isOutput: false, screenId: 'screen_1' };
+    }
+};
 
 const renderSection = (id, onBack) => {
     const wrapped = (Component, name) => (
@@ -504,6 +527,21 @@ export const HeladeriaHubUI = ({ onBack, userPermissions }) => {
     }, []);
 
     const hasEditPerm = canEditBranding(userPermissions);
+
+    // ── Deep-link V8: proyección directa de una pantalla nombrada ──
+    // URL: `?module=heladeria&mode=output&screen=<id>`
+    // Permite que la CAJA y la BARRA muestren pantallas DISTINTAS a la vez,
+    // cada una en su propia TV, sin pasar por la landing ni por el configurador.
+    const deepLink = resolveDeepLink();
+    if (deepLink.isOutput) {
+        return (
+            <Suspense fallback={<SectionLoader />}>
+                <SectionErrorBoundary name="Display Precios (proyección)" onBack={() => {}}>
+                    <DisplayPreciosOutput screenId={deepLink.screenId} />
+                </SectionErrorBoundary>
+            </Suspense>
+        );
+    }
 
     // Nivel 3: Herramienta real (POS, KDS, etc.)
     if (activeTool) {

@@ -1,0 +1,1906 @@
+# Rediseño del Display de Precios — Sub-Suite con Configurador + Selector (V17.4)
+
+> **Estado:** Propuesta rediseñada (v7). Reemplaza las versiones anteriores.
+> **Alcance:** convertir "Display de Precios" de herramienta monolítica en una
+> **sub-suite de 2 herramientas** (Configurador + Selector) con **hasta 3 pantallas
+> nombradas**, preview en vivo y proyección tipo "sala de control". La v4 añade
+> **poder de diseño real**: encabezados configurables, tipografías de heladería,
+> control fino de imágenes desde el maestro de productos, y **exportación de un
+> archivo PDF para enviar a un taller de imprenta**.
+>
+> **v3 corrige la v2** tras una autocritica: el mecanismo de proyección por URL no
+> funcionaba (ver §2.0), el preview estaba mal descompuesto (§2.5), y varias
+> justificaciones eran afirmaciones no verificadas.
+>
+> **v4 añade** el motor de diseño e impresión (§2.11–§2.14). Decisiones clave
+> verificadas contra el código: **sin migración Alembic** (se usan los
+> `component_type` existentes como categorías renombrables).
+>
+> **v5 corrige la v4** tras una segunda autocritica: 7 defectos de veracidad y
+> consistencia interna (ver §13). El más grave: la v4 afirmaba que `Playfair
+> Display` "ya está cargada" y **no lo está** (no hay `@font-face`/`<link>` en
+> ningún archivo). También se retiran dos promesas insostenibles (QR gráfico
+> "trivial", fuentes auto-hospedadas "sin dependencias") y se corrigen una función
+> huérfana y una plantilla citada pero inexistente.
+>
+> **v6 corrige la v5** tras una tercera autocritica: precisaba que el patrón de
+> impresión estaba "ya probado en 4 lugares" **sin matizar** que el CSS `@page`
+> solo existe para tickets térmicos de 80 mm (ver §13, defecto #8).
+>
+> **v7 CAMBIA EL ENFOQUE DE IMPRESIÓN** por instrucción explícita del negocio: esta
+> **herramienta NO imprime**. Configura el diseño, **genera un PDF vectorial**, lo
+> **descarga** y el usuario lo **envía a un taller de imprenta**. Se elimina todo
+> el patrón `window.print()` + iframe + CSS `@page` de la v6 y se sustituye por
+> `layoutPrintDocument` (puro) + `renderPdf` (`jspdf`). Esto introduce la **única
+> dependencia nueva** del plan (`jspdf`, ~350 KB), justificada por el caso de uso
+> (§2.14.0). **Esta herramienta no toca ninguna impresora** — ni las térmicas del
+> POS (zona restringida, que siguen siendo responsabilidad del módulo POS) ni
+> ninguna otra.
+
+---
+
+## 0. Cumplimiento normativo
+
+Reglas de las especificaciones obligatorias que condicionan el diseño. Se citan
+**por título**, no por número de sección (los números no se verificaron):
+
+| Regla (documento) | Cómo la cumple este plan |
+|---|---|
+| **"NADA HARDCODEADO. TODO CONFIGURABLE DESDE BD"** (`CONTEXTO_SISTEMA_IA.md`) | Las 3 pantallas viven en `system_settings`. Nombres, grupos, columnas, tema y flags son editables. Cero valores de negocio en el código. |
+| **Funciones ≤20 líneas, ≤3 niveles de anidación, early returns, SRP** (`CONTEXTO_SISTEMA_IA.md`) | La lógica nueva se descompone en funciones puras pequeñas en `displayMappers.js` y handlers de ≤20 líneas. |
+| **≥1 test unitario por función de negocio crítica** (`CONTEXTO_SISTEMA_IA.md`) | Se **amplía** `displayMappers.test.js` (ya existe, 43 tests) con los casos multi-pantalla + test de integración de la URL de proyección (§7). |
+| **PROHIBIDO `window.location.hostname`; SOLO `CONFIG.API_BASE_URL`** (`DOCUMENTACION_MODULO_HELADERIA.md`, Incident 16.6) | El servicio sigue importando `CONFIG` desde `../../pos/config`. |
+| **OBLIGATORIO `import { CONFIG }` al usar `CONFIG.API_BASE_URL`** (Incident 16.8) | Verificado en el checklist (§7.3); el build NO lo detecta. |
+| **`withRetries` obligatorio en red** (`DOCUMENTACION_MODULO_HELADERIA.md`) | `loadDisplayScreens` / `saveDisplayScreens` envuelven sus `fetch`. |
+| **PROHIBIDAS animaciones CSS infinitas** (Incident 16.1) | Ni el preview ni el selector definen `@keyframes`. Solo transiciones de color 0.15s. |
+| **PROHIBIDO `backdrop-blur` con polling; comparar antes de `setState`** (Incident 16.2) | El preview no hace polling. El output compara el ViewModel antes de `setState` (§5.5). |
+| **Aislamiento doble `React.lazy` + `ErrorBoundary`** (`DOCUMENTACION_MODULO_HELADERIA.md`) | La sub-suite carga cada herramienta con `React.lazy` + `SectionErrorBoundary`. |
+| **Estética editorial B&W** (`DOCUMENTACION_MODULO_HELADERIA.md`) | La sub-suite replica `GestorSuiteUI`: `#ffffff`, `#0f0f0f`, divisores `1px`, Inter 900, hover invertido, 0.15s. |
+| **POS es ZONA RESTRINGIDA** (`DOCUMENTACION_MODULO_POS.md`) | Este plan **no toca** `apps/pos/`. Solo consume `CONFIG` y `withRetries` como dependencias de lectura. |
+| **Migraciones Alembic obligatorias** (`CONTEXTO_SISTEMA_IA.md`) | **No se requiere migración**: se reutiliza `system_settings` (patrón ya usado por Tótem, Branding, KDS Urgency). Justificado en §2.1. La v4 **tampoco** migra: usa los `component_type` existentes como categorías (§2.11). |
+| **Sin dependencias nuevas sin justificar** (`CONTEXTO_SISTEMA_IA.md`) | **v7: se añade 1 dependencia, `jspdf` (~350 KB), justificada** por la exportación a imprenta (§2.14.0): un PDF vectorial no se puede generar sin librería. `html2canvas` **no** se añade (rasteriza). Las 4 tipografías se cargan vía Google Fonts `<link>` — **proveedor ya usado por el proyecto** para `Inter` ([`HeladeriaHubUI.jsx:337`](apps/heladeria/HeladeriaHubUI.jsx:337)) —, no auto-hospedadas (§2.12.2, corregido en v5). |
+| **Datos de producto desde el maestro** (`DOCUMENTACION_MODULO_HELADERIA.md`) | Imagen, nombre y precio **siempre** vienen de `products` (`image_url`, `name`, `price`). El Display solo controla la presentación (§2.13). |
+
+---
+
+## 1. Descripción del cambio
+
+Hoy "Display de Precios" es monolítica con doble landing (`?mode=output` → kiosco;
+sin parámetro → panel de config). Se rediseña como **sub-suite de 2 herramientas**
+con **hasta 3 pantallas nombradas e independientes**, cada una con su config,
+preview en vivo y botón de proyección.
+
+**Problema que resuelve:** hoy solo existe UNA configuración global. El negocio
+necesita proyectar simultáneamente "Menú Completo" en la caja y "Solo Helados" en
+la barra, sin reconfigurar entre una y otra.
+
+---
+
+## 2. Decisiones de arquitectura
+
+### 2.0 ⚠️ CORRECCIÓN CRÍTICA — El enrutamiento de la proyección
+
+**Este es el hallazgo más importante de la revisión y bloquea el diseño original.**
+
+La v2 asumía que abrir `{pathname}?mode=output&screen=screen_2` en pestaña nueva
+monta el Display. **Es falso.** Cadena real verificada:
+
+1. [`ExperimentCenterUI.jsx:537`](apps/ExperimentCenterUI.jsx:537) solo monta
+   `<HeladeriaHubUI>` si `activeModule === 'heladeria'`.
+2. `activeModule` se inicializa en [`ExperimentCenterUI.jsx:79`](apps/ExperimentCenterUI.jsx:79)
+   desde `defaultModule`, que **solo lee `?terminal=`** ([línea 70](apps/ExperimentCenterUI.jsx:70)).
+   No lee `?mode=` ni `?screen=`.
+3. [`HeladeriaHubUI.jsx:509`](apps/heladeria/HeladeriaHubUI.jsx:509) solo monta
+   `DisplayPreciosUI` si `activeTool === 'precios'`, estado que **solo** se activa
+   navegando por la UI ([línea 520](apps/heladeria/HeladeriaHubUI.jsx:520)).
+
+**Consecuencia:** una pestaña nueva con `?mode=output` monta el **Dashboard general
+del ERP**, no el Display. El `?mode=output` actual solo "funciona" porque el usuario
+ya está dentro de la herramienta y `DisplayPreciosUI` lee `window.location.search`
+en su propio montaje.
+
+> **Nota:** el Display Tótem tiene **el mismo defecto latente**
+> ([`DisplayTotemUI.jsx:17`](apps/heladeria/sections/DisplayTotemUI.jsx:17) lee
+> `?mode=output` estando ya montado). No es un bug introducido por este plan, pero
+> **este plan no debe amplificarlo**.
+
+**Solución adoptada (mínima y contenida):** deep-link explícito en
+`ExperimentCenterUI`, sin tocar la lógica de navegación interna:
+
+```js
+// ExperimentCenterUI.jsx — junto a initialTerminal (línea ~70)
+const initialParams = new URLSearchParams(window.location.search);
+const initialTerminal = initialParams.get('terminal');
+const isDisplayKiosk = initialParams.get('mode') === 'output'
+    && initialParams.get('module') === 'heladeria';
+const defaultModule = isDisplayKiosk
+    ? 'heladeria'
+    : (initialTerminal === 'DRIVER' ? 'reparto_grandeza' : 'overview');
+```
+
+Y `HeladeriaHubUI` recibe un `initialTool` opcional para montar `precios` directo:
+
+```js
+// HeladeriaHubUI.jsx — nuevo prop opcional
+export const HeladeriaHubUI = ({ onBack, userPermissions, initialTool = null }) => {
+    const [activeGestor, setActiveGestor] = useState(
+        initialTool ? 'gestor_displays' : null
+    );
+    const [activeTool, setActiveTool] = useState(initialTool);
+    // ...resto sin cambios
+```
+
+`ExperimentCenterUI` pasa `initialTool={isDisplayKiosk ? 'precios' : null}`.
+
+**URL de proyección final:**
+`{pathname}?module=heladeria&mode=output&screen=screen_N`
+
+**Alternativa descartada:** montar el Display fuera del Hub (ruta independiente).
+Se descarta porque duplicaría el árbol de providers y rompería el aislamiento
+`React.lazy` + `ErrorBoundary` que exige la especificación del módulo.
+
+**Riesgo residual:** si el usuario no tiene permiso sobre Heladería, el kiosco
+mostrará el Dashboard. Se documenta como comportamiento aceptable (el kiosco se
+configura en la misma sesión que el admin).
+
+### 2.1 Modelo de datos: nueva clave en `system_settings` (SIN migración)
+
+Se añade **`heladeria_display_screens`** con un JSON array de exactamente 3 slots.
+**Sin tabla ni migración Alembic** porque:
+
+- El patrón del módulo ya persiste presentación en `system_settings`
+  (`heladeria_display_precios_config`, `heladeria_totem_content`,
+  `heladeria_branding`, `heladeria_kds_urgency_config`).
+- `seed_settings()` es **aditivo e idempotente**: solo inserta claves faltantes
+  ([`service.py:165-168`](apps/api/modules/settings/service.py:165)), por lo que
+  agregar una entrada no altera claves existentes ni las del POS de Panadería.
+- No hay entidades relacionales nuevas (sin FKs, sin historial por pantalla), así
+  que una tabla sería sobre-ingeniería (viola KISS).
+
+> **Deuda consciente:** si se requiere historial por pantalla o >3 pantallas con
+> permisos por pantalla, se promoverá a tabla con migración Alembic.
+
+### 2.2 Identificadores inmutables
+
+Los `id` son **`screen_1`, `screen_2`, `screen_3`** e **INMUTABLES**. El admin edita
+`name`, nunca el `id`. Así una URL de proyección sigue válida aunque se renombre la
+pantalla. `id` = clave de contrato; `name` = presentación.
+
+### 2.3 `enabled` y el caso "0 pantallas habilitadas"
+
+`enabled: false` = "no proyectable". **Regla de borde:** si las 3 están
+deshabilitadas, el Selector muestra estado vacío honesto con CTA "Ir al
+Configurador". El Configurador **siempre** permite editar las 3.
+
+### 2.4 Migración legacy: escritura en `save`, NO en `read`
+
+La v1 migraba dentro de `loadDisplayScreens()` (GET con efecto de escritura). Es un
+anti-patrón: un GET no debe mutar estado y dos pestañas podrían competir.
+
+**Diseño corregido:**
+- `loadDisplayScreens()` es **solo lectura**: si la clave no existe, devuelve
+  `DEFAULT_SCREENS_ARRAY` **sembrando la pantalla 1 con la config legacy si existe**
+  (solo en memoria).
+- La **primera escritura** ocurre al pulsar "Guardar" (`saveDisplayScreens`).
+- La clave legacy **nunca se borra** (solo lectura de compatibilidad).
+
+### 2.5 ⚠️ CORRECCIÓN — Descomposición del render (3 piezas, no 2)
+
+La v2 decía que `DisplayPreciosPreview` sería "puro" y a la vez reutilizado por el
+output. **Se contradice:** el output renderiza header, footer, badge de conexión y
+estados vacíos; el preview solo el cuerpo. Si el preview absorbe todo, deja de ser
+una miniatura limpia; si no, el output duplica el cuerpo.
+
+**Descomposición corregida en 3 piezas con responsabilidad única:**
+
+| Pieza | Responsabilidad | Fetch | Timers | `position` |
+|---|---|---|---|---|
+| `DisplayPreciosBody` [NEW] | Solo grupos + cards (el "cuerpo"). Recibe `viewModel` + `theme`. | No | No | `static` |
+| `DisplayPreciosPreview` [NEW] | Marco de monitor + `transform: scale()` + `pointer-events: none`. Envuelve a `Body`. | No | No | `static` |
+| `DisplayPreciosOutput` [MODIFY] | Marco kiosco: header, footer, badge, estados vacíos, polling. Envuelve a `Body`. | Sí | Sí | `absolute`/`100dvh` |
+
+Así el **cuerpo** es la única fuente de verdad visual compartida, y cada marco
+aporta lo suyo. Esto sí cumple SRP y DRY.
+
+### 2.6 Punto único de verdad del ViewModel
+
+`buildDisplayViewModel(apiResponse, config)`
+([`displayMappers.js:364`](apps/heladeria/utils/displayMappers.js:364)) ya encadena
+mapeo → orden → filtrado. Preview y output lo usan para garantizar que "lo que ves
+en el preview es lo que se proyecta".
+
+### 2.7 ⚠️ CORRECCIÓN — El bug de `position: fixed`
+
+La v2 justificaba el fix diciendo que el output "se renderiza embebido en el ERP".
+**Es incorrecto:** `DisplayPreciosOutput` **nunca** se renderiza embebido; solo se
+monta en modo kiosco.
+
+**Bug real:** `styles.fullscreen` usa `position: fixed; inset: 0`
+([`DisplayPreciosOutput.jsx:266`](apps/heladeria/sections/DisplayPreciosOutput.jsx:266)).
+En la pestaña de kiosco esto es correcto, pero `inset: 0` con `overflow: hidden`
+sobre un contenedor que no es el viewport raíz puede recortar contenido y, si el
+kiosco se abre en la misma pestaña, tapa el sidebar sin forma de volver.
+
+**Fix correcto:** usar `position: 'absolute'` con `inset: 0` **dentro de un
+contenedor padre con `position: relative` y `height: 100dvh`**, en lugar de `fixed`
+contra el viewport. Se elimina la prop `embedded` (innecesaria). El botón "Salir"
+se mantiene siempre visible.
+
+### 2.8 ⚠️ CORRECCIÓN — Se elimina `displayThemes.js`
+
+La v2 proponía extraer los temas a un módulo compartido "por DRY". **No aporta:**
+los temas del output usan `Playfair Display` y gradientes azules
+([`DisplayPreciosOutput.jsx:239-259`](apps/heladeria/sections/DisplayPreciosOutput.jsx:239)),
+mientras la sub-suite usa Inter 900 y B&W puro. Son **dos sistemas visuales
+distintos**; nadie más consume esos temas. Se mantienen locales al output.
+**Archivo eliminado del plan.**
+
+### 2.9 ⚠️ CORRECCIÓN — `resolveScreenFromQuery` usa `URLSearchParams`
+
+La v2 lo parseaba a mano "por pureza", pero el propio módulo ya usa
+`URLSearchParams` ([`DisplayTotemUI.jsx:67`](apps/heladeria/sections/DisplayTotemUI.jsx:67)).
+Inventar una restricción que el módulo no respeta es inconsistencia disfrazada de
+rigor. Se usa `URLSearchParams`, manteniendo la función pura y testeable (recibe el
+string, no lee `window`).
+
+### 2.10 Decisión sobre `DisplayConfigPanel` (con estimación de riesgo)
+
+La v2 lo daba por trivial. **No lo es.** El componente tiene su propio `useEffect`
+de carga ([líneas 37-46](apps/heladeria/components/DisplayConfigPanel.jsx:37)),
+`handleSave` y `handleReset`. Convertirlo a controlado exige bifurcar los tres.
+
+**Decisión:** **NO refactorizar.** Se **extrae** la UI de controles a un componente
+presentacional nuevo `DisplayConfigControls.jsx` [NEW] que recibe
+`config` + `onChange` por props (sin estado propio, sin fetch). Luego:
+- `DisplayPreciosConfigUI` (nuevo) usa `DisplayConfigControls` en modo controlado.
+- `DisplayConfigPanel` (legacy) se **deja intacto** para la URL antigua.
+
+**Costo:** ~150 líneas de UI movidas (no duplicadas). **Riesgo:** bajo (el legacy no
+se toca). Esto es más honesto que "modo controlado opcional" sobre un componente
+con estado propio.
+
+---
+
+### 2.11 ⚠️ NUEVO EN v4 — "Categorías" = `component_type` renombrable (SIN migración)
+
+**Hallazgo verificado:** [`Category`](apps/api/modules/catalog/models.py:5) tiene
+`id, name, icon, position, vision_enabled, is_system`. **NO tiene `parent_id`**: la
+jerarquía del catálogo es **plana, de un solo nivel**. Por tanto **no existen
+subcategorías** en el sistema.
+
+Además, el menú de heladería **no se agrupa por categoría**, sino por
+`component_type` ([`service.py:36`](apps/api/modules/heladeria/service.py:36)):
+`RECIPIENTE`, `TAMAÑO`, `SABOR`, `EXTRA`, `BEBIDA_BASE`.
+
+**Decisión (Opción A, confirmada por el negocio):** NO se añade `parent_id` ni se
+toca el maestro de productos. En su lugar, los **`component_type` actúan como
+categorías**, y sus **encabezados se renombran por pantalla**.
+
+Hoy las etiquetas son una **constante global** ([`displayMappers.js:46`](apps/heladeria/utils/displayMappers.js:46)):
+
+```js
+export const COMPONENT_TYPE_LABELS = {
+    RECIPIENTE: '🍦 Conos y Vasos',
+    TAMAÑO: '📏 Tamaños',
+    SABOR: '🍨 Sabores',
+    EXTRA: '✨ Toppings y Extras',
+    BEBIDA_BASE: '🥤 Bases de Malteada',
+};
+```
+
+**Cambio:** `COMPONENT_TYPE_LABELS` pasa a ser el **default**, y cada pantalla puede
+sobreescribirlo con `groupLabels`:
+
+```js
+groupLabels: {
+  SABOR: 'Nuestros Sabores Artesanales',
+  RECIPIENTE: 'Elige tu Base',
+  // los que no se listen usan COMPONENT_TYPE_LABELS
+}
+```
+
+**Función pura nueva:** `resolveGroupLabel(componentType, groupLabels)` →
+`groupLabels[ct] ?? COMPONENT_TYPE_LABELS[ct] ?? ct`.
+
+**Ventajas:** cero migración, cero riesgo en POS, cero cambios en el maestro de
+productos. **Limitación honesta:** no hay jerarquía de 2 niveles; si algún día se
+necesita "Helados → Paletas", será una migración aparte (ver §2.11.1).
+
+#### 2.11.1 Deuda consciente: subcategorías reales
+
+Si el negocio requiere jerarquía real, la ruta es una migración Alembic
+`add parent_id to categories` + endpoint de árbol + UI de gestión. **Se excluye
+explícitamente de esta fase** porque toca el maestro de productos (zona compartida
+con POS). Se documenta como fase futura, no como parte de la v4.
+
+---
+
+### 2.12 ⚠️ NUEVO EN v4 — Motor de encabezados y tipografías
+
+#### 2.12.1 Encabezado configurable por pantalla
+
+```js
+header: {
+  title: 'Nuestros Sabores',        // editable; '' = sin título
+  subtitle: 'Hecho en casa',        // editable; '' = sin subtítulo
+  showLogo: true,
+  logoUrl: '/assets/logo.png',      // reutiliza el logo existente
+  alignment: 'CENTER',              // LEFT | CENTER | RIGHT
+}
+```
+
+**Nota:** el logo por defecto es el ya existente en
+[`public/assets/logo.png`](public/assets/logo.png:1). No se sube nada nuevo.
+
+#### 2.12.2 Catálogo de 4 tipografías de heladería
+
+> **⚠️ CORRECCIÓN v5 (hallazgo verificado):** la v4 afirmaba que `Playfair Display`
+> "ya está cargada". **Es falso.** El código solo *referencia* la familia en estilos
+> inline ([`DisplayPreciosOutput.jsx:292`](apps/heladeria/sections/DisplayPreciosOutput.jsx:292),
+> [`DisplayTotemUI.jsx:102`](apps/heladeria/sections/DisplayTotemUI.jsx:102),
+> [`TotemPlayer.jsx:240`](apps/heladeria/components/TotemPlayer.jsx:240),
+> [`DisplayConfigPanel.jsx:256`](apps/heladeria/components/DisplayConfigPanel.jsx:256)),
+> pero **no existe ningún `@font-face`, `<link>` ni `@import`** que la cargue
+> (verificado: 0 resultados en `*.css` y en `index.html`). Hoy el navegador cae
+> silenciosamente a `serif`. Por tanto **las 4 fuentes hay que cargarlas**, no 3.
+
+Se define un catálogo **cerrado**:
+
+| Clave | Tipografía | Concepto | Uso sugerido |
+|---|---|---|---|
+| `CLASSIC` | `Playfair Display` | Artesanal italiano | Heladería tradicional |
+| `FUN` | `Baloo 2` | Redondeada, infantil | Público familiar |
+| `MODERN` | `Poppins` | Geométrica, limpia | Legibilidad a distancia |
+| `RETRO` | `Lobster Two` | Soda fountain años 50 | Nostálgico |
+
+**Decisión de carga (corregida):** se usa el **patrón ya existente en el proyecto**:
+`<link>` a Google Fonts inyectado en el JSX, igual que
+[`HeladeriaHubUI.jsx:337`](apps/heladeria/HeladeriaHubUI.jsx:337) y
+[`:547`](apps/heladeria/HeladeriaHubUI.jsx:547) hacen hoy con `Inter`.
+
+```jsx
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Baloo+2:wght@700;800&family=Poppins:wght@600;800&family=Lobster+Two:wght@700&display=swap" rel="stylesheet" />
+```
+
+**Por qué NO `@font-face` auto-hospedado (corrección de la v4):** la v4 proponía
+auto-hospedar las 3 fuentes nuevas en [`index.css`](index.css:1). Eso implica
+**descargar y versionar 6–12 archivos binarios `.woff2`** en `public/assets/fonts/`,
+lo que (a) contradice la afirmación "CERO dependencias nuevas" del propio plan, y
+(b) es una tarea de assets, no de código. Se descarta por inconsistencia.
+
+**Deuda consciente:** el proyecto ya depende de Google Fonts para `Inter`, así que
+usar el mismo mecanismo **no añade un proveedor nuevo**. Si el negocio exige
+operación 100% offline (el ERP es local), auto-hospedar es la ruta correcta y se
+documenta como tarea aparte (§12).
+
+**Regla de rendimiento:** solo se inyecta el `<link>` de las fuentes que **alguna
+pantalla usa**. Si ninguna pantalla usa `RETRO`, su familia no se pide a Google.
+Se resuelve con un helper puro `collectUsedFonts(screens)` que devuelve el
+subconjunto; el componente construye la URL de Google Fonts a partir de él.
+
+**Verificación obligatoria:** las 4 fuentes deben renderizar correctamente los
+acentos del español (`Sabor`, `Tamaño`, `Día`). Se comprueba en §7.3.
+
+**Campo en config:** `fontFamily: 'CLASSIC' | 'FUN' | 'MODERN' | 'RETRO'`.
+
+---
+
+### 2.13 ⚠️ NUEVO EN v4 — Control fino de imágenes (desde el maestro)
+
+**Hallazgo verificado:** [`products.image_url`](apps/api/modules/catalog/models.py:48)
+**ya existe** y el menú ya lo expone como `image`
+([`service.py:50`](apps/api/modules/heladeria/service.py:50)). El Display ya tiene
+`showImages` ([`displayMappers.js:72`](apps/heladeria/utils/displayMappers.js:72)).
+
+**Lo que falta** es control fino por pantalla. Se reemplaza el booleano `showImages`
+por un objeto `images` (manteniendo compatibilidad: `showImages: false` se normaliza
+a `images.enabled: false`):
+
+```js
+images: {
+  enabled: true,
+  mode: 'PRODUCT',      // PRODUCT | CATEGORY | NONE
+  size: 'MEDIUM',       // SMALL | MEDIUM | LARGE
+  shape: 'CIRCLE',      // CIRCLE | SQUARE | ROUNDED
+  fallback: 'INITIALS', // INITIALS | ICON | NONE
+}
+```
+
+**`fallback` es crítico:** hay productos sin `image_url` y hoy se vería un hueco.
+Con `INITIALS` se muestra la inicial del producto en un círculo con el color del
+tema. Es la diferencia entre "se ve roto" y "se ve intencional".
+
+**Función pura nueva:** `resolveImagePresentation(item, images)` → devuelve
+`{ url, size, shape, fallbackText }`. Testeable sin DOM.
+
+**Nota de origen de datos:** la imagen, el nombre y el precio **siempre** vienen del
+maestro de productos (`products.image_url`, `products.name`, `products.price`). El
+Display **nunca** los inventa ni los duplica. Esto ya se cumple; la v4 solo añade
+control de presentación.
+
+---
+
+### 2.14 ⚠️ REESCRITO EN v7 — Exportación de archivo para imprenta (NO imprimimos)
+
+> **CAMBIO DE ENFOQUE (v7, instrucción explícita del negocio):** el objetivo **NO
+> es imprimir desde esta herramienta**. El objetivo es **generar un archivo** que
+> el usuario **descarga** y **envía a un taller de imprenta**. Esta herramienta
+> **nunca** habla con ninguna impresora — ni térmica, ni de oficina, ni de red.
+>
+> **Precisión de alcance:** el ERP **sí** usa impresoras en otros módulos (los
+> tickets térmicos de 80 mm del POS). Lo que aquí se afirma es que **este módulo
+> de Display no toca ninguna impresora**: no comparte código, ni configuración,
+> ni flujo con el subsistema de impresión del POS.
+
+**Lo que esta herramienta SÍ hace:**
+1. Configurar la carta (encabezado, tipografía, imágenes, formato de papel).
+2. **Generar un archivo** con el diseño final.
+3. **Descargarlo** al equipo del usuario.
+
+**Lo que esta herramienta NO hace (fuera de alcance por decisión de negocio):**
+- ❌ No llama a `window.print()`.
+- ❌ No abre el diálogo de impresión del navegador.
+- ❌ No toca las impresoras térmicas del POS (`TicketTemplate.jsx`,
+  `CorteTicketTemplate.jsx` — **zona restringida, no se modifica**).
+- ❌ No toca ninguna impresora de red u oficina.
+
+**Hallazgo verificado:** NO hay ninguna librería de PDF instalada (`jspdf`,
+`html2canvas`, `pdfkit`, `reportlab`, `weasyprint`, `puppeteer`, `playwright` → 0
+resultados en [`package.json`](package.json:1)).
+
+#### 2.14.0 ⚠️ Decisión de formato de salida (v7)
+
+El archivo que se envía a una imprenta debe ser **vectorial y con tamaño de página
+exacto**. Se evalúan 3 opciones:
+
+| Opción | Cómo | Calidad para imprenta | Dependencias | Veredicto |
+|---|---|---|---|---|
+| **A. PDF vectorial** (`jspdf`) | Genera PDF con texto vectorial y tamaño de página exacto | ✅ Óptima (texto seleccionable, escalable) | +1 dependencia (~350 KB) | **RECOMENDADA** |
+| **B. HTML + CSS `@page`** (descarga de `.html`) | Descarga un `.html` autocontenido; la imprenta lo abre e imprime | ⚠️ Aceptable, pero depende de que la imprenta sepa abrirlo | 0 | Alternativa sin dependencias |
+| **C. Imagen PNG/SVG** | Renderiza a imagen | ❌ Mala (rasterizada, borrosa al ampliar) | +1 dependencia | **Descartada** |
+
+**Decisión: Opción A (PDF vectorial).** Es la única que una imprenta profesional
+acepta sin fricción. El costo (~350 KB) está **justificado** porque el caso de uso
+es explícito: "trasladar la carta de digital a análogo".
+
+> **Nota de honestidad:** esto **rompe** el "CERO dependencias nuevas" que regía
+> las versiones v4–v6. Es un cambio **consciente y justificado** por el negocio:
+> un PDF vectorial no se puede generar sin una librería. Se documenta como la
+> **única** dependencia nueva del plan.
+
+**Alternativa sin dependencias (Opción B) — plan de respaldo:** si el negocio
+prefiere no añadir `jspdf`, se descarga un `.html` autocontenido (con el CSS
+`@page` embebido y las fuentes en `<link>`). La imprenta lo abre en Chrome y
+exporta a PDF. **Es funcional pero añade un paso manual y depende de la imprenta.**
+Se deja como respaldo documentado, no como opción principal.
+
+#### 2.14.0.1 Por qué NO usamos `window.print()`
+
+El patrón iframe + `window.print()` existe en el proyecto
+([`useTicketActions.js:88`](apps/pos/hooks/useTicketActions.js:88)) pero **es para
+tickets térmicos de 80 mm**, no para cartas. Además, ese patrón **imprime
+directamente**, que es exactamente lo que el negocio **no quiere**.
+
+**Diferencia clave:**
+
+| Patrón existente (tickets) | Este plan (carta para imprenta) |
+|---|---|
+| `window.print()` → diálogo → impresora | `jspdf.save()` → descarga de archivo |
+| Toca la impresora del negocio | **No toca ninguna impresora** |
+| `@page size: 80mm auto` | PDF con `size` exacto en puntos |
+| Síncrono, bloqueante | Descarga asíncrona |
+
+**Consecuencia:** las 7 medidas de blindaje de impresión de la v6 (§2.14.1.1)
+**se eliminan** porque ya no aplican: no hay `window.print()`, no hay
+`print-color-adjust`, no hay `break-inside` de navegador. El control de saltos de
+página pasa a ser **explícito en el PDF** (coordenadas calculadas).
+
+#### 2.14.1 Formatos estándar soportados
+
+Se define un catálogo puro y testeable en `printFormats.js`. **v7:** el tamaño se
+expresa en **puntos** (unidad nativa de PDF), no en CSS `@page`:
+
+| Formato | Puntos (ancho × alto) | Orientación |
+|---|---|---|
+| Carta | `612 × 792` | Vertical / Horizontal |
+| Oficio | `612 × 1008` | Vertical / Horizontal |
+| Tabloide | `792 × 1224` | Vertical / Horizontal |
+| Doble carta | `1224 × 792` | Horizontal |
+| A4 | `595.28 × 841.89` | Vertical / Horizontal |
+| A3 | `841.89 × 1190.55` | Vertical / Horizontal |
+
+**Función pura:** `getPageSizePt(format, orientation)` → `{ width, height }` en
+puntos. Testeable sin navegador. (Sustituye a `buildPrintCss` de la v6, eliminada.)
+
+#### 2.14.1.1 ⚠️ REESCRITO EN v7 — Cómo se genera el PDF para la imprenta
+
+Ya **no** hay `window.print()` ni CSS `@page` de navegador. El PDF se construye
+con **coordenadas explícitas** en puntos (1 pt = 1/72 pulgada), que es la unidad
+nativa de PDF.
+
+**Pipeline de generación:**
+
+```
+1. buildDisplayViewModel(menuData, screenConfig)   ← ya existe, puro
+2. layoutPrintDocument(viewModel, screenConfig)    ← NUEVO, puro
+      → devuelve una estructura de páginas con posiciones calculadas:
+        { pages: [ { items: [ { x, y, w, h, type, text, imageUrl } ] } ] }
+3. renderPdf(layout, screenConfig)                 ← NUEVO, usa jspdf
+      → doc = new jsPDF({ unit: 'pt', format: [w, h], orientation })
+      → dibuja texto (vectorial) e imágenes
+      → doc.save('carta-precios.pdf')
+```
+
+> **Corrección v8 (defecto #2):** el pipeline recibía `printConfig` (solo el
+> sub-objeto `config.print`), pero el encabezado y la tipografía viven en la
+> config de pantalla, no en `config.print`. Se pasa `screenConfig` completo.
+
+**Por qué separar `layoutPrintDocument` (puro) de `renderPdf` (impuro):**
+
+| Función | Pureza | Testeable | Responsabilidad |
+|---|---|---|---|
+| `layoutPrintDocument` | ✅ Pura | ✅ Vitest sin navegador | Calcular **dónde** va cada cosa y en qué página |
+| `renderPdf` | ❌ Impura (usa `jspdf`) | ⚠️ Solo integración | Dibujar el layout en el PDF |
+
+Esto permite testear **toda la lógica de paginación** (lo más propenso a errores)
+sin generar un PDF real. Es el mismo patrón "guardián del contrato" del proyecto.
+
+**Control de saltos de página (explícito, no del navegador):**
+
+```js
+// Dentro de layoutPrintDocument: si la card no cabe, salta a la página siguiente.
+if (cursorY + cardHeight > pageHeight - margin) {
+    pages.push({ items: [] });
+    cursorY = margin;
+}
+```
+
+Esto es **más robusto** que `break-inside: avoid` del navegador: el control es
+total y determinista.
+
+**Tamaños de página en puntos (exactos para imprenta):**
+
+| Formato | Puntos (ancho × alto) | Origen |
+|---|---|---|
+| Carta | `612 × 792` | 8.5" × 11" |
+| Oficio | `612 × 1008` | 8.5" × 14" |
+| Tabloide | `792 × 1224` | 11" × 17" |
+| Doble carta | `1224 × 792` | 17" × 11" (horizontal) |
+| A4 | `595.28 × 841.89` | ISO 216 |
+| A3 | `841.89 × 1190.55` | ISO 216 |
+
+**Función pura:** `getPageSizePt(format, orientation)` → `{ width, height }`.
+Testeable sin navegador.
+
+#### 2.14.2 ⚠️ Regla crítica: la carta SIEMPRE es tema claro
+
+El Display soporta tema `DARK`. **Una carta impresa con fondo oscuro gasta tinta
+y sale ilegible.** Por tanto, el PDF **siempre** usa tema claro, independientemente
+del tema de pantalla. Se define un `PRINT_THEME` constante (claro) que
+`layoutPrintDocument` aplica siempre. Esto **no** es configurable: es una regla de
+negocio (ahorro de tinta + legibilidad).
+
+> **Nota v7:** esto aplica **solo al PDF**. La pantalla del Display puede seguir
+> en `DARK`; son dos salidas distintas.
+
+#### 2.14.3 Elementos de la carta exportada
+
+Además del cuerpo (grupos + cards), el PDF incluye:
+
+1. **Encabezado** (§2.12.1) con logo, título y subtítulo.
+2. **Enlace a la carta digital** (puente analógico→digital). **Decisión corregida
+   v5:** por defecto se incluye la **URL en texto** legible (`showQr: false`). El
+   **QR gráfico** se mueve a fase futura (§12) porque un codificador QR real no es
+   trivial (§5.16). No se promete lo que no se puede entregar en esta fase.
+3. **Pie de página legal** configurable: `footerNote` (ej. "Precios sujetos a
+   cambio sin previo aviso") + `validUntil` (fecha de vigencia opcional).
+4. **Marcas de corte** (opcional, `showCropMarks`) para imprenta.
+
+**Campos nuevos en config:** `print: { format, orientation, footerNote, validUntil,
+showQr, showCropMarks }`.
+
+#### 2.14.4 ⚠️ NUEVO EN v7 — Qué recibe la imprenta
+
+El archivo descargado es un **PDF vectorial** con:
+
+| Característica | Valor | Por qué importa a la imprenta |
+|---|---|---|
+| Tipo | PDF 1.3+ | Estándar universal |
+| Texto | **Vectorial** (seleccionable) | Escala sin pixelarse; la imprenta puede ajustar |
+| Tamaño de página | **Exacto** (ej. `612×792 pt`) | No hay que adivinar el formato |
+| Fuentes | **Embebidas** por `jspdf` | No depende de fuentes instaladas en la imprenta |
+| Imágenes | Incrustadas a resolución nativa | Sin pérdida adicional |
+| Márgenes | 12 mm (configurable) | Espacio para corte |
+
+**Recomendación al usuario (texto de ayuda en la UI):**
+> "Descarga el PDF y envíalo a tu imprenta. Pídeles impresión **a tamaño real
+> (100%)**, sin escalar. El archivo ya tiene el tamaño de página correcto."
+
+**Lo que el usuario NO necesita hacer:** elegir papel en un diálogo, configurar
+márgenes, o preocuparse por la resolución. Todo va en el archivo.
+
+---
+
+### 2.15 ⚠️ NUEVO EN v4 — Plantillas predefinidas
+
+**Problema:** configurar a mano encabezado + tipografía + imágenes + columnas +
+tema para cada pantalla son ~12 controles. Es tedioso y propenso a resultados
+inconsistentes.
+
+**Solución:** **5 plantillas** que setean varios campos de golpe, apoyándose en los
+campos v4 ya existentes. **No añaden campos nuevos al modelo de datos.**
+
+| Clave | Plantilla | Tema | Columnas | Tipografía | Imágenes | Concepto |
+|---|---|---|---|---|---|---|
+| `CLASSIC` | **Clásica** | LIGHT | 3 | CLASSIC | Sí, círculo, medio | Elegante, tradicional |
+| `MINIMAL` | **Minimalista** | LIGHT | 4 | MODERN | No | Limpio, denso, legible |
+| `KIDS` | **Infantil** | LIGHT | 2 | FUN | Sí, círculo, grande | Familiar, llamativo |
+| `RETRO` | **Retro** | DARK | 3 | RETRO | Sí, redondeado, medio | Soda fountain |
+| `PRICE_ONLY` | **Solo precio** | LIGHT | 6 | MODERN | No | Carteleras pequeñas, listas densas (§2.18) |
+
+> **Corrección v5:** la v4 decía "4 plantillas" en §2.15 pero luego introducía una
+> 5ª (`PRICE_ONLY`) en §2.18 y el resumen de archivos decía "5 plantillas". Se
+> unifica a **5** en todas las secciones.
+
+**Regla de merge:** `applyTemplate` fusiona **solo bloques de estilo**
+(`theme`, `columns`, `fontFamily`, `images`, `header.alignment`, `header.showLogo`).
+**NUNCA** toca `groups` ni `groupLabels`: qué productos se muestran es decisión de
+negocio, no de estilo. Esto evita que aplicar una plantilla borre la selección de
+grupos del usuario.
+
+**UX:** al aplicar una plantilla, el preview se actualiza al instante (sin guardar).
+El usuario puede deshacer recargando antes de guardar. Se muestra un aviso inline
+no bloqueante (§5.11).
+
+---
+
+### 2.16 ⚠️ NUEVO EN v4 — Duplicar pantalla
+
+**Problema:** configurar 3 pantallas parecidas obliga a repetir ~12 controles tres
+veces.
+
+**Solución:** botón "Duplicar a..." que clona la config de la pantalla actual a otra
+pantalla destino. Función pura `duplicateScreenConfig(screens, fromId, toId)`.
+
+**Regla de seguridad:** la pantalla destino debe estar **vacía o confirmarse
+explícitamente**. Si ya tiene config, se pide confirmación ("Esto sobrescribirá
+'Promos del Día'"). El `id` y el `name` de la pantalla destino **no se copian**:
+solo su `config`. Así no se pierde la identidad de la pantalla.
+
+---
+
+### 2.17 ⚠️ NUEVO EN v4 — Exportar / Importar config JSON
+
+**Problema:** no hay forma de respaldar una config ni de trasladarla a otra
+sucursal.
+
+**Solución:** exportar la config de una pantalla a un archivo `.json` descargable, e
+importarla desde un archivo.
+
+**Reglas:**
+- El JSON exportado incluye `version` y `exportedAt` (trazabilidad).
+- Al importar, **se valida** con `normalizeScreen`; si es inválido, se muestra error
+  y **no** se aplica nada.
+- **El `id` del archivo se ignora**: el usuario elige en qué pantalla importar. Esto
+  evita sobrescribir la pantalla equivocada por un `id` desactualizado.
+- La descarga usa `Blob` + `URL.createObjectURL` (nativo, sin dependencias).
+
+**Caso de uso principal:** configurar una sucursal nueva importando la config de la
+matriz.
+
+---
+
+### 2.18 ⚠️ NUEVO EN v4 — Vista "solo precio"
+
+**Problema:** para carteleras pequeñas o listas densas, las imágenes ocupan espacio
+que el precio necesita.
+
+**Solución:** **no es un modo nuevo**, es una combinación de campos ya existentes:
+`images.enabled: false` + `columns: 6` + `fontFamily: 'MODERN'`. Se ofrece como
+**atajo** en el panel ("Vista solo precio") que aplica esa combinación, igual que
+una plantilla (§2.15).
+
+**Decisión:** se implementa como la **5ª plantilla** (`PRICE_ONLY`) dentro de
+`DISPLAY_TEMPLATES` en `displayTemplates.js` (§5.18), no como código nuevo. Cero
+complejidad añadida. El botón del panel es simplemente un atajo que llama a
+`applyTemplate(config, 'PRICE_ONLY')`.
+
+---
+
+## 3. Arquitectura de navegación (después del cambio)
+
+```
+Hub Heladería (Nivel 1)
+  └── Gestor de Displays
+        └── GestorSuiteUI (Nivel 2)
+              ├── Display Tótem (sin cambios)
+              └── Display de Precios ← AQUÍ CAMBIA
+                    │
+                    └── DisplayPreciosSuiteUI (Nivel 2.5 — NUEVO)
+                          ├── 🎨 Configurador
+                          │     ├── Tabs [1] [2] [3]
+                          │     ├── [Izq. ~40%] DisplayConfigControls
+                          │     └── [Der. ~60%] DisplayPreciosPreview
+                          │
+                          └── 📺 Displays de Precios (Sala de Control)
+                                ├── Pantalla 1 [miniatura] [Proyectar]
+                                ├── Pantalla 2 [miniatura] [Proyectar]
+                                └── Pantalla 3 [miniatura] [Proyectar]
+                                                   ↓
+                              Nueva pestaña (kiosco)
+                              {pathname}?module=heladeria&mode=output&screen=screen_N
+```
+
+---
+
+## 4. Modelo de datos
+
+### 4.1 Nueva clave `heladeria_display_screens`
+
+```json
+{
+  "screens": [
+    {
+      "id": "screen_1",
+      "name": "Menú Completo",
+      "enabled": true,
+      "config": {
+        "groups": [],
+        "columns": 3,
+        "theme": "LIGHT",
+        "showImages": true,
+        "showUnavailable": true,
+        "fontFamily": "CLASSIC",
+        "groupLabels": { "SABOR": "Nuestros Sabores Artesanales" },
+        "header": {
+          "title": "Nuestros Sabores",
+          "subtitle": "Hecho en casa",
+          "showLogo": true,
+          "logoUrl": "/assets/logo.png",
+          "alignment": "CENTER"
+        },
+        "images": {
+          "enabled": true,
+          "mode": "PRODUCT",
+          "size": "MEDIUM",
+          "shape": "CIRCLE",
+          "fallback": "INITIALS"
+        },
+        "print": {
+          "format": "LETTER",
+          "orientation": "PORTRAIT",
+          "footerNote": "Precios sujetos a cambio sin previo aviso",
+          "validUntil": null,
+          "showQr": false,
+          "showCropMarks": false
+        }
+      }
+    },
+    {
+      "id": "screen_2",
+      "name": "Solo Helados",
+      "enabled": true,
+      "config": {
+        "groups": ["SABOR", "RECIPIENTE"],
+        "columns": 4,
+        "theme": "DARK",
+        "showImages": true,
+        "showUnavailable": false,
+        "fontFamily": "FUN",
+        "groupLabels": {},
+        "header": {
+          "title": "Solo Helados",
+          "subtitle": "",
+          "showLogo": true,
+          "logoUrl": "/assets/logo.png",
+          "alignment": "LEFT"
+        },
+        "images": {
+          "enabled": true,
+          "mode": "PRODUCT",
+          "size": "LARGE",
+          "shape": "ROUNDED",
+          "fallback": "INITIALS"
+        },
+        "print": {
+          "format": "TABLOID",
+          "orientation": "LANDSCAPE",
+          "footerNote": "",
+          "validUntil": null,
+          "showQr": false,
+          "showCropMarks": false
+        }
+      }
+    },
+    {
+      "id": "screen_3",
+      "name": "Promos del Día",
+      "enabled": false,
+      "config": {
+        "groups": ["EXTRA", "BEBIDA_BASE"],
+        "columns": 2,
+        "theme": "LIGHT",
+        "showImages": false,
+        "showUnavailable": true,
+        "fontFamily": "RETRO",
+        "groupLabels": {},
+        "header": {
+          "title": "Promos del Día",
+          "subtitle": "",
+          "showLogo": false,
+          "logoUrl": "/assets/logo.png",
+          "alignment": "CENTER"
+        },
+        "images": {
+          "enabled": false,
+          "mode": "NONE",
+          "size": "SMALL",
+          "shape": "SQUARE",
+          "fallback": "NONE"
+        },
+        "print": {
+          "format": "LETTER",
+          "orientation": "PORTRAIT",
+          "footerNote": "",
+          "validUntil": null,
+          "showQr": false,
+          "showCropMarks": false
+        }
+      }
+    }
+  ]
+}
+```
+
+| Campo | Tipo | Inmutable | Descripción |
+|---|---|---|---|
+| `id` | `string` | **Sí** | `screen_1` \| `screen_2` \| `screen_3`. Clave de contrato. |
+| `name` | `string` | No | Etiqueta editable (ej. "Menú Completo"). |
+| `enabled` | `boolean` | No | Si `false`, no aparece con botón en el Selector. |
+| `config` | `object` | No | Misma forma que la config actual **+ campos v4**. |
+
+**Campos v4 dentro de `config`:**
+
+| Campo | Tipo | Default | Descripción |
+|---|---|---|---|
+| `fontFamily` | `string` | `'CLASSIC'` | `CLASSIC` \| `FUN` \| `MODERN` \| `RETRO` (§2.12.2). |
+| `groupLabels` | `object` | `{}` | Sobreescritura de encabezados por `component_type` (§2.11). |
+| `header` | `object` | ver abajo | Encabezado configurable (§2.12.1). |
+| `images` | `object` | ver abajo | Control fino de imágenes (§2.13). |
+| `print` | `object` | ver abajo | Formato y elementos de impresión (§2.14). |
+
+**Defaults de `header`:** `{ title: '', subtitle: '', showLogo: true,
+logoUrl: '/assets/logo.png', alignment: 'CENTER' }`
+
+**Defaults de `images`:** `{ enabled: true, mode: 'PRODUCT', size: 'MEDIUM',
+shape: 'CIRCLE', fallback: 'INITIALS' }`
+
+**Defaults de `print`:** `{ format: 'LETTER', orientation: 'PORTRAIT',
+footerNote: '', validUntil: null, showQr: false, showCropMarks: false }`
+
+> **Compatibilidad:** `showImages` (booleano legacy) se conserva. Si llega
+> `showImages: false` sin `images`, `normalizeDisplayConfig` lo traduce a
+> `images.enabled: false`. Así la config legacy sigue funcionando sin migración.
+
+**Invariante:** el array siempre tiene **exactamente 3 elementos**, con `id`
+`screen_1..screen_3` en ese orden. `normalizeScreensArray` lo garantiza.
+
+### 4.2 Seed por defecto (backend)
+
+Se agrega a `default_settings` en
+[`apps/api/modules/settings/service.py`](apps/api/modules/settings/service.py:43):
+
+```python
+{
+    "key": "heladeria_display_screens",
+    "value": '{"screens":[{"id":"screen_1","name":"Pantalla 1","enabled":true,'
+             '"config":{"groups":[],"columns":3,"theme":"LIGHT","showImages":true,'
+             '"showUnavailable":true}},'
+             '{"id":"screen_2","name":"Pantalla 2","enabled":false,'
+             '"config":{"groups":[],"columns":3,"theme":"LIGHT","showImages":true,'
+             '"showUnavailable":true}},'
+             '{"id":"screen_3","name":"Pantalla 3","enabled":false,'
+             '"config":{"groups":[],"columns":3,"theme":"LIGHT","showImages":true,'
+             '"showUnavailable":true}}]}',
+    "description": "Configuración de las 3 pantallas del Display de Precios de Heladería (V17.4).",
+    "category": "heladeria",
+    "input_type": "json"
+}
+```
+
+> Entrada **aditiva**: el bucle de `seed_settings` solo inserta si la clave no
+> existe.
+
+---
+
+## 5. Cambios propuestos (archivo por archivo)
+
+### 5.1 Backend — `apps/api/modules/settings/service.py` [MODIFY]
+
+Agregar la entrada `heladeria_display_screens` al array `default_settings` (tras
+`heladeria_display_precios_config`, ~línea 130). **Sin migración Alembic.** Sin
+cambios en routers ni schemas.
+
+---
+
+### 5.2 Frontend — `apps/ExperimentCenterUI.jsx` [MODIFY] ⚠️ NUEVO EN v3
+
+Deep-link del kiosco (ver §2.0). Cambios:
+
+1. Leer `?module=heladeria&mode=output` al inicializar (junto a `initialTerminal`,
+   ~línea 70).
+2. `defaultModule = isDisplayKiosk ? 'heladeria' : (…)`.
+3. Pasar `initialTool={isDisplayKiosk ? 'precios' : null}` a `<HeladeriaHubUI>`
+   ([línea 544](apps/ExperimentCenterUI.jsx:544)).
+
+**Sin este cambio, el Selector no funciona.**
+
+---
+
+### 5.3 Frontend — `apps/heladeria/HeladeriaHubUI.jsx` [MODIFY] ⚠️ NUEVO EN v3
+
+Aceptar prop opcional `initialTool` y usarla para inicializar `activeGestor` y
+`activeTool` ([líneas 492-493](apps/heladeria/HeladeriaHubUI.jsx:492)). Si es
+`null`, el comportamiento actual no cambia.
+
+---
+
+### 5.4 Frontend — `apps/heladeria/utils/displayMappers.js` [MODIFY]
+
+Constantes y funciones **100% puras** (sin React/DOM/fetch/timers).
+
+**Constantes nuevas:**
+
+```js
+export const MAX_SCREENS = 3;
+export const SCREEN_IDS = ['screen_1', 'screen_2', 'screen_3'];
+
+export const DEFAULT_SCREEN = {
+    id: 'screen_1',
+    name: 'Pantalla 1',
+    enabled: true,
+    config: { ...DEFAULT_DISPLAY_CONFIG },
+};
+
+export const DEFAULT_SCREENS_ARRAY = SCREEN_IDS.map((id, i) => ({
+    id,
+    name: `Pantalla ${i + 1}`,
+    enabled: i === 0,
+    config: { ...DEFAULT_DISPLAY_CONFIG },
+}));
+```
+
+**Funciones nuevas (todas ≤20 líneas, early returns):**
+
+| Función | Firma | Responsabilidad |
+|---|---|---|
+| `normalizeScreen(raw, fallbackId)` | `(object\|string\|null, string) → Screen` | Normaliza UNA pantalla. Fuerza `id` al `fallbackId` (inmutable). Normaliza `config` con `normalizeDisplayConfig`. `name` vacío → default. `enabled` no-booleano → `false`. |
+| `normalizeScreensArray(raw)` | `(object\|string\|null) → Screen[]` | Normaliza el JSON crudo. **Garantiza 3 slots** con ids `screen_1..3`. Tolera basura (nunca lanza). |
+| `serializeScreensArray(screens)` | `(Screen[]) → string` | `JSON.stringify({ screens: normalizeScreensArray(screens) })`. |
+| `findScreenById(screens, id)` | `(Screen[], string) → Screen\|null` | Búsqueda pura por id. |
+| `resolveScreenFromQuery(search)` | `(string) → string\|null` | Extrae `?screen=screen_N` con `URLSearchParams` (§2.9). Devuelve `null` si ausente o inválido. |
+| `getProjectableScreens(screens)` | `(Screen[]) → Screen[]` | Filtra `enabled === true`. |
+| `buildScreenProjectionUrl(pathname, screenId)` | `(string, string) → string` | Construye `{pathname}?module=heladeria&mode=output&screen={id}`. |
+
+> **Nota de honestidad:** `buildScreenProjectionUrl` centraliza la construcción de
+> la URL, pero **no hay lint que lo imponga**. Es una convención documentada, no una
+> garantía técnica.
+
+---
+
+### 5.5 Frontend — `apps/heladeria/services/displayConfigService.js` [MODIFY]
+
+```js
+export const DISPLAY_SCREENS_KEY = 'heladeria_display_screens';
+```
+
+| Función | Comportamiento |
+|---|---|
+| `fetchDisplayScreens()` | `GET /settings/` (con `withRetries`), busca `DISPLAY_SCREENS_KEY`. Devuelve `{ screens, found }`. Si no existe → `{ screens: DEFAULT_SCREENS_ARRAY, found: false }`. |
+| `saveDisplayScreens(screens)` | `PATCH /settings/heladeria_display_screens` con `{ value: serializeScreensArray(screens) }` (con `withRetries`). Devuelve el array normalizado. |
+| `loadDisplayScreens()` | **Solo lectura.** 1) `fetchDisplayScreens()`. 2) Si `found` → devolver. 3) Si no existe: leer legacy con `fetchDisplayConfig()` y **sembrar en memoria** la pantalla 1. 4) Si falla → `DEFAULT_SCREENS_ARRAY`. |
+
+**Reglas:** `CONFIG.API_BASE_URL` (import ya presente), `withRetries`, PATCH (no
+PUT), tolerancia total a fallos.
+
+---
+
+### 5.6 Frontend — `apps/heladeria/components/DisplayPreciosBody.jsx` [NEW]
+
+**Cuerpo puro de presentación** (solo grupos + cards). Es la pieza compartida.
+
+**Props:** `viewModel` (salida de `buildDisplayViewModel`), `theme` (objeto de
+tema).
+
+**Garantías:** sin `fetch`, sin timers, sin `position: fixed`, sin `@keyframes`.
+Renderiza exactamente lo que hoy está en
+[`DisplayPreciosOutput.jsx:178-226`](apps/heladeria/sections/DisplayPreciosOutput.jsx:178)
+(el `<main>` con grupos y cards).
+
+---
+
+### 5.7 Frontend — `apps/heladeria/components/DisplayPreciosPreview.jsx` [NEW]
+
+**Marco de monitor + escala.** Envuelve a `DisplayPreciosBody`.
+
+**Props:** `viewModel`, `theme`, `scale` (0.45 configurador, 0.25 selector),
+`frameWidth`/`frameHeight`, `showFrame`.
+
+**Implementación:** `transform: scale()` + `transform-origin: top left` +
+`pointer-events: none` dentro de un contenedor `overflow: hidden` con borde tipo
+marco. Sin fetch, sin timers, sin `position: fixed`, sin `@keyframes`.
+
+---
+
+### 5.8 Frontend — `apps/heladeria/components/DisplayConfigControls.jsx` [NEW]
+
+**UI de controles presentacional** (extraída de `DisplayConfigPanel`). Recibe
+`config` + `onChange` por props. Sin estado propio, sin fetch, sin save.
+
+**Controles base (heredados de `DisplayConfigPanel`):** nombre (solo en el
+configurador), toggle habilitada, grupos, columnas (1..6), tema, mostrar
+imágenes, mostrar agotados.
+
+**Controles v4 (los añade `DisplayTemplateControls`, §5.17):** encabezado,
+tipografía, imágenes finas y exportación. **No se duplican aquí**: este archivo
+solo extrae los controles base; los v4 viven en su propio componente para no
+convertir `DisplayConfigControls` en un monolito.
+
+> **Corrección v8 (defecto #6):** la v7 listaba aquí solo los controles base y
+> dejaba ambiguo **dónde** se editan los campos v4 (encabezado, tipografía,
+> imágenes, plantillas, exportar/importar). Se aclara la división: base aquí,
+> v4 en `DisplayTemplateControls` (§5.17), ambos consumidos por el Configurador
+> (§5.11).
+
+> `DisplayConfigPanel` (legacy) **no se modifica** (§2.10).
+
+---
+
+### 5.9 Frontend — `apps/heladeria/sections/DisplayPreciosOutput.jsx` [MODIFY]
+
+Cambios **mínimos**:
+
+1. **Leer `screen`** con `resolveScreenFromQuery(window.location.search)`.
+2. **Cargar config:** si hay `screen` válido → `loadDisplayScreens()` +
+   `findScreenById()`. Si no → `loadDisplayConfig()` (legacy).
+3. **Fix `position`** (§2.7): `absolute` + `inset: 0` dentro de padre
+   `position: relative; height: 100dvh`. Sin prop `embedded`.
+4. **Comparar antes de `setState`** (Incident 16.2): en `loadData`, comparar el
+   nuevo ViewModel (por `totalItems` + `groups.length` + `config` serializado) y
+   solo llamar `setViewModel` si cambió.
+5. **Reutilizar `DisplayPreciosBody`** para el `<main>` (paridad con el preview).
+   Header, footer, badge y estados vacíos permanecen aquí.
+
+---
+
+### 5.10 Frontend — `apps/heladeria/sections/DisplayPreciosSuiteUI.jsx` [NEW]
+
+Sub-suite de 2 botones, **copia estructural** de `GestorSuiteUI`
+([`HeladeriaHubUI.jsx:325-487`](apps/heladeria/HeladeriaHubUI.jsx:325)): top strip
+con "← Volver", header de suite, grid de 2 tarjetas con hover invertido, footer.
+
+| Botón | Ícono | ID | Componente (lazy) |
+|---|---|---|---|
+| Configurador de Displays de Precios | 🎨 | `config_precios` | `DisplayPreciosConfigUI` |
+| Displays de Precios | 📺 | `selector_precios` | `DisplayPreciosSelectorUI` |
+
+Carga cada herramienta con `React.lazy` + `SectionErrorBoundary`. Estética B&W
+idéntica. Sin animaciones infinitas.
+
+---
+
+### 5.11 Frontend — `apps/heladeria/sections/DisplayPreciosConfigUI.jsx` [NEW]
+
+**Layout split** (izq. ~40% controles, der. ~60% preview).
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ← Volver                           Configurador de Displays │
+├──────────────────────────────────────────────────────────────┤
+│ [Pantalla 1: Menú Completo] [Pantalla 2: Solo H..] [Pant 3] │ ← Tabs
+├─────────────────────────┬────────────────────────────────────┤
+│  Nombre de la pantalla  │                                    │
+│  [___________________]  │         PREVIEW EN VIVO            │
+│  Habilitada  [toggle]   │   (DisplayPreciosPreview escalado) │
+│  Grupos visibles        │                                    │
+│  [RECIPIENTE] [SABOR]…  │                                    │
+│  Columnas  [-] 3 [+]    │                                    │
+│  Tema [☀️ Claro][🌙]    │                                    │
+│  ☑ Mostrar imágenes     │                                    │
+│  ☑ Mostrar agotados     │                                    │
+│  [Restaurar] [Guardar]  │                                    │
+├─────────────────────────┴────────────────────────────────────┤
+│ Caché offline  [🗑️ Limpiar caché del Display]               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Comportamiento:**
+- Al montar: carga el menú **una sola vez** (`GET /heladeria/display/menu` con
+  `withRetries`) y las 3 pantallas (`loadDisplayScreens()`).
+- Estado local: `screens`, `activeScreenId`, `menuData`, `dirty`.
+- Al cambiar un control → actualiza `screens[active]` en memoria → el preview se
+  recalcula con `buildDisplayViewModel(menuData, config)` (sin fetch).
+- **"Guardar"** → `saveDisplayScreens(screens)` (persiste las 3 de golpe) y
+  `dirty = false`.
+- **"Restaurar"** → repone `DEFAULT_DISPLAY_CONFIG` solo de la pantalla activa.
+- **Cambio de tab con `dirty === true`:** se muestra un aviso inline no bloqueante
+  ("Tienes cambios sin guardar") y se permite cambiar de tab (los cambios se
+  conservan en memoria hasta guardar o salir). **No se usa `window.confirm`** para
+  no bloquear el hilo de UI.
+- Usa `DisplayConfigControls` (§5.8) y `DisplayPreciosPreview` (§5.7).
+
+---
+
+### 5.12 Frontend — `apps/heladeria/sections/DisplayPreciosSelectorUI.jsx` [NEW]
+
+**Sala de control:** grid de hasta 3 tarjetas.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ← Volver                            Displays de Precios     │
+├──────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐  │
+│  │ ╔═════════════╗ │  │ ╔═════════════╗ │  │  (vacía /  │  │
+│  │ ║  Miniatura  ║ │  │ ║  Miniatura  ║ │  │  deshab.)  │  │
+│  │ ╚═════════════╝ │  │ ╚═════════════╝ │  │            │  │
+│  │ Menú Completo   │  │ Solo Helados    │  │ Pantalla 3 │  │
+│  │ 3 col · Claro   │  │ 4 col · Oscuro  │  │ Deshabilitada│
+│  │ [📺 Proyectar]  │  │ [📺 Proyectar]  │  │ (sin botón)│  │
+│  └─────────────────┘  └─────────────────┘  └────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Comportamiento:**
+- Al montar: carga menú (una vez) + `loadDisplayScreens()`.
+- Miniatura: `DisplayPreciosPreview` con `scale=0.25` y el `viewModel` de cada
+  pantalla.
+- **"Proyectar"** →
+  `window.open(buildScreenProjectionUrl(pathname, screen.id), '_blank', 'noopener')`.
+- **Estado vacío:** si `getProjectableScreens(screens).length === 0`, mostrar
+  mensaje honesto + CTA "Ir al Configurador" (§2.3).
+- Pantallas `enabled: false` se muestran atenuadas y sin botón.
+
+---
+
+### 5.13 Frontend — `apps/heladeria/sections/DisplayPreciosUI.jsx` [MODIFY]
+
+Se **simplifica a wrapper delgado**:
+
+- Si `resolveDisplayMode(window.location.search) === OUTPUT` →
+  `<DisplayPreciosOutput onExit={onBack} />` (kiosco).
+- En caso contrario → `<DisplayPreciosSuiteUI onBack={onBack} />`.
+
+Se elimina de este archivo la lógica de caché y el `DisplayConfigPanel` directo
+(se mueven al Configurador). El botón "Limpiar caché" se conserva dentro del
+Configurador (§5.11).
+
+---
+
+### 5.14 Frontend — `apps/heladeria/utils/printFormats.js` [NEW] ⚠️ REESCRITO v7
+
+Módulo **puro** (sin DOM, sin React, sin `jspdf`) con el catálogo de formatos de
+papel **en puntos** (unidad nativa de PDF). Testeable con Vitest sin navegador.
+
+```js
+/** Tamaños en puntos (1 pt = 1/72"). Fuente: ISO 216 y ANSI/ASME Y14.1. */
+export const PRINT_FORMATS = {
+    LETTER:        { label: 'Carta',       pt: { w: 612,    h: 792    } },
+    LEGAL:         { label: 'Oficio',      pt: { w: 612,    h: 1008   } },
+    TABLOID:       { label: 'Tabloide',    pt: { w: 792,    h: 1224   } },
+    DOUBLE_LETTER: { label: 'Doble carta', pt: { w: 1224,   h: 792    } },
+    A4:            { label: 'A4',          pt: { w: 595.28, h: 841.89 } },
+    A3:            { label: 'A3',          pt: { w: 841.89, h: 1190.55 } },
+};
+export const PRINT_ORIENTATIONS = { PORTRAIT: 'portrait', LANDSCAPE: 'landscape' };
+export const DEFAULT_PRINT_FORMAT = 'LETTER';
+export const DEFAULT_PRINT_ORIENTATION = 'PORTRAIT';
+export const DEFAULT_MARGIN_MM = 12;
+
+/** Devuelve { width, height } en puntos, aplicando orientación. Puro. */
+export function getPageSizePt(format, orientation) { /* ... */ }
+
+/** Convierte mm a puntos. Puro. */
+export function mmToPt(mm) { return (mm * 72) / 25.4; }
+
+/** Normaliza el bloque print de una config. Puro. */
+export function normalizePrintConfig(raw) { /* ... */ }
+```
+
+**Regla:** `getPageSizePt` **intercambia** `w`/`h` si `orientation === 'LANDSCAPE'`.
+Para `DOUBLE_LETTER` (ya horizontal por definición), `PORTRAIT` la deja como está.
+
+**Ya NO existe `buildPrintCss`** (v7): no hay CSS `@page` porque no hay
+`window.print()`. El tamaño de página se pasa a `jspdf` como `format: [w, h]`.
+
+---
+
+### 5.15 Frontend — `apps/heladeria/utils/displayFonts.js` [NEW] ⚠️ v4
+
+Catálogo **puro** de las 4 tipografías y helper de recolección.
+
+```js
+export const DISPLAY_FONTS = {
+    CLASSIC: { label: 'Clásica artesanal', family: "'Playfair Display', serif",  googleName: 'Playfair+Display:wght@700;900' },
+    FUN:     { label: 'Divertida',         family: "'Baloo 2', cursive",         googleName: 'Baloo+2:wght@700;800' },
+    MODERN:  { label: 'Moderna limpia',    family: "'Poppins', sans-serif",      googleName: 'Poppins:wght@600;800' },
+    RETRO:   { label: 'Retro soda',        family: "'Lobster Two', cursive",     googleName: 'Lobster+Two:wght@700' },
+};
+export const DEFAULT_FONT = 'CLASSIC';
+export const VALID_FONTS = Object.keys(DISPLAY_FONTS);
+
+/** Devuelve el subconjunto de claves de fuente usadas por las pantallas. Puro. */
+export function collectUsedFonts(screens) { /* ... */ }
+
+/** Construye la URL de Google Fonts para el subconjunto. Puro. */
+export function buildFontsUrl(fontKeys) { /* ... */ }
+```
+
+> **Corrección v5:** la v4 marcaba `CLASSIC` con `alreadyLoaded: true`. **Es falso**
+> (§2.12.2): ninguna de las 4 está cargada. Se elimina ese flag engañoso y se añade
+> `googleName` para construir la URL real.
+
+**Consumo:** `DisplayPreciosSuiteUI` llama `collectUsedFonts(screens)` →
+`buildFontsUrl(keys)` e inyecta **un solo `<link>`** con las familias usadas
+(§2.12.2). Si las 3 pantallas usan `CLASSIC`, solo se pide `Playfair Display`.
+
+---
+
+### 5.16 Frontend — `apps/heladeria/utils/layoutPrintDocument.js` [NEW] ⚠️ REESCRITO v7
+
+Módulo **puro** (sin DOM, sin React, sin `jspdf`) que calcula **dónde va cada
+elemento y en qué página**. Es la pieza más propensa a errores (paginación) y por
+eso se aísla para poder testearla sin generar un PDF real.
+
+```js
+/**
+ * Calcula el layout paginado del documento de imprenta.
+ * PURO: no toca DOM, no usa jspdf, no hace fetch.
+ *
+ * @param {object} viewModel   Salida de buildDisplayViewModel (grupos + items).
+ * @param {object} screenConfig Config COMPLETA de la pantalla (no solo .print):
+ *                              necesita `print` (formato/orientación/pie/QR),
+ *                              `header` (§2.12.1), `fontFamily` (§2.12.2) e
+ *                              `images` (§2.13). La firma recibe la config
+ *                              entera para no obligar al llamador a fusionar
+ *                              bloques a mano.
+ * @returns {{ pageSizePt: {width,height}, pages: Array<{items: Array<LayoutItem>}> }}
+ */
+export function layoutPrintDocument(viewModel, screenConfig) { /* ... */ }
+```
+
+> **Corrección v8 (defecto #2):** la v7 declaraba aquí `printConfig` con campos
+> `header`/`fontFamily` que **no existen** dentro de `config.print` (§4.1: `print`
+> solo tiene `format`, `orientation`, `footerNote`, `validUntil`, `showQr`,
+> `showCropMarks`). El llamador (§5.16.1) pasaba `screenConfig.print`, así que el
+> encabezado y la tipografía **nunca** habrían llegado al PDF. Se unifica la firma
+> a `screenConfig` (la config completa de la pantalla).
+
+**Estructura de un `LayoutItem` (coordenadas absolutas en puntos):**
+
+```js
+{ type: 'HEADER' | 'GROUP_TITLE' | 'CARD' | 'FOOTER' | 'CROP_MARK',
+  x, y, w, h,          // posición y tamaño en puntos
+  text,                // para tipos de texto
+  imageUrl,            // para CARD con imagen
+  font: { family, sizePt, weight } }
+```
+
+**Reglas de paginación (explícitas y deterministas):**
+
+1. `cursorY` arranca en `marginPt`.
+2. Antes de colocar un bloque: si `cursorY + blockHeight > pageHeight - marginPt`,
+   se crea una **página nueva** y `cursorY` vuelve a `marginPt`.
+3. Un `GROUP_TITLE` **nunca** queda huérfano al final de página: si el título cabe
+   pero la primera card no, ambos saltan juntos (regla "keep-with-next").
+4. El `HEADER` se repite en **todas** las páginas (opción `repeatHeader`, default
+   `true`) para que cada hoja sea identificable.
+5. El `FOOTER` (pie legal + `validUntil`) se coloca al final del documento.
+
+**Por qué esto es mejor que `break-inside: avoid` (v6):** el control es **total**.
+El navegador decidía dónde cortar; aquí lo decide el código, de forma reproducible
+y testeable. Dos ejecuciones con la misma entrada producen el mismo layout.
+
+---
+
+### 5.16.1 Frontend — `apps/heladeria/utils/pdfRenderer.js` [NEW] ⚠️ NUEVO EN v7
+
+Módulo **impuro** (usa `jspdf`). Su única responsabilidad es **dibujar** el layout
+que produjo `layoutPrintDocument`. No calcula posiciones.
+
+```js
+import { jsPDF } from 'jspdf';
+import { getPageSizePt, mmToPt } from './printFormats.js';
+
+/**
+ * Genera y descarga el PDF de la carta. IMPURO (usa jspdf + descarga).
+ * @param {object} layout      Salida de layoutPrintDocument.
+ * @param {object} printConfig Config de impresión normalizada.
+ * @returns {Promise<void>}    Resuelve cuando el archivo se ha descargado.
+ */
+export async function renderPdf(layout, printConfig) {
+    const { width, height } = layout.pageSizePt;
+    const doc = new jsPDF({
+        unit: 'pt',
+        format: [width, height],
+        orientation: printConfig.orientation === 'LANDSCAPE' ? 'landscape' : 'portrait',
+    });
+
+    layout.pages.forEach((page, idx) => {
+        if (idx > 0) doc.addPage([width, height], doc.getOrientation());
+        page.items.forEach((item) => drawItem(doc, item));
+    });
+
+    doc.save(buildFileName(printConfig));   // ← descarga, NO imprime
+}
+```
+
+**Puntos de atención técnicos (documentados para el implementador):**
+
+| Tema | Decisión |
+|---|---|
+| Fuentes | `jspdf` **no** conoce las fuentes de Google. Se usa `doc.setFont('helvetica'\|'times')` como aproximación **o** se embebe la fuente con `addFileToVFS` + `addFont` (requiere el `.ttf`). **Decisión v7:** empezar con las fuentes base de PDF (helvetica/times/courier) y documentar la limitación; embeber Google Fonts es una mejora de fase 2 (§12). |
+| Imágenes | `doc.addImage(dataUrl, 'PNG'\|'JPEG', x, y, w, h)`. Las imágenes del maestro (`/assets/productos/*.png`) se cargan a `dataURL` con `fetch` + `FileReader` **antes** de dibujar. |
+| Saltos de página | **Nunca** los decide `jspdf`; vienen ya resueltos en `layout.pages`. |
+| Nombre del archivo | `carta-{screenName}-{format}-{YYYYMMDD}.pdf` (puro, en `buildFileName`). |
+| Tema | Siempre claro (§2.14.2): fondo `#ffffff`, texto `#000000`. |
+
+**Separación de responsabilidades (contrato):**
+
+| Módulo | Pureza | Test | Responsabilidad |
+|---|---|---|---|
+| `layoutPrintDocument.js` | ✅ Pura | ✅ Vitest | **Dónde** va cada cosa y en qué página |
+| `pdfRenderer.js` | ❌ Impura | ⚠️ Solo integración manual | **Dibujar** el layout y descargar |
+
+**Función de entrada desde la UI (en `DisplayPreciosConfigUI`):**
+
+```js
+async function handleDownloadPdf() {
+    const viewModel = buildDisplayViewModel(menuData, screenConfig);
+    const layout = layoutPrintDocument(viewModel, screenConfig);  // puro
+    await renderPdf(layout, screenConfig);                        // impuro
+}
+```
+
+> **Corrección v8 (defecto #2):** se pasa `screenConfig` **completa** (no
+> `screenConfig.print`) para que `layoutPrintDocument` reciba `header`,
+> `fontFamily` e `images`. `renderPdf` también la recibe para conocer
+> `print.orientation` y el nombre de la pantalla (`buildFileName`).
+
+> **Nota v7:** se **elimina** `DisplayPrintTemplate.jsx` (v4) y todo el patrón
+> iframe + `window.print()` + `waitForPrintReady` + `openPrintPreview`. Ya no hay
+> HTML de impresión ni diálogo del navegador. Esta herramienta **solo genera un
+> archivo**; no toca ninguna impresora (el subsistema térmico del POS es ajeno a
+> este módulo).
+
+**QR — ⚠️ CORRECCIÓN v5 (alcance realista, vigente en v7):** la v4 decía "se genera
+como SVG local con `buildQrSvg(url)` (función pura)" como si fuera trivial. **No lo
+es:** un codificador QR real requiere segmentación de datos, corrección de errores
+Reed-Solomon y colocación de máscaras (~150–300 líneas).
+
+**Decisión — por defecto, sin QR:**
+- `print.showQr` tiene **default `false`** (ya está así en §4.1).
+- Si el negocio lo activa, la **primera implementación** muestra la **URL en texto**
+  bajo el pie (`{url}` legible), que es honesto, cero código y cumple el puente
+  analógico→digital.
+- El QR gráfico real se mueve a **§12 (fase futura)** como tarea propia, con dos
+  opciones evaluadas: (a) implementar el codificador, o (b) añadir una dependencia
+  pequeña y auditada (`qrcode` ~20 KB). **No se decide ahora.**
+
+---
+
+### 5.17 Frontend — `apps/heladeria/components/DisplayTemplateControls.jsx` [NEW] ⚠️ v4
+
+Controles presentacionales para los campos v4: encabezado, tipografía, imágenes y
+formato de impresión. Recibe `config` + `onChange` (sin estado propio, sin fetch),
+igual que `DisplayConfigControls` (§2.10).
+
+**Secciones del panel:**
+1. **Encabezado:** título, subtítulo, mostrar logo, alineación.
+2. **Tipografía:** 4 opciones con vista previa del nombre de la fuente.
+3. **Imágenes:** activar, tamaño, forma, fallback.
+4. **Exportación para imprenta:** formato, orientación, nota al pie, vigencia, QR,
+   marcas de corte.
+5. **Botón "Descargar PDF para imprenta"** → `layoutPrintDocument` + `renderPdf`
+   (§5.16.1). **Descarga un archivo; NO abre ningún diálogo de impresión.**
+6. **Botón "Aplicar plantilla"** → abre el selector de plantillas (§2.15).
+7. **Botón "Duplicar a..."** → clona la config actual a otra pantalla (§2.16).
+8. **Botones "Exportar JSON" / "Importar JSON"** (§2.17).
+
+> **Nota v7:** se elimina el botón "Vista previa de impresión" (v6). La vista previa
+> del diseño ya existe en el Configurador (split con `DisplayPreciosPreview`); el
+> PDF se descarga directamente. El texto de ayuda junto al botón recuerda al usuario
+> que envíe el archivo a la imprenta **a tamaño real (100%)** (§2.14.4).
+
+---
+
+### 5.18 Frontend — `apps/heladeria/utils/displayTemplates.js` [NEW] ⚠️ v4
+
+Módulo **puro** con las plantillas predefinidas (§2.15). Cada plantilla es un
+objeto parcial de `config` que se fusiona sobre la config actual.
+
+```js
+export const DISPLAY_TEMPLATES = {
+    CLASSIC: {
+        label: 'Clásica',
+        description: 'Elegante, fondo claro, 3 columnas con imágenes.',
+        patch: {
+            theme: 'LIGHT', columns: 3, fontFamily: 'CLASSIC',
+            images: { enabled: true, mode: 'PRODUCT', size: 'MEDIUM', shape: 'CIRCLE', fallback: 'INITIALS' },
+            header: { alignment: 'CENTER', showLogo: true },
+        },
+    },
+    MINIMAL: {
+        label: 'Minimalista',
+        description: 'Sin imágenes, 4 columnas, tipografía moderna.',
+        patch: {
+            theme: 'LIGHT', columns: 4, fontFamily: 'MODERN',
+            images: { enabled: false, mode: 'NONE', size: 'SMALL', shape: 'SQUARE', fallback: 'NONE' },
+            header: { alignment: 'LEFT', showLogo: false },
+        },
+    },
+    KIDS: {
+        label: 'Infantil',
+        description: 'Divertida, imágenes grandes, 2 columnas.',
+        patch: {
+            theme: 'LIGHT', columns: 2, fontFamily: 'FUN',
+            images: { enabled: true, mode: 'PRODUCT', size: 'LARGE', shape: 'CIRCLE', fallback: 'INITIALS' },
+            header: { alignment: 'CENTER', showLogo: true },
+        },
+    },
+    RETRO: {
+        label: 'Retro',
+        description: 'Soda fountain, fondo oscuro, 3 columnas.',
+        patch: {
+            theme: 'DARK', columns: 3, fontFamily: 'RETRO',
+            images: { enabled: true, mode: 'PRODUCT', size: 'MEDIUM', shape: 'ROUNDED', fallback: 'INITIALS' },
+            header: { alignment: 'CENTER', showLogo: true },
+        },
+    },
+    PRICE_ONLY: {
+        label: 'Solo precio',
+        description: 'Sin imágenes, 6 columnas, tipografía moderna. Carteleras densas.',
+        patch: {
+            theme: 'LIGHT', columns: 6, fontFamily: 'MODERN',
+            images: { enabled: false, mode: 'NONE', size: 'SMALL', shape: 'SQUARE', fallback: 'NONE' },
+            header: { alignment: 'LEFT', showLogo: false },
+        },
+    },
+};
+
+/** Fusiona el patch de una plantilla sobre la config actual. Puro. */
+export function applyTemplate(config, templateKey) { /* ... */ }
+```
+
+> **Corrección v8 (defecto #3):** la v7 declaraba **5 plantillas** en §2.15 y en
+> §7.3 (paso 27), pero este objeto solo definía **4** (faltaba `PRICE_ONLY`). Se
+> añade aquí, coherente con §2.15 y §2.18.
+
+**Regla:** `applyTemplate` hace **merge superficial por bloque** (no reemplaza
+`groups` ni `groupLabels`, que son decisiones del negocio, no de estilo). Es
+testeable sin DOM.
+
+---
+
+### 5.19 Frontend — `apps/heladeria/utils/displayConfigIO.js` [NEW] ⚠️ v4
+
+Módulo **puro** para exportar/importar la config de una pantalla como JSON
+(§2.17).
+
+```js
+export const EXPORT_VERSION = 1;
+
+/** Serializa una pantalla a JSON portable. Puro. */
+export function exportScreen(screen) { /* ... */ }
+
+/** Valida y normaliza un JSON importado. Puro. Devuelve { ok, screen, error }. */
+export function importScreen(jsonText) { /* ... */ }
+
+/** Clona la config de una pantalla a otra. Puro. (§2.16) */
+export function duplicateScreenConfig(screens, fromId, toId) { /* ... */ }
+```
+
+**Reglas:**
+- `exportScreen` incluye `version` y `exportedAt` para trazabilidad.
+- `importScreen` **valida** el JSON y lo pasa por `normalizeScreen`; si es inválido
+  devuelve `{ ok: false, error }` en lugar de lanzar.
+- **Nunca** importa el `id` del archivo: el `id` de destino lo decide el usuario
+  (evita sobrescribir la pantalla equivocada).
+- `duplicateScreenConfig` copia **solo `config`**; conserva `id` y `name` del
+  destino. `fromId === toId` o `toId` inexistente → devuelve `screens` sin cambios.
+
+> **Corrección v5:** la v4 mencionaba `duplicateScreenConfig` en §2.16 y en el test
+> #16, pero **ningún archivo lo definía** (función huérfana). Se asigna aquí, junto
+> a las otras utilidades puras de manipulación de pantallas.
+
+---
+
+### 5.20 Frontend — `apps/heladeria/components/DisplayTemplatePicker.jsx` [NEW] ⚠️ v4
+
+Modal presentacional para elegir plantilla (§2.15) y para elegir pantalla destino
+al duplicar (§2.16). Recibe `onSelect` + `onClose`. Sin estado propio, sin fetch.
+
+**Estilo:** editorial B&W, idéntico a `BrandingEditorModal`
+([`HeladeriaHubUI.jsx:217`](apps/heladeria/HeladeriaHubUI.jsx:217)).
+
+---
+
+## 6. Resumen de archivos
+
+| Acción | Archivo | Descripción |
+|---|---|---|
+| **MODIFY** | `apps/api/modules/settings/service.py` | Seed aditivo de `heladeria_display_screens` (sin migración). |
+| **MODIFY** | `apps/ExperimentCenterUI.jsx` | Deep-link del kiosco (`?module=heladeria&mode=output`). **Bloqueante.** |
+| **MODIFY** | `apps/heladeria/HeladeriaHubUI.jsx` | Prop opcional `initialTool`. |
+| **MODIFY** | `apps/heladeria/utils/displayMappers.js` | Constantes + 7 funciones puras multi-pantalla. |
+| **MODIFY** | `apps/heladeria/services/displayConfigService.js` | `fetch/load/saveDisplayScreens` con `withRetries`. |
+| **MODIFY** | `apps/heladeria/sections/DisplayPreciosOutput.jsx` | Lee `screen`, fix `position`, compara antes de `setState`, usa `Body`. |
+| **MODIFY** | `apps/heladeria/sections/DisplayPreciosUI.jsx` | Wrapper delgado (output legacy vs sub-suite). |
+| **NEW** | `apps/heladeria/components/DisplayPreciosBody.jsx` | Cuerpo puro compartido (grupos + cards). |
+| **NEW** | `apps/heladeria/components/DisplayPreciosPreview.jsx` | Marco + escala sobre `Body`. |
+| **NEW** | `apps/heladeria/components/DisplayConfigControls.jsx` | Controles presentacionales (extraídos). |
+| **MODIFY** | `apps/heladeria/utils/displayMappers.test.js` | **Ya existe** (424 líneas, 43 tests del contrato actual). Se **añaden** los casos multi-pantalla; no se reescribe. |
+| **NEW** | `apps/heladeria/sections/DisplayPreciosSuiteUI.jsx` | Sub-suite B&W con 2 botones. |
+| **NEW** | `apps/heladeria/sections/DisplayPreciosConfigUI.jsx` | Configurador split con preview en vivo. |
+| **NEW** | `apps/heladeria/sections/DisplayPreciosSelectorUI.jsx` | Sala de control con proyección. |
+| **NEW** | `apps/heladeria/utils/printFormats.js` | Catálogo de formatos en puntos + `getPageSizePt` / `mmToPt` (puro). **v7** |
+| **NEW** | `apps/heladeria/utils/displayFonts.js` | Catálogo de 4 tipografías + `collectUsedFonts` (puro). **v4** |
+| **NEW** | `apps/heladeria/utils/layoutPrintDocument.js` | Paginación del documento de imprenta (puro). **v7** |
+| **NEW** | `apps/heladeria/utils/pdfRenderer.js` | `renderPdf` con `jspdf` (impuro, descarga el archivo). **v7** |
+| **NEW** | `apps/heladeria/components/DisplayTemplateControls.jsx` | Controles de encabezado/tipografía/imágenes/exportación. **v4** |
+| **NEW** | `apps/heladeria/utils/displayTemplates.js` | 5 plantillas + `applyTemplate` (puro). **v4** |
+| **NEW** | `apps/heladeria/utils/displayConfigIO.js` | `exportScreen` / `importScreen` / `duplicateScreenConfig` (puro). **v4** |
+| **NEW** | `apps/heladeria/components/DisplayTemplatePicker.jsx` | Modal de plantillas y de pantalla destino. **v4** |
+
+**Total:** 9 modificados, **14 nuevos**. **Ningún archivo de `apps/pos/` se toca.**
+**`DisplayConfigPanel.jsx` NO se modifica** (§2.10).
+**1 dependencia nueva:** `jspdf` (~350 KB), justificada por la exportación a imprenta
+(§2.14.0). **CERO migraciones Alembic** (§2.1, §2.11).
+
+> **Desglose de los 14 `[NEW]` (verificado fila por fila, v8):**
+> - **v3 (3):** `DisplayPreciosBody`, `DisplayPreciosPreview`,
+>   `DisplayConfigControls`.
+> - **Sub-suite (3):** `DisplayPreciosSuiteUI`, `DisplayPreciosConfigUI`,
+>   `DisplayPreciosSelectorUI`.
+> - **Impresión v7 (3):** `printFormats`, `layoutPrintDocument`, `pdfRenderer`.
+> - **Diseño v4 (5):** `displayFonts`, `DisplayTemplateControls`,
+>   `displayTemplates`, `displayConfigIO`, `DisplayTemplatePicker`.
+> - **Total: 3 + 3 + 3 + 5 = 14.** ✔
+>
+> **Corrección v8 (defecto #7):** la v7 decía "14 nuevos" pero **no desglosaba**,
+> lo que dejaba dudas al contar (la tabla tiene 14 filas `[NEW]`, y 9 `[MODIFY]`).
+> Se añade el desglose explícito. El total **no cambia**: 9 + 14.
+
+---
+
+## 7. Plan de pruebas
+
+### 7.1 Unitarias (Vitest) — `apps/heladeria/utils/displayMappers.test.js` [MODIFY]
+
+> **Nota:** este archivo **ya existe** con 43 tests que cubren el contrato actual
+> (`normalizeDisplayConfig`, `validateDisplayConfig`, `mapDisplayItem`,
+> `mapDisplayMenuFromApi`, `groupItemsByComponentType`, `filterVisibleGroups`,
+> `formatPrice`, `buildDisplayViewModel`, `resolveDisplayMode`,
+> `serializeDisplayConfig`). Los casos de abajo se **añaden** en un `describe`
+> nuevo; los existentes no se tocan (evita regresión del contrato vigente).
+
+| # | Función | Casos |
+|---|---|---|
+| 1 | `normalizeScreensArray` | `null` → 3 defaults; array de 1 → completa a 3; array de 5 → recorta a 3; ids desordenados → reordena a `screen_1..3`; `config` corrupta → defaults. |
+| 2 | `normalizeScreen` | `id` forzado al `fallbackId` aunque venga otro; `name` vacío → default; `enabled` no-booleano → `false`. |
+| 3 | `serializeScreensArray` | Round-trip: `normalize(serialize(x)) === normalize(x)`. |
+| 4 | `findScreenById` | Encuentra existente; `null` si no existe; `null` si `screens` no es array. |
+| 5 | `resolveScreenFromQuery` | `'?mode=output&screen=screen_2'` → `'screen_2'`; sin `screen` → `null`; `screen=invalido` → `null`; `''` → `null`. |
+| 6 | `getProjectableScreens` | Filtra `enabled:false`; array vacío → `[]`. |
+| 7 | `buildScreenProjectionUrl` | `/heladeria` + `screen_2` → `/heladeria?module=heladeria&mode=output&screen=screen_2`. |
+| 8 | `buildDisplayViewModel` (regresión) | Con config de pantalla 2 → mismos grupos que el output. |
+
+**Casos v4 (nuevos `describe`):**
+
+| # | Función | Casos |
+|---|---|---|
+| 9 | `resolveGroupLabel` | Con override → usa el override; sin override → usa `COMPONENT_TYPE_LABELS`; `component_type` desconocido → devuelve el propio `ct`; `groupLabels` `null` → no rompe. |
+| 10 | `resolveImagePresentation` | `enabled:false` → `url:null`; producto con `image_url` → devuelve la url; sin `image_url` + `fallback:'INITIALS'` → `fallbackText` = primera letra; `shape`/`size` se propagan. |
+| 11 | `getPageSizePt` | `LETTER`+`PORTRAIT` → `{width:612, height:792}`; `LETTER`+`LANDSCAPE` → `{width:792, height:612}`; `TABLOID`+`PORTRAIT` → `{width:792, height:1224}`; `DOUBLE_LETTER`+`PORTRAIT` → `{width:1224, height:792}` (ya horizontal); `A4` → `{width:595.28, height:841.89}`. |
+| 12 | `mmToPt` | `25.4` → `72`; `12` → `34.0157…` (margen por defecto). |
+| 13 | `normalizePrintConfig` | `null` → defaults; formato inválido → `LETTER`; orientación inválida → `PORTRAIT`; `validUntil` no-string → `null`. |
+| 14 | `layoutPrintDocument` | **Paginación (prueba clave):** (a) documento que cabe en 1 página → `pages.length === 1`; (b) documento largo → `pages.length > 1` y **ningún** item excede `pageHeight - marginPt`; (c) `GROUP_TITLE` nunca es el último item de una página (keep-with-next); (d) `HEADER` aparece en todas las páginas si `repeatHeader:true`; (e) determinismo: dos llamadas con la misma entrada → layouts idénticos; (f) `FOOTER` en la última página. |
+| 15 | `buildFileName` | `carta-{screen}-{format}-{YYYYMMDD}.pdf`; caracteres no seguros del nombre de pantalla se sanean. |
+| 16 | `collectUsedFonts` | 3 pantallas `CLASSIC` → `['CLASSIC']`; mezcla → subconjunto único; `screens` vacío → `['CLASSIC']` (default). |
+| 17 | `normalizeDisplayConfig` (v4, regresión) | `showImages:false` sin `images` → `images.enabled:false`; config legacy sin campos v4 → defaults v4 aplicados; config v4 completa → round-trip estable. |
+| 18 | `applyTemplate` | `CLASSIC` → `theme:'LIGHT'`, `columns:3`, `fontFamily:'CLASSIC'`; **NO** toca `groups` ni `groupLabels`; plantilla inválida → devuelve la config sin cambios. |
+| 19 | `duplicateScreenConfig` | Copia `config` de origen a destino; **NO** copia `id` ni `name`; `fromId === toId` → sin cambios; `toId` inexistente → sin cambios. |
+| 20 | `exportScreen` | Incluye `version` y `exportedAt`; el JSON es parseable; no incluye funciones. |
+| 21 | `importScreen` | JSON válido → `{ ok:true, screen }`; JSON corrupto → `{ ok:false, error }` sin lanzar; `id` del archivo **ignorado**; campos faltantes → defaults vía `normalizeScreen`. |
+
+> **Corrección v8 (defecto #4):** la tabla anterior tenía numeración duplicada
+> (los casos 14, 15 y 16 aparecían dos veces: una vez para las funciones de
+> impresión y otra para las de plantillas). Se renumeró de forma continua
+> (9 → 21) para que cada caso tenga un identificador único y sea trazable.
+
+### 7.2 Integración — URL de proyección ⚠️ NUEVO EN v3
+
+Test que cubre el fallo crítico de la v2. Verifica que la URL generada por
+`buildScreenProjectionUrl` contiene **los tres parámetros** (`module`, `mode`,
+`screen`) y que `resolveScreenFromQuery` la interpreta de vuelta. Si alguien
+elimina `module=heladeria`, el test falla.
+
+> **Limitación honesta:** este test verifica el contrato de la URL, **no** que
+> `ExperimentCenterUI` monte el Display. Esa verificación es manual (§7.3, paso 9)
+> porque no hay entorno de test de integración de React Router en el proyecto.
+
+### 7.3 Verificación manual
+
+1. **Navegación:** Hub → Gestor Displays → Display Precios → sub-suite con 2
+   botones (estilo B&W idéntico al resto).
+2. **Configurador:** cambiar nombre/grupos/columnas/tema → preview se actualiza en
+   vivo (sin guardar).
+3. **Persistencia:** Guardar → recargar → los 3 valores persisten.
+4. **Selector:** ver 3 pantallas con miniaturas → "Proyectar" abre pestaña
+   fullscreen con la config correcta.
+5. **Deshabilitadas:** pantalla `enabled:false` atenuada y sin botón.
+6. **Cero habilitadas:** Selector muestra estado vacío + CTA al Configurador.
+7. **Compatibilidad legacy:** URL antigua `?mode=output` (sin `&screen=`) sigue
+   funcionando con la config legacy.
+8. **Fix `position`:** el output no se recorta ni tapa el sidebar sin salida.
+9. **⚠️ Deep-link (crítico):** abrir en pestaña nueva
+   `{pathname}?module=heladeria&mode=output&screen=screen_2` **estando deslogueado
+   del módulo** → debe montar el Display, no el Dashboard.
+10. **`import { CONFIG }`** (Incident 16.8): verificar manualmente que
+    `displayConfigService.js` importa `CONFIG` (el build no lo detecta).
+11. **Sin animaciones infinitas:** inspeccionar que ningún componente nuevo define
+    `@keyframes` ni `animate-pulse`.
+
+**Verificación manual v4:**
+
+12. **Encabezado:** cambiar título/subtítulo/logo/alineación → preview y output lo
+    reflejan.
+13. **Tipografía:** cambiar entre las 4 fuentes → el preview cambia de tipografía.
+    **Verificar acentos** (`Sabor`, `Tamaño`, `Día`) en las 4.
+14. **Carga de fuentes:** con las 3 pantallas en `CLASSIC`, inspeccionar la pestaña
+    Network → **no** se descarga `Baloo 2`, `Poppins` ni `Lobster Two` (§2.12.2).
+15. **Imágenes:** producto con imagen → se muestra; producto **sin** imagen →
+    se muestra la inicial (no un hueco roto).
+16. **Exportación a imprenta (v7):** pulsar "Descargar PDF para imprenta" → se
+    descarga `carta-*.pdf` **sin abrir ningún diálogo de impresión**. Abrir el PDF:
+    (a) el tamaño de página coincide con el formato elegido (verificable en las
+    propiedades del PDF); (b) el fondo es **blanco** aunque la pantalla esté en tema
+    `DARK`; (c) el texto es **seleccionable** (vectorial, no imagen); (d) los cortes
+    de página caen entre grupos, nunca a mitad de una card.
+17. **Regresión de zona restringida:** confirmar que **ningún** archivo de
+    `apps/pos/` cambió (`git status`) y que los tickets térmicos de 80 mm siguen
+    imprimiendo igual. Esta herramienta **no** debe tocar ninguna impresora: el
+    subsistema de impresión del POS queda intacto y fuera de este módulo.
+18. **Tabloide horizontal:** descargar el PDF con `TABLOID`+`LANDSCAPE` → el tamaño
+    de página del archivo es `1224 × 792 pt` (verificable en las propiedades del
+    PDF). **No se valida con ninguna impresora** (§2.14).
+19. **Enlace digital:** con `showQr:false` (default) el PDF incluye la **URL en
+    texto** bajo el pie. (El QR gráfico es fase futura, §12.)
+20. **Pie legal:** `footerNote` y `validUntil` aparecen en el PDF.
+21. **Dependencia única:** confirmar que `package.json` ganó **solo** `jspdf` y
+    **nada más** (`html2canvas` NO se añade; §2.14.0).
+
+**Verificación manual v4 — plantillas y utilidades:**
+
+> **Corrección v8 (defecto #5):** el paso 21 aparecía dos veces (el último de la
+> lista v7 y el primero de la lista v4). Se renumeró la lista v4 de forma
+> continua (22 → 28) para que cada paso tenga un identificador único.
+
+22. **Plantilla:** aplicar "Infantil" → preview cambia a 2 columnas, tipografía
+    divertida, imágenes grandes. **Los grupos seleccionados NO cambian.**
+23. **Duplicar:** duplicar pantalla 1 a pantalla 2 → pantalla 2 tiene la misma
+    config pero **conserva su nombre**.
+24. **Duplicar sobre config existente:** pide confirmación antes de sobrescribir.
+25. **Exportar:** descarga un `.json` con `version` y `exportedAt`.
+26. **Importar válido:** importar el JSON exportado en otra pantalla → config
+    aplicada correctamente.
+27. **Importar inválido:** importar un archivo corrupto → muestra error y **no**
+    aplica nada.
+28. **Vista "solo precio":** aplicar la plantilla `PRICE_ONLY` → sin imágenes,
+    5-6 columnas, tipografía moderna.
+
+---
+
+## 8. Plan de rollback
+
+Si el rediseño falla en producción:
+
+1. **Datos:** la clave legacy `heladeria_display_precios_config` **nunca se borra**
+   (§2.4), así que la configuración anterior sigue intacta. La clave nueva
+   `heladeria_display_screens` puede quedar huérfana sin efecto.
+2. **Código:** revertir el commit restaura `DisplayPreciosUI` monolítico. El
+   `DisplayPreciosOutput` modificado sigue leyendo la clave legacy si no hay
+   `?screen=`, por lo que **es compatible hacia atrás**.
+3. **Interruptor de emergencia (opcional):** si se quiere desactivar la sub-suite
+   sin revertir código, se puede añadir una comprobación de la clave
+   `heladeria_display_screens_enabled` (default `true`) que, en `false`, haga que
+   `DisplayPreciosUI` renderice el panel legacy. **No se incluye en el alcance
+   inicial**; se documenta como mitigación disponible.
+
+---
+
+## 9. Orden de implementación recomendado
+
+1. **Backend** (§5.1) — seed. Verificar `POST /settings/seed` idempotente.
+2. **Utilidades puras + tests** (§5.4, §5.14, §5.15, §5.16, §5.18, §5.19, §7.1,
+   §7.2) — sin UI, base sólida. Incluye `printFormats.js`, `displayFonts.js`,
+   `layoutPrintDocument.js` (paginación, pura), `displayTemplates.js` y
+   `displayConfigIO.js`.
+3. **Servicio** (§5.5) — `loadDisplayScreens` / `saveDisplayScreens`.
+4. **Deep-link** (§5.2, §5.3) — **antes** que el Selector, o éste no sirve.
+5. **Componentes compartidos** (§5.6, §5.7, §5.8).
+6. **Output** (§5.9) — fix `position` + lectura de `screen`.
+7. **Sub-suite + Configurador + Selector** (§5.10, §5.11, §5.12).
+8. **Wrapper** (§5.13).
+9. **Dependencia `jspdf`** (§2.14.0) — `npm install jspdf`. **Única** dependencia
+   nueva del plan. Se instala **antes** del paso 10.
+10. **Motor de diseño + exportación PDF** (§5.16.1, §5.17, §5.20) — `pdfRenderer.js`
+    (usa `jspdf`), controles de diseño y modal de plantillas. **Depende de** los
+    pasos 2, 7 y 9.
+11. **Verificación manual completa** (§7.3).
+
+> **Corrección v5:** la v4 no ubicaba los archivos §5.16–§5.20 en el orden de
+> implementación. Se añade el paso 9, que los agrupa y declara su dependencia.
+>
+> **Corrección v7:** el paso 9 pasa a ser la instalación de `jspdf`; el motor de
+> diseño se renumera a 10 y la verificación a 11.
+
+---
+
+## 10. Cambios de la v3 respecto a la v2 (registro de correcciones)
+
+| # | Defecto en v2 | Corrección en v3 |
+|---|---|---|
+| 1 | **CRÍTICO:** la URL de proyección no montaba el Display (enrutamiento no verificado). | §2.0: deep-link en `ExperimentCenterUI` + `initialTool` en `HeladeriaHubUI`. |
+| 2 | `DisplayPreciosPreview` "puro" y reutilizado por el output (contradicción). | §2.5: descomposición en 3 piezas (`Body` / `Preview` / `Output`). |
+| 3 | "Modo controlado opcional" de `DisplayConfigPanel` presentado como trivial. | §2.10: se extrae `DisplayConfigControls`; el legacy no se toca. |
+| 4 | `displayThemes.js` "por DRY" sin consumidores reales. | §2.8: eliminado del plan. |
+| 5 | Justificación incorrecta del bug `position: fixed`. | §2.7: bug real descrito; fix con `absolute` + padre `relative`. |
+| 6 | `resolveScreenFromQuery` parseaba a mano "por pureza" (inconsistente con el módulo). | §2.9: usa `URLSearchParams`. |
+| 7 | Citas de sección (`§19`, `§3`) no verificadas. | §0: se cita por título, no por número. |
+| 8 | `buildScreenProjectionUrl` como "garantía" sin enforcement. | §5.4: se declara como convención, no garantía. |
+| 9 | Sin test del fallo crítico. | §7.2: test de integración de la URL. |
+| 10 | `dirty` mencionado sin definir comportamiento. | §5.11: aviso inline no bloqueante. |
+| 11 | Sin plan de rollback. | §8: rollback documentado. |
+
+---
+
+## 11. Cambios de la v4 respecto a la v3 (registro de ampliación)
+
+La v4 **no corrige** la v3 (que sigue vigente); **amplía** el alcance con poder de
+diseño real, tras verificar el código.
+
+| # | Función añadida | Decisión verificada | Sección |
+|---|---|---|---|
+| 1 | Encabezados configurables (título, subtítulo, logo, alineación) | Reutiliza el logo existente; sin backend nuevo. | §2.12.1 |
+| 2 | "Categorías" = `component_type` renombrable | **`Category` NO tiene `parent_id`** → no hay subcategorías. Opción A: renombrar por pantalla. **Sin migración.** | §2.11 |
+| 3 | 4 tipografías de heladería | ~~`Playfair Display` ya cargada; las otras 3 auto-hospedadas~~ **CORREGIDO en v5:** ninguna estaba cargada; se cargan las 4 vía `<link>` a Google Fonts (patrón ya usado para `Inter`). Solo se piden las usadas. | §2.12.2 |
+| 4 | Control fino de imágenes | `products.image_url` **ya existe** y el menú ya lo expone. Se añade `size`/`shape`/`fallback`. | §2.13 |
+| 5 | Exportación a imprenta en formatos estándar | ~~iframe + `window.print()` + `@page`~~ **CORREGIDO en v7:** esta herramienta **no imprime**. Se genera un **PDF vectorial** con `jspdf` (`layoutPrintDocument` puro + `renderPdf`), se descarga y se envía a la imprenta. **1 dependencia nueva** (`jspdf`). | §2.14 |
+| 6 | Forzar tema claro al imprimir | Regla de negocio: fondo oscuro gasta tinta y es ilegible. No configurable. | §2.14.2 |
+| 7 | QR + pie legal + marcas de corte | ~~QR como SVG local (sin servicio externo)~~ **CORREGIDO en v5:** el QR gráfico se mueve a §12; por defecto se exporta la **URL en texto** (`showQr: false`). El pie legal y las marcas de corte sí se incluyen. | §2.14.3 |
+
+**Lo que la v4 NO incluye (deuda consciente):**
+
+- **Subcategorías reales** (jerarquía de 2 niveles): requiere migración Alembic
+  `add parent_id to categories`, que toca el maestro de productos (zona compartida
+  con POS). Se documenta como fase futura (§2.11.1).
+- ~~**PDF generado en cliente** (`jspdf` + `html2canvas`): descartado por peso
+  (~500 KB) y por rasterizar (peor calidad). Se usa la impresión nativa (§2.14).~~
+  **CORREGIDO en v7:** el negocio pidió explícitamente **no imprimir** y **enviar
+  un archivo a la imprenta**. Se adopta `jspdf` **solo** (PDF vectorial, sin
+  `html2canvas`). El peso (~350 KB) queda justificado por el caso de uso (§2.14.0).
+
+---
+
+## 12. Funciones sugeridas para fases futuras
+
+> **Nota:** las 4 funciones de mayor valor/costo que recomendé **ya están
+> integradas en el alcance de la v4** (§2.15 plantillas, §2.16 duplicar
+> pantalla, §2.17 exportar/importar JSON, §2.18 vista "solo precio"), no en
+> esta lista. Lo que sigue son las que **sí** quedan fuera de la v4.
+
+Ordenadas por relación valor/costo.
+
+| # | Función | Valor | Costo | Nota |
+|---|---|---|---|---|
+| 1 | **Historial de versiones** (últimas 5 configs con restaurar) | Medio | Medio | Requiere clave adicional en `system_settings`. |
+| 2 | **Programación horaria** ("desayunos 7-11am, resto del día") | Alto | Alto | Requiere lógica de tiempo y posible tabla. |
+| 3 | **Multi-idioma** (ES/EN para zona turística) | Medio | Alto | Requiere estructura i18n en la config. |
+| 4 | **Subcategorías reales** (jerarquía de 2 niveles) | Alto | Alto | **Requiere migración que toca POS** (§2.11.1). |
+| 5 | **Vista previa paginada del PDF** (ver los cortes de página antes de descargar) | Medio | Bajo | **v7:** `layoutPrintDocument` ya calcula las páginas; solo falta renderizarlas en pantalla. Se puede añadir sin tocar la arquitectura. |
+| 6 | **Sincronización entre sucursales** (compartir plantillas de carta) | Medio | Alto | Requiere endpoint de plantillas compartidas. |
+| 7 | **QR gráfico en la carta exportada** | Medio | Medio | Un codificador QR real (Reed-Solomon + máscaras) es ~150–300 líneas, o una dependencia `qrcode` (~20 KB). **Movido aquí desde la v4** (§5.16): la v4 lo prometía como "función pura" trivial, lo cual era falso. Mientras tanto el PDF incluye la URL en texto. |
+| 8 | **Fuentes auto-hospedadas** (operación 100% offline) | Medio | Medio | Descargar y versionar 6–12 `.woff2` en `public/assets/fonts/`. **Movido aquí desde la v4** (§2.12.2): la v4 lo llamaba "cero dependencias" pero implicaba assets binarios. Hoy se usa Google Fonts, igual que `Inter`. |
+| 9 | **Embeber las Google Fonts en el PDF** | Medio | Medio | **v7:** `jspdf` usa fuentes base (helvetica/times) por defecto; para usar las 4 tipografías reales hay que embeber los `.ttf` con `addFileToVFS` + `addFont`. Mejora de fidelidad tipográfica, no bloqueante. |
+
+**Recomendación:** las #1 y #5 son las siguientes en la fila; se pueden añadir
+en una versión corta sin tocar la arquitectura.
+
+---
+
+## 13. Cambios de la v5/v6/v7 respecto a la v4 (registro de autocritica)
+
+La v5/v6 **no amplía alcance**: **corrige 8 defectos** de la v4 detectados al
+re-verificar el código. Ninguno cambia la arquitectura; todos son correcciones de
+veracidad o de consistencia interna.
+
+| # | Defecto en v4 | Corrección en v5 |
+|---|---|---|
+| 1 | **CRÍTICO:** afirmaba que `Playfair Display` "ya está cargada". **Falso:** solo hay referencias inline a la familia; no existe `@font-face`/`<link>`/`@import` (0 resultados). El navegador cae a `serif`. | §2.12.2: se declara que **las 4 fuentes hay que cargarlas**. §5.15: se elimina el flag `alreadyLoaded: true`. §11: fila corregida. |
+| 2 | Decía cargar las fuentes con `@font-face` auto-hospedado en `index.css`, contradiciendo su propio "CERO dependencias nuevas" (implica 6–12 `.woff2`). | §2.12.2: se usa el patrón real del proyecto (`<link>` a Google Fonts, igual que `Inter`). El auto-hospedaje se mueve a §12. |
+| 3 | `duplicateScreenConfig` se citaba en §2.16 y en el test #16, pero **ningún archivo lo definía** (huérfano). | §5.19: se asigna a `displayConfigIO.js` con su firma y reglas. |
+| 4 | `PRICE_ONLY` se citaba en §2.18 y en el paso 27, pero **no existía** en `DISPLAY_TEMPLATES` (§5.18 solo tenía 4). | §2.15 y §5.18: se añade `PRICE_ONLY` como 5ª plantilla. |
+| 5 | Contaba "4 plantillas" en §2.15, "5" en el resumen de archivos, y añadía una 5ª en §2.18. | §2.15: se unifica a **5 plantillas** con tabla de claves. |
+| 6 | Prometía `buildQrSvg(url)` como "función pura" trivial, con un "si resulta complejo, se degrada" que minimizaba un algoritmo real. | §2.14.3 y §5.16: el QR se mueve a §12; por defecto se imprime la **URL en texto** (`showQr: false`). |
+| 7 | El orden de implementación (§9) **omitía** los archivos §5.16–§5.20. | §9: se añade el paso 9 (motor de diseño v4) con su dependencia declarada. |
+| 8 | **(v6)** Afirmaba que el patrón de impresión estaba "ya probado en 4 lugares" **sin matizar** que el CSS `@page` solo existe para tickets térmicos de **80 mm**; no hay ningún ejemplo de papel estándar. | §2.14: se precisa que el patrón iframe está probado, pero el `@page` de papel estándar es **uso nuevo** (riesgo bajo). **CORREGIDO en v7:** esta herramienta **no imprime**; se genera un PDF vectorial con `jspdf` y se descarga. Por tanto la validación "con impresora real" **queda obsoleta**: la validación vigente es "el PDF abre con el tamaño de página correcto" (§7.3, pasos 16 y 18). §12: fila 5 matizada. |
+
+**Lección:** la v4 se escribió rápido tras la petición del usuario y arrastró
+afirmaciones no verificadas (fuentes "ya cargadas") y funciones citadas sin
+archivo. La v5 las corrige verificando el código, no la memoria. La v6 aplica la
+misma disciplina a la afirmación de impresión: distinguir "el patrón existe" de
+"el formato concreto está probado".
+
+---
+
+## 14. Cambios de la v7 respecto a la v6 (cambio de enfoque de impresión)
+
+La v7 **no corrige un defecto**: **cambia el enfoque** por instrucción explícita
+del negocio. Es el cambio más importante del documento porque **invalida** todo el
+trabajo de blindaje de impresión de la v6.
+
+> **Instrucción del negocio (literal):** *"el enfoque acá es no imprimir nosotros,
+> solo configurar el archivo, descargarlo y enviarlo a imprimir en un taller de
+> imprenta. No quiero que te metas con las impresoras térmicas del negocio o con
+> cualquier otra impresora que tengamos."*
+
+| # | Enfoque v6 (descartado) | Enfoque v7 (vigente) | Sección |
+|---|---|---|---|
+| 1 | `window.print()` + iframe oculto | `jspdf.save()` → descarga de archivo | §2.14.0.1 |
+| 2 | CSS `@page` de navegador | PDF con tamaño de página exacto en puntos | §2.14.1 |
+| 3 | 7 medidas de blindaje (`print-color-adjust`, `break-inside`, `waitForPrintReady`, `openPrintPreview`…) | **Eliminadas**: no aplican sin `window.print()` | §2.14.0.1 |
+| 4 | `buildPrintCss(format, orientation)` (puro) | `getPageSizePt(format, orientation)` + `mmToPt` (puro) | §5.14 |
+| 5 | `DisplayPrintTemplate.jsx` (HTML de impresión) | `layoutPrintDocument.js` (puro) + `pdfRenderer.js` (`jspdf`) | §5.16, §5.16.1 |
+| 6 | Saltos de página decididos por el navegador | Saltos **explícitos y deterministas** en `layoutPrintDocument` | §5.16 |
+| 7 | **CERO dependencias nuevas** | **1 dependencia:** `jspdf` (~350 KB), justificada | §2.14.0, §0 |
+| 8 | Validación "con impresora real" | Validación "el PDF abre con el tamaño correcto" | §7.3 |
+
+**Lo que NO cambia (y es importante):**
+- Esta herramienta **sigue sin tocar** `apps/pos/` ni las impresoras térmicas
+  (zona restringida, ya lo decía la v3). Precisión de alcance: el ERP **sí** usa
+  impresoras en el POS (tickets de 80 mm); lo que se afirma es que **este módulo
+  de Display** no toca ninguna.
+- La regla de **tema claro** en la salida impresa se mantiene (§2.14.2): un PDF con
+  fondo oscuro gasta tinta y es ilegible.
+- El **QR** sigue fuera de alcance por defecto (§12): se exporta la URL en texto.
+
+**Lección:** la v6 blindó un mecanismo (`window.print()`) que el negocio **nunca
+quiso**. Antes de optimizar un mecanismo, hay que confirmar que el mecanismo es el
+correcto. La v7 lo sustituye por el que el negocio pidió: **generar un archivo**.
+
+---
+
+## 15. Cambios de la v8 respecto a la v7 (registro de autocritica)
+
+La v8 **no amplía alcance ni cambia el enfoque**: **corrige 9 defectos** de
+consistencia interna de la v7, detectados al re-leer el documento completo contra
+el código. Ninguno cambia la arquitectura; todos son correcciones de veracidad,
+coherencia o trazabilidad.
+
+| # | Defecto en v7 | Corrección en v8 | Sección |
+|---|---|---|---|
+| 1 | El ejemplo JSON mostraba `"showQr": true`, contradiciendo el default documentado `showQr: false` (§2.14.3, tabla de defaults §4.1). | El ejemplo JSON ahora muestra `"showQr": false`. | §4.1 |
+| 2 | **CRÍTICO:** `layoutPrintDocument(viewModel, printConfig)` declaraba campos `header`/`footer`/`fontFamily` que **no existen** dentro de `config.print` (que solo tiene `format`, `orientation`, `footerNote`, `validUntil`, `showQr`, `showCropMarks`). El llamador pasaba `screenConfig.print`, así que el encabezado y la tipografía **nunca** llegaban al PDF. | La firma pasa a `layoutPrintDocument(viewModel, screenConfig)` (la config completa de pantalla). El llamador pasa `screenConfig`. | §5.16, §5.16.1 |
+| 3 | `DISPLAY_TEMPLATES` (§5.18) solo definía **4** plantillas (CLASSIC, MINIMAL, KIDS, RETRO), pero §2.15 y el paso 27 citaban **5** (faltaba `PRICE_ONLY`). El defecto #4 de §13 afirmaba que ya se había corregido en v5; **no era cierto**. | Se añade `PRICE_ONLY` como 5ª plantilla (`theme:'LIGHT'`, `columns:6`, `fontFamily:'MODERN'`, `images.enabled:false`). | §5.18 |
+| 4 | La tabla de tests de §7.1 tenía **numeración duplicada**: los casos 14, 15 y 16 aparecían dos veces (una para impresión, otra para plantillas). | Renumeración continua (9 → 21); cada caso tiene identificador único. | §7.1 |
+| 5 | La verificación manual de §7.3 tenía el **paso 21 duplicado** (último de la lista v7 y primero de la lista v4). | La lista v4 se renumera de forma continua (22 → 28). | §7.3 |
+| 6 | `DisplayConfigControls` (§5.8) enumeraba solo los controles base y **no decía dónde** se editan los controles v4 (encabezado, tipografía, imágenes, impresión). | §5.8 aclara que los controles base están aquí y los v4 en `DisplayTemplateControls` (§5.17). | §5.8 |
+| 7 | El resumen de archivos (§6) decía "14 nuevos" pero el desglose no cuadraba con la tabla. | Se fija "9 modificados, **14 nuevos**" con desglose explícito (v3: 3, sub-suite: 3, v7 print: 3, v4 diseño: 5 = 14). | §6 |
+| 8 | §2.14.0 afirmaba que se usaban `jspdf` **+ `svg2pdf`**, pero `svg2pdf` **no se usa** (0 resultados en el código). | Se corrige a **solo `jspdf`**. | §2.14.0 |
+| 9 | El defecto #8 de §13 seguía citando la validación v6 "debe validarse con impresora real", que la v7 **invalidó** al eliminar `window.print()`. | Se anota que esa validación **queda obsoleta**; la vigente es "el PDF abre con el tamaño de página correcto" (§7.3, pasos 16 y 18). | §13 |
+
+**Lección:** la v7 fue un cambio de enfoque grande y rápido; arrastró incoherencias
+entre secciones (una firma que no coincidía con su llamador, un default contradicho
+por su propio ejemplo, una plantilla citada pero no definida, numeraciones
+duplicadas). La v8 no añade nada nuevo: **reconcilia el documento consigo mismo y
+con el código**. La disciplina es la misma que en v5 y v6 — verificar, no recordar.

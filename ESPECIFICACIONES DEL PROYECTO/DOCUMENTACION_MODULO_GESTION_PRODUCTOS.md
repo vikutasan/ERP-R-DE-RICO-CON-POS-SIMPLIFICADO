@@ -1,10 +1,10 @@
 # 📦 MÓDULO: GESTIÓN DE PRODUCTOS (Maestro de Productos)
 
-> **Versión:** 1.0  
-> **Última actualización:** 10 de Junio 2026  
-> **Componente Frontend:** `apps/inventory/ProductCatalogUI.jsx`  
-> **Servicio Backend:** `apps/api/modules/catalog/service.py`  
-> **Router API:** `apps/api/modules/catalog/router.py`  
+> **Versión:** 1.1
+> **Última actualización:** 17 de Septiembre 2026 (Selector de POS por Categoría + Rol de Heladería + Proyección)
+> **Componente Frontend:** `apps/inventory/ProductCatalogUI.jsx`
+> **Servicio Backend:** `apps/api/modules/catalog/service.py`
+> **Router API:** `apps/api/modules/catalog/router.py`
 > **Base de Datos:** PostgreSQL — Tablas `products`, `categories`, `product_technical_sheets`
 
 ---
@@ -23,6 +23,9 @@ Este módulo alimenta directamente al **Punto de Venta (POS)**, al módulo de **
 | **Fichas Técnicas Dinámicas** | Campos especializados según la naturaleza del producto (Manufacturado, Preparado al Momento, Reventa, Empaque) |
 | **Gestión de Categorías** | Crear, renombrar, reordenar y eliminar categorías del catálogo POS |
 | **Visibilidad POS** | Control de qué categorías son visibles en el Punto de Venta |
+| **Selector de POS por Categoría** | **(V19)** Definir si una categoría aparece en Panadería, Heladería o Ambos |
+| **Rol de Heladería por Categoría** | **(V19)** Rol heredado (`RECIPIENTE`/`TAMAÑO`/`SABOR`/`EXTRA`/`BEBIDA_BASE`) para los productos de la categoría |
+| **Proyección Automática** | **(V19)** Al cambiar el destino de una categoría, sus productos se reproyectan al POS de Heladería |
 | **Importación / Exportación** | Respaldos y cargas masivas en formato JSON |
 | **Reordenamiento Drag & Drop** | Arrastrar y soltar para reordenar categorías y productos |
 | **Integración Grandeza** | Configurar precios B2B para el módulo de Reparto Pan Grandeza |
@@ -54,7 +57,7 @@ flowchart TD
 |---|---|---|
 | `GET` | `/catalog/categories` | Lista todas las categorías ordenadas por posición |
 | `POST` | `/catalog/categories` | Crea una nueva categoría |
-| `PUT` | `/catalog/categories/{id}` | Renombra o modifica una categoría |
+| `PUT` | `/catalog/categories/{id}` | Renombra o modifica una categoría. **(V19)** Acepta `pos_target` y `heladeria_default_role`; al cambiar `pos_target` dispara `_reproject_category_products()` |
 | `DELETE` | `/catalog/categories/{id}` | Elimina una categoría (si está vacía y no es de sistema) |
 | `POST` | `/catalog/reorder-categories` | Reordena categorías por lista de IDs |
 | `GET` | `/catalog/products` | Lista todos los productos **activos** (`active = true`) |
@@ -97,6 +100,12 @@ flowchart TD
 | `position` | Integer | Posición para ordenamiento manual |
 | `vision_enabled` | Boolean | Si `true`, la categoría es visible en el POS |
 | `is_system` | Boolean | Si `true`, la categoría está protegida contra edición y borrado |
+| `heladeria_enabled` | Boolean (default `false`) | **(V19)** Compatibilidad con la primera iteración (HEL-P) |
+| `pos_target` | String (default `'PANADERIA'`) | **(V19)** Destino del POS: `PANADERIA` \| `HELADERIA` \| `AMBOS` |
+| `heladeria_default_role` | String (nullable) | **(V19)** Rol por defecto de los productos de la categoría en Heladería |
+
+> [!IMPORTANT]
+> **`pos_target` es el Nivel 1 de la proyección hacia Heladería.** Una categoría con `pos_target = 'HELADERIA'` o `'AMBOS'` proyecta sus productos al POS de Heladería **siempre que** cada producto tenga una intención de heladería válida (Nivel 2). Ver §13.
 
 ### Tabla `product_technical_sheets`
 
@@ -177,7 +186,21 @@ Al hacer clic en este botón, se abre el modal centralizado de **Opciones de Cat
 
 - **Renombrar:** El nombre se actualiza (siempre en MAYÚSCULAS) y se sincronizan automáticamente los productos que lo contenían.
 - **Visibilidad POS:** Un control interactivo (`vision_enabled`) permite ocultar o mostrar la categoría en el Punto de Venta. Las categorías ocultas se muestran desaturadas y con opacidad reducida en el gestor.
+- **Selector de POS (`pos_target`):** **(V19)** Tres opciones — **PANADERÍA**, **HELADERÍA** o **AMBOS**. Define en qué Punto de Venta aparece la categoría. Al cambiar el destino, el backend **reproyecta automáticamente** todos los productos de la categoría (`_reproject_category_products()`).
+- **Rol en Heladería (`heladeria_default_role`):** **(V19)** Solo visible cuando `pos_target` es `HELADERIA` o `AMBOS`. Define el rol por defecto de los productos de la categoría: `RECIPIENTE`, `TAMAÑO`, `SABOR`, `EXTRA` o `BEBIDA_BASE`. Un producto puede sobrescribirlo desde su ficha.
 - **Eliminar:** Permite la eliminación de la categoría. Solo es posible si la categoría **NO es de sistema** y está **completamente vacía** (0 productos). Si contiene productos, el sistema bloquea la acción mostrando un modal de error indicando cuántos productos deben moverse primero.
+
+#### Handlers del modal de categoría (V19)
+
+| Handler | Línea aprox. | Endpoint | Nota |
+|---|---|---|---|
+| `handleSetCategoryPosTarget(cat, posTarget)` | `ProductCatalogUI.jsx:516` | `PUT /catalog/categories/{id}` | Verifica `res.ok` y muestra `alert()` si falla |
+| `handleSetCategoryHeladeriaRole(cat, role)` | `ProductCatalogUI.jsx:556` | `PUT /catalog/categories/{id}` | Verifica `res.ok` y muestra `alert()` si falla |
+| `handleRenameCategory()` | `ProductCatalogUI.jsx:585` | `PUT /catalog/categories/{id}` | — |
+| `handleProductDropOnCategory(e, targetCategory)` | `ProductCatalogUI.jsx:677` | `PUT /catalog/products/{id}` | **Movimiento entre categorías por drag & drop** — dispara la reproyección |
+
+> [!IMPORTANT]
+> **Flujo recomendado para armar una categoría de Heladería:** crear la categoría → poner `pos_target = HELADERÍA` y elegir el `heladeria_default_role` → **arrastrar los productos** a la categoría. No es necesario editar producto por producto: el rol de la categoría se hereda.
 
 *Otras operaciones:*
 - **Crear:** Se gestiona mediante el botón "+" al final de la lista de categorías. El nombre se convierte automáticamente a MAYÚSCULAS.
@@ -414,3 +437,73 @@ Antes de enviar datos al servidor, el frontend convierte explícitamente:
 
 ### Categorías Protegidas
 El backend bloquea silenciosamente intentos de renombrar o modificar categorías con `is_system = true`. El método `update_category()` retorna el objeto sin cambios si detecta esta bandera.
+
+---
+
+## 13. PROYECCIÓN HACIA EL POS DE HELADERÍA (V19)
+
+> [!IMPORTANT]
+> **La fuente de verdad es este módulo.** El POS de Heladería y el Display de Precios **NO tienen catálogo propio**: leen `products` + `categories` exactamente igual que el POS de Panadería. La tabla `heladeria_product_config` es un **espejo** que solo conserva `is_available` (agotado) y los overrides de precio.
+
+### 13.1 Modelo de dos niveles
+
+| Nivel | Dónde se edita | Campos | Efecto |
+|---|---|---|---|
+| **Nivel 1 — Categoría** | Modal de Opciones de Categoría | `pos_target`, `heladeria_default_role` | Habilita la categoría para Heladería y define el rol heredado |
+| **Nivel 2 — Producto** | Ficha del producto → bloque Heladería | `technical_data.heladeria_enabled`, `technical_data.heladeria_component_type` | Intención explícita del producto (sobrescribe el rol de la categoría) |
+
+### 13.2 Reglas de decisión (funciones puras en `heladeria/sync.py`)
+
+| Función | Regla |
+|---|---|
+| `read_heladeria_intent(product)` | Lee `technical_data`. Devuelve el `component_type` o `None` |
+| `resolve_effective_role(product)` | **Intención del producto → rol por defecto de la categoría → `None`** |
+| `projects_to_heladeria(product)` | `category.pos_target ∈ {HELADERIA, AMBOS}` **Y** `resolve_effective_role(product) is not None` |
+
+### 13.3 Bloque de solo lectura en la ficha del producto
+
+La ficha del producto muestra un bloque informativo (**solo lectura**) que indica dónde aparece el producto:
+
+- **POS Panadería:** ✅ / ❌
+- **POS Heladería:** ✅ / ❌
+- **Categoría en cada POS:** nombre de la categoría
+
+> [!NOTE]
+> El bloque es **de solo lectura a propósito**: el usuario configura la categoría una vez y luego **arrastra productos**. Editar producto por producto sería un cuello de botella. El bloque existe para **verificar**, no para configurar.
+
+### 13.4 Flujo de escritura (único escritor)
+
+```
+POST/PUT /catalog/products  →  CatalogService.create_product()/update_product()
+                                        │
+                                        ▼
+                        _project_heladeria()   ← re-consulta con selectinload(Product.category)
+                                        │
+                                        ▼
+                        heladeria/sync.py::sync_product_config()   ← ÚNICO escritor
+                                        │
+                                        ▼
+                        heladeria_product_config (espejo)
+```
+
+> [!WARNING]
+> **PROHIBIDO** escribir en `heladeria_product_config` desde cualquier otro punto del sistema. `sync_product_config()` es el único escritor desde la UI. Cualquier escritura paralela rompe la idempotencia de la proyección.
+
+### 13.5 Reproyección automática
+
+| Evento | Método | Efecto |
+|---|---|---|
+| Cambiar `pos_target` de una categoría | `_reproject_category_products(db, category_id)` | Reproyecta **todos** los productos de la categoría |
+| Mover un producto entre categorías (drag & drop) | `handleProductDropOnCategory()` → `PUT /catalog/products/{id}` | Reproyecta ese producto |
+| Editar la intención de heladería de un producto | `update_product()` → `_project_heladeria()` | Reproyecta ese producto |
+
+### 13.6 Migración
+
+[`add_category_pos_target.py`](apps/api/migrations/add_category_pos_target.py:1) — 6 pasos, **idempotente**. Añade `heladeria_enabled`, `pos_target` y `heladeria_default_role` a `categories`.
+
+### 13.7 Datos seed de IA purgados
+
+Las categorías `Heladería` (id 19) y `Heladería Extras` (id 20) y sus productos demo fueron **creados por la IA** en una fase anterior, no por el usuario. Fueron **purgados** y respaldados en `database_backups/backup_seed_ai_heladeria_{products,config,categories}.csv`. El script [`seed_heladeria_data.py`](apps/api/migrations/seed_heladeria_data.py:1) ahora tiene un guardián `--force` para impedir resiembras accidentales.
+
+> [!NOTE]
+> **Lección:** el módulo de Heladería ya no siembra catálogo. El catálogo lo define el usuario desde este módulo.

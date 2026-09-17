@@ -1,0 +1,30 @@
+id,sku,barcode,name,price,category_id,active,image_url,position,cost,stock,warehouse,nature
+379,HEL-SAB-CHOCOLAT,,Chocolate,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+380,HEL-SAB-VAINILLA,,Vainilla,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+381,HEL-SAB-FRESA,,Fresa,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+382,HEL-SAB-COOKIES,,Cookies & Cream,45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+383,HEL-SAB-MANGO,,Mango,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+384,HEL-SAB-PISTACHE,,Pistache,50.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+385,HEL-SAB-NUEZ,,Nuez,45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+386,HEL-SAB-CAFÉ,,Café,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+387,HEL-SAB-CHICLE,,Chicle,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+388,HEL-SAB-LIMÓN,,Limón,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+389,HEL-SAB-COCO,,Coco,40.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+390,HEL-SAB-QUESOCO,,Queso con Zarzamora,50.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+391,HEL-SAB-MORAAZU,,Mora Azul,45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+392,HEL-SAB-GUANÁBAN,,Guanábana,45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+393,HEL-REC-VASOCHI,,Vaso Chico (1 bola),45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+394,HEL-REC-VASOMED,,Vaso Mediano (2 bolas),80.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+395,HEL-REC-VASOGRA,,Vaso Grande (3 bolas),110.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+396,HEL-REC-CONOSEN,,Cono Sencillo (1 bola),45.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+397,HEL-REC-CONODOB,,Cono Doble (2 bolas),85.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+398,HEL-REC-CONOWAF,,Cono Waffle (2 bolas),95.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+399,HEL-REC-BANANAS,,Banana Split,140.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+400,HEL-EXT-CHOCOLAT,,Chocolate Duro,15.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+401,HEL-EXT-GRANILLO,,Granillo,10.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+402,HEL-EXT-GOMITAS,,Gomitas,12.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+403,HEL-EXT-NUEZPIC,,Nuez Picada,18.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+404,HEL-EXT-CREMABA,,Crema Batida,15.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+405,HEL-EXT-JARABED,,Jarabe de Chocolate,10.00,20,t,,,0.00,999,Bóveda Central,PREPARADO
+406,HEL-BEB-MALTEADA,,Malteada Chica,65.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
+407,HEL-BEB-AGUAFRE,,Agua Fresca Chica,30.00,19,t,,,0.00,999,Bóveda Central,PREPARADO
