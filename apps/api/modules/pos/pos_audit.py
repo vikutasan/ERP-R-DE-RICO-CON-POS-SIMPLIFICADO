@@ -8,8 +8,12 @@ Modo actual: AUDITOR (registra sin bloquear).
 Cambiar pos_audit_mode a 'bloqueante' en system_settings para rechazar requests sin sesión válida.
 """
 import logging
-from datetime import datetime
 from fastapi import Request
+# v17 (H2): usar el helper UTC centralizado en lugar de datetime.now() (hora local naive).
+# Mismo criterio que occupancy.py (v15). El contenedor corre en UTC, por lo que el
+# valor es idéntico; el cambio hace EXPLÍCITA la intención y elimina la dependencia
+# accidental de la TZ del host.
+from core.timestamps import utcnow
 
 logger = logging.getLogger("pos.audit")
 logger.setLevel(logging.INFO)
@@ -79,7 +83,7 @@ def audit_pos_write(request: Request, endpoint: str, payload: dict = None, respo
     audit_result = "OK" if not audit_flags else "|".join(audit_flags)
     
     log_entry = (
-        f"POS_AUDIT | {datetime.now().isoformat()} | {endpoint} | "
+        f"POS_AUDIT | {utcnow().isoformat()} | {endpoint} | "
         f"ip={client_ip} | session={session_id} | employee={captured_by_id} | "
         f"terminal={terminal_id} | account={account_num} | req_status={status} | "
         f"http={response_code} | audit={audit_result}"

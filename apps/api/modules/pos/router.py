@@ -130,9 +130,11 @@ async def get_audit_log(
     from sqlalchemy.orm import selectinload, subqueryload
     from modules.pos import models
     from modules.catalog.models import Product
+    # v17 (H2): helper UTC centralizado (mismo criterio que occupancy.py v15).
+    from core.timestamps import utcnow
 
     # Defaults: hoy
-    now = datetime.now()
+    now = utcnow()
     try:
         d_from = datetime.fromisoformat(date_from) if date_from else now.replace(hour=0, minute=0, second=0, microsecond=0)
     except ValueError:
@@ -338,11 +340,12 @@ async def force_terminal_unlock(terminal_id: str, req: LockRequest, db: AsyncSes
       4. Registra auditoría de quién desbloqueó qué, a quién le quitó, y cuándo.
     """
     import logging
-    from datetime import datetime
     from modules.cash.models import CashSession
     from modules.security.models import Employee, SecurityProfile
     from sqlalchemy.future import select
     from sqlalchemy.orm import selectinload
+    # v17 (H2): helper UTC centralizado (mismo criterio que occupancy.py v15).
+    from core.timestamps import utcnow
 
     logger = logging.getLogger("pos.force_unlock")
     tid = terminal_id.strip()
@@ -405,7 +408,7 @@ async def force_terminal_unlock(terminal_id: str, req: LockRequest, db: AsyncSes
         f"Ejecutado por: {emp.name} (id={emp.id}) | "
         f"Quitado a: {prev_name} (id={prev_id}) | "
         f"CashSession transferida: {cash_transferred} | "
-        f"Timestamp: {datetime.now().isoformat()}"
+        f"Timestamp: {utcnow().isoformat()}"
     )
 
     await db.commit()
