@@ -226,6 +226,10 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         setOrderData,
         setShowCorkboard,
         setAllOpenAccounts,
+        // v17: setters del modal de salida — la rama success los limpia para
+        // corregir la asimetría verificada en FASE 0.
+        setShowExitModal,
+        setPendingExitAction,
         paymentsHistory,
     });
 

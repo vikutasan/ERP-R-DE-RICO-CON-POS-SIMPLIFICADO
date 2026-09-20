@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { posService } from '../services/POSService';
 import { generateTicketHTML, combineOrderTicketsForPrint } from '../utils/ticketGenerator';
 import { withRetries } from '../utils/withRetries';
+import { buildResetPatch } from '../state/sessionReset';
 
 /**
  * Hook: useTicketActions
@@ -61,6 +62,10 @@ export const useTicketActions = ({
     setOrderData,
     setShowCorkboard,
     setAllOpenAccounts,
+    // v17: setters del modal de salida — necesarios para que la rama success
+    // limpie la asimetría verificada (showExitModal / pendingExitAction).
+    setShowExitModal,
+    setPendingExitAction,
     // Estado de pagos
     paymentsHistory,
 }) => {
@@ -286,19 +291,29 @@ export const useTicketActions = ({
                             }
                         }
 
+                        // v17: Limpieza centralizada vía buildResetPatch() (fuente única de
+                        // verdad). Antes esta rama limpiaba 10 cosas a mano y OMITÍA
+                        // savedTicketRef / showExitModal / pendingExitAction, mientras
+                        // handleExitWithoutSaving SÍ los limpiaba (asimetría verificada en
+                        // FASE 0). Ahora ambas rutas limpian exactamente lo mismo.
+                        // Las REFS se sincronizan a mano: buildResetPatch() es pura.
+                        const patch = buildResetPatch();
                         clearCart();
-                        setOriginalCapturer(null);
-                        setCurrentAccountNum('');
-                        setTicketVersion(null);
-                        setOrderData(null);
-                        setOrderType('VENTA_DIRECTA');
-                        setLastSaveStatus('idle');
-                        setLastSaveTime(null);
+                        savedTicketRef.current = null;
+                        setOriginalCapturer(patch.originalCapturer);
+                        setCurrentAccountNum(patch.currentAccountNum);
+                        setTicketVersion(patch.ticketVersion);
+                        setOrderData(patch.orderData);
+                        setOrderType(patch.orderType);
+                        setLastSaveStatus(patch.lastSaveStatus);
+                        setLastSaveTime(patch.lastSaveTime);
                         try {
                             if (selectedTerminal) localStorage.removeItem(`pos_session_${selectedTerminal}`);
                         } catch (e) { console.warn("Error al limpiar persistencia:", e); }
-                        setShowCheckout(false);
-                        setPaymentsHistory([]);
+                        setShowCheckout(patch.showCheckout);
+                        setPaymentsHistory(patch.paymentsHistory);
+                        setShowExitModal(patch.showExitModal);
+                        setPendingExitAction(patch.pendingExitAction);
                         if (status === 'PAID') {
                             setToastMessage('✅ Venta finalizada exitosamente. Ticket impreso.');
                             setTimeout(() => setToastMessage(null), 4000);

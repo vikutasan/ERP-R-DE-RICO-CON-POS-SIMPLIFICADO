@@ -1,19 +1,16 @@
 /**
- * v17 — FASE 0: Test de REPRODUCCIÓN de la asimetría de limpieza de sesión.
+ * v17 — Test de la asimetría de limpieza de sesión.
  *
- * MISIÓN: verificar (o refutar) el hallazgo §1.4 del PLAN_CORRECCION_ESTADO_POS_V17.md.
+ * HISTORIA:
+ *   - FASE 0 (commit 27c3469): este test REPRODUJO la asimetría. Afirmaba que
+ *     la rama `success` de `handleTicketAction` NO limpiaba savedTicketRef /
+ *     showExitModal / pendingExitAction, mientras `handleExitWithoutSaving` SÍ.
+ *   - FASE 2b (este commit): la asimetría se CORRIGIÓ. La rama success ahora
+ *     aplica buildResetPatch() y limpia las 3 claves. El test se actualiza para
+ *     afirmar el comportamiento CORREGIDO (guardián de la regresión).
  *
- * Hallazgo a verificar:
- *   La rama `success` de `handleTicketAction` (useTicketActions.js:289-301)
- *   limpia 10 cosas pero NO limpia:
- *     - savedTicketRef.current
- *     - showExitModal
- *     - pendingExitAction
- *   mientras que `handleExitWithoutSaving` (RetailVisionPOS.jsx:385-417)
- *   SÍ limpia `savedTicketRef.current` (línea 406).
- *
- * Este test es de CARACTERIZACIÓN: lee el código fuente real y afirma lo que
- * HOY ocurre. Si el código cambia, el test falla y obliga a revisar el plan.
+ * MISIÓN ACTUAL: garantizar que la asimetría NO reaparezca. Si alguien vuelve
+ * a limpiar la rama success a mano y olvida las 3 claves, este test falla.
  *
  * IMPORTANTE: este test NO prueba comportamiento en runtime (eso requiere
  * montar el componente con 30 props). Prueba la PRESENCIA/AUSENCIA de las
@@ -36,10 +33,11 @@ function readSource(relativePath) {
 
 /**
  * Extrae el bloque de la rama `success` de `handleTicketAction`.
- * Se ancla desde `clearCart();` (línea 289) hasta el `return { outcome: 'success'`.
+ * Se ancla desde la construcción del patch hasta el `return { outcome: 'success'`.
+ * (Tras FASE 2b, la rama usa buildResetPatch().)
  */
 function extractSuccessBranch(source) {
-    const start = source.indexOf('clearCart();\n                        setOriginalCapturer(null);');
+    const start = source.indexOf('const patch = buildResetPatch();');
     if (start === -1) return null;
     const end = source.indexOf("return { outcome: 'success'", start);
     if (end === -1) return null;
@@ -71,51 +69,42 @@ describe('FASE 0 — Reproducción de la asimetría de limpieza (v17)', () => {
         expect(exitWithoutSaving.length).toBeGreaterThan(100);
     });
 
-    it('CONFIRMA: la rama success limpia el estado de captura básico', () => {
-        // Estas 10 limpiezas SÍ están presentes hoy.
+    it('CONFIRMA: la rama success usa buildResetPatch() (fuente única)', () => {
+        expect(successBranch).toContain('const patch = buildResetPatch();');
         expect(successBranch).toContain('clearCart();');
-        expect(successBranch).toContain('setOriginalCapturer(null);');
-        expect(successBranch).toContain("setCurrentAccountNum('');");
-        expect(successBranch).toContain('setTicketVersion(null);');
-        expect(successBranch).toContain('setOrderData(null);');
-        expect(successBranch).toContain("setOrderType('VENTA_DIRECTA');");
-        expect(successBranch).toContain("setLastSaveStatus('idle');");
-        expect(successBranch).toContain('setLastSaveTime(null);');
-        expect(successBranch).toContain('setShowCheckout(false);');
-        expect(successBranch).toContain('setPaymentsHistory([]);');
     });
 
-    it('REPRODUCE LA ASIMETRÍA: la rama success NO limpia savedTicketRef', () => {
-        // Evidencia del defecto §1.4: la rama success no toca savedTicketRef.
-        expect(successBranch).not.toContain('savedTicketRef.current = null');
+    it('CORREGIDO: la rama success AHORA limpia savedTicketRef', () => {
+        // FASE 2b corrigió la asimetría: ya no queda residuo.
+        expect(successBranch).toContain('savedTicketRef.current = null');
     });
 
-    it('REPRODUCE LA ASIMETRÍA: la rama success NO limpia showExitModal', () => {
-        expect(successBranch).not.toContain('setShowExitModal(false)');
+    it('CORREGIDO: la rama success AHORA limpia showExitModal', () => {
+        expect(successBranch).toContain('setShowExitModal(patch.showExitModal)');
     });
 
-    it('REPRODUCE LA ASIMETRÍA: la rama success NO limpia pendingExitAction', () => {
-        expect(successBranch).not.toContain('setPendingExitAction(null)');
+    it('CORREGIDO: la rama success AHORA limpia pendingExitAction', () => {
+        expect(successBranch).toContain('setPendingExitAction(patch.pendingExitAction)');
     });
 
-    it('CONTRASTE: handleExitWithoutSaving SÍ limpia savedTicketRef', () => {
-        // Esto es lo que hace la asimetría real: una ruta limpia, la otra no.
+    it('CONTRASTE: handleExitWithoutSaving también limpia savedTicketRef', () => {
         expect(exitWithoutSaving).toContain('savedTicketRef.current = null');
     });
 
-    it('CONTRASTE: handleExitWithoutSaving SÍ limpia showExitModal y pendingExitAction', () => {
-        expect(exitWithoutSaving).toContain('setShowExitModal(false)');
-        expect(exitWithoutSaving).toContain('setPendingExitAction(null)');
+    it('CONTRASTE: handleExitWithoutSaving también limpia showExitModal y pendingExitAction', () => {
+        expect(exitWithoutSaving).toContain('setShowExitModal(patch.showExitModal)');
+        expect(exitWithoutSaving).toContain('setPendingExitAction(patch.pendingExitAction)');
     });
 
-    it('VEREDICTO: la asimetría es real y verificable en el código fuente', () => {
-        // Resumen ejecutable del hallazgo:
+    it('VEREDICTO: la asimetría está CORREGIDA — ambas rutas limpian lo mismo', () => {
+        // Guardián de regresión: si alguien vuelve a limpiar a mano y olvida
+        // las 3 claves, este test falla.
         const successClearsSavedTicket = successBranch.includes('savedTicketRef.current = null');
         const exitClearsSavedTicket = exitWithoutSaving.includes('savedTicketRef.current = null');
 
-        // La asimetría existe si una limpia y la otra no.
-        expect(successClearsSavedTicket).toBe(false);
+        // Ya NO hay asimetría: ambas limpian.
+        expect(successClearsSavedTicket).toBe(true);
         expect(exitClearsSavedTicket).toBe(true);
-        expect(successClearsSavedTicket).not.toBe(exitClearsSavedTicket);
+        expect(successClearsSavedTicket).toBe(exitClearsSavedTicket);
     });
 });
