@@ -389,6 +389,53 @@ tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
 
 **Archivos involucrados:** `apps/pos/hooks/useBeforeUnload.js`, `apps/api/modules/pos/occupancy.py`, `apps/api/modules/pos/router.py`, `apps/pos/hooks/useTerminalLocking.js`, `apps/pos/hooks/usePOSSession.js`, `apps/pos/services/POSService.js`, `apps/pos/hooks/useTerminalLocking.v15.test.js` (nuevo), `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_TERMINALES_V15.md`, `ESPECIFICACIONES DEL PROYECTO/REPORTE_EJECUCION_TERMINALES_V15.md`.
 
+---
+
+### Incidente Asimetría de Limpieza de Sesión — "Frágil por Acumulación" (20/Septiembre/2026) — v17
+
+**Terminales afectadas:** Todas (T1, T2, CAJA) — rutas de salida de sesión del POS.
+**Síntoma:** No hubo un bug reproducible en producción. Este incidente nace de una **auditoría preventiva** de la limpieza de estado al salir de una sesión de captura. Se descubrió que la limpieza estaba **escrita a mano en 5 rutas distintas**, y que cada ruta limpiaba un **subconjunto diferente** de valores. La más grave: la rama `success` de `handleTicketAction` **NO** limpiaba `savedTicketRef.current`, `showExitModal` ni `pendingExitAction`, mientras `handleExitWithoutSaving` **SÍ** los limpiaba.
+
+**El problema de fondo — "frágil por acumulación":**
+Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), había que recordar actualizar **los 5 espejos manuales**. Nadie lo garantizaba. El resultado fue una **asimetría silenciosa**: dos rutas que debían hacer lo mismo hacían cosas distintas. No rompía nada visible hoy, pero era una **bomba de tiempo**: cualquier valor de estado nuevo que se añadiera en el futuro podía quedar sin limpiar en alguna ruta, contaminando la siguiente cuenta.
+
+**Análisis Forense:**
+
+| ID | Hallazgo | Gravedad | Naturaleza |
+|----|----------|----------|------------|
+| **A1** | La limpieza de sesión estaba duplicada a mano en **5 rutas** (`handleExitWithoutSaving`, rama `success` de `handleTicketAction`, `doTerminalExit`, `handleForceLogout`, `window.requestPOSExit`). | Alta (latente) | Deuda técnica estructural |
+| **A2** | **Asimetría verificada:** la rama `success` NO limpiaba `savedTicketRef.current` / `showExitModal` / `pendingExitAction`; `handleExitWithoutSaving` SÍ. | Alta (latente) | Bug latente real |
+| **A3** | `doTerminalExit` limpiaba solo **3 valores** a mano, ignorando el resto del contrato de limpieza. | Media (latente) | Bug latente real |
+| **A4** | No existía una **fuente única de verdad** para "cómo se limpia una sesión". Cada ruta era un "espejo" que podía desincronizarse. | Alta (latente) | Deuda técnica estructural |
+| **A5** | El hallazgo H2 de v15 (`datetime.now()` → `utcnow()`) se aplicó **solo a `occupancy.py`**; quedaron **3 usos residuales** en `router.py` (×2) y `pos_audit.py` (×1). | Media (latente) | Consistencia de zona horaria |
+
+**Solución implementada (v17 — 6 fases):**
+
+- **Fase 0 — Reproducción (BLOQUEANTE):** Se creó [`sessionReset.asymmetry.test.js`](apps/pos/state/sessionReset.asymmetry.test.js), que **reprodujo** la asimetría A2 leyendo el código fuente (8 tests). Se documentó el baseline: **503 tests**, build **8.52s**.
+- **Fase 1 — Fuente única (`buildResetPatch`):** Se creó [`apps/pos/state/sessionReset.js`](apps/pos/state/sessionReset.js) con la función **pura** `buildResetPatch()`, que devuelve el conjunto **exacto** de 12 valores de reset (incluidos los 3 que faltaban: `savedTicket`, `showExitModal`, `pendingExitAction`). Se exportan además `RESET_PATCH_KEYS` y `FORBIDDEN_PATCH_KEYS` (límite explícito: NO toca carrito, catálogo, impresión ni UI). Se creó [`sessionReset.test.js`](apps/pos/state/sessionReset.test.js) (4 tests: 12 claves, valores correctos, sin claves prohibidas, pureza).
+- **Fase 2a — Ruta 1 (`handleExitWithoutSaving`):** Se reemplazó la limpieza manual por `buildResetPatch()` + sincronización explícita de refs. Se creó [`sessionReset.equivalence.test.js`](apps/pos/state/sessionReset.equivalence.test.js) probando que el estado resultante es **idéntico** al de la limpieza vieja.
+- **Fase 2b — Ruta 2 (rama `success` de `handleTicketAction`):** Se aplicó el patch y se **corrigió la asimetría A2**. Se descubrió que `setShowExitModal`/`setPendingExitAction` **no estaban** en las props del hook; se añadieron al hook y al call site en [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx). El test de asimetría se actualizó de "reproducir" a "guardar la corrección".
+- **Fase 2c — Ruta 3 (`doTerminalExit`):** Se aplicó el patch (antes limpiaba solo 3 valores — hallazgo A3).
+- **Fase 3 — Tests de arquitectura (best-effort):** Se creó [`apps/pos/state/architecture.test.js`](apps/pos/state/architecture.test.js) (8 tests) con regex **ancladas y con contexto**. **HALLAZGO NUEVO (A5):** el test falló en la primera corrida, destapando los 3 `datetime.now()` residuales. Se corrigieron los 3 usando `utcnow()`.
+- **Fase 4 — Validación manual:** Los **5 flujos de salida** validados en navegador → **5/5 OK, cero residuos** entre sesiones.
+- **Fase 5 — Documentación y respaldo:** Este incidente, la Regla 19, los ítems del checklist y el reporte de ejecución.
+
+**Evidencia de aceptación:**
+- `npm test` → **533 passed** (19 archivos), frente a **503** del baseline (+30 tests).
+- `npm run build` → **built in 8.78s**, sin errores.
+- **Asimetría reproducida** en Fase 0 (8/8 tests) y **corregida** en Fase 2b.
+- **Equivalencia** de las 3 rutas migradas verificada por test (10 tests).
+- **5 flujos de salida** validados manualmente: 5/5 OK, cero residuos.
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que la limpieza de sesión del POS se haga **exclusivamente** vía `buildResetPatch()`. **PROHIBIDO** limpiar el estado de sesión a mano en cualquier ruta de salida.
+- **OBLIGATORIO** que toda ruta de salida nueva aplique `buildResetPatch()` y sincronice las refs explícitamente (la función es pura y no puede tocarlas).
+- **OBLIGATORIO** que todo valor de estado nuevo que deba resetearse se añada a `buildResetPatch()` **y** a `RESET_PATCH_KEYS`; el test de contrato fallará si no.
+- **PROHIBIDO** añadir a `buildResetPatch()` valores de catálogo, carrito, impresión o UI (ver `FORBIDDEN_PATCH_KEYS`).
+- **OBLIGATORIO** que todo hallazgo de auditoría quede reflejado en el **checklist de revisión** para que no reaparezca.
+
+**Archivos involucrados:** `apps/pos/state/sessionReset.js` (nuevo), `apps/pos/state/sessionReset.test.js` (nuevo), `apps/pos/state/sessionReset.asymmetry.test.js` (nuevo), `apps/pos/state/sessionReset.equivalence.test.js` (nuevo), `apps/pos/state/architecture.test.js` (nuevo), `apps/pos/RetailVisionPOS.jsx`, `apps/pos/hooks/useTicketActions.js`, `apps/api/modules/pos/router.py`, `apps/api/modules/pos/pos_audit.py`, `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_ESTADO_POS_V17.md`, `ESPECIFICACIONES DEL PROYECTO/REPORTE_EJECUCION_ESTADO_POS_V17.md`.
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
@@ -513,6 +560,16 @@ El checkout (`createTicket`) **debe** tener retries para errores de red, pero **
 - ⛔ PROHIBIDO: Reintentar “ya ha sido pagado” — es una condición terminal legítima.
 
 **¿Por qué?** Sin retries en checkout, agregar una Concha de $8 tiene 3 intentos pero cobrar una cuenta de $2,000 es todo-o-nada al primer intento. Un micro-corte de LAN de 500ms durante el cobro obliga al cajero a presionar “Cobrar” de nuevo manualmente.
+
+### ⚡ REGLA 19: Limpieza Única de Sesión vía `buildResetPatch()` (v17)
+La limpieza del estado de sesión del POS **debe** hacerse **exclusivamente** a través de la función pura `buildResetPatch()` de [`apps/pos/state/sessionReset.js`](apps/pos/state/sessionReset.js). **PROHIBIDO** limpiar el estado de sesión a mano en cualquier ruta de salida.
+- ✅ OBLIGATORIO: Toda ruta de salida (`handleExitWithoutSaving`, rama `success` de `handleTicketAction`, `doTerminalExit`, `handleForceLogout`, `window.requestPOSExit`) aplica `buildResetPatch()`.
+- ✅ OBLIGATORIO: Sincronizar las **refs** explícitamente en cada ruta (`cartRef`, `accountNumRef`, `originalCapturerRef`, `ticketVersionRef`, `savedTicketRef`). `buildResetPatch()` es **pura** y no puede tocarlas: define los VALORES, el llamador los APLICA.
+- ✅ OBLIGATORIO: Todo valor de estado nuevo que deba resetearse se añade a `buildResetPatch()` **y** a `RESET_PATCH_KEYS`. El test de contrato fallará si no.
+- ⛔ PROHIBIDO: Añadir a `buildResetPatch()` valores de **catálogo** (`categories`, `initialProducts`, `activeCategory`), **carrito** (`cart`, `cartState`), **impresión** (`printTicketData`) o **UI** (`viewMode`, `currentPage`, `showCorkboard`, `allOpenAccounts`, `isCashEnabled`, `showGestorCaja`, `cashSessionId`, `showProgramacion`). Ver `FORBIDDEN_PATCH_KEYS`.
+- ⛔ PROHIBIDO: Reintroducir "espejos" manuales de limpieza. Fueron la causa raíz de la asimetría A2 (la rama `success` no limpiaba `savedTicketRef`/`showExitModal`/`pendingExitAction`).
+
+**¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado.
 
 ---
 
@@ -659,6 +716,12 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿El payload de `beforeunload` incluye `terminal_id`? (v15)
 - [ ] ¿`heartbeatTerminal` lanza error en respuesta no-OK (en vez de devolver `false` en silencio)? (v15)
 - [ ] ¿Un 403 en `unlock` se trata como esperado (sin reintentos ni expulsión)? (v15)
+- [ ] ¿Toda ruta de salida limpia la sesión vía `buildResetPatch()` y NO a mano? (v17)
+- [ ] ¿Las refs (`cartRef`, `accountNumRef`, `originalCapturerRef`, `ticketVersionRef`, `savedTicketRef`) se sincronizan explícitamente en cada ruta de salida? (v17)
+- [ ] ¿Todo valor de estado nuevo que deba resetearse está en `buildResetPatch()` y en `RESET_PATCH_KEYS`? (v17)
+- [ ] ¿`buildResetPatch()` NO incluye valores de catálogo, carrito, impresión ni UI (`FORBIDDEN_PATCH_KEYS`)? (v17)
+- [ ] ¿La rama `success` de `handleTicketAction` limpia `savedTicketRef`/`showExitModal`/`pendingExitAction` (sin asimetría)? (v17)
+- [ ] ¿No queda ningún `datetime.now()` en código vivo de `apps/api/modules/pos/` (solo `utcnow()`)? (v17)
 
 ---
 
