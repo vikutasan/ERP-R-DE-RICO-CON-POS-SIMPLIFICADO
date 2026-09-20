@@ -36,6 +36,10 @@ export const usePOSSession = ({
     const [initialProducts, setInitialProducts] = useState([]);
     const [activeCategory, setActiveCategory] = useState(null);
 
+    // v15 (H1/D4): primitivo estable para las deps del useCallback de folio.
+    // Evita que un cambio de REFERENCIA del objeto currentUser invalide el callback.
+    const currentUserId = currentUser?.id;
+
     // --- PRODUCTS memo: normalización para el grid ---
     const PRODUCTS = useMemo(() => initialProducts.map(p => ({
         ...p,
@@ -117,7 +121,7 @@ export const usePOSSession = ({
             
             for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                    const ticket = await posService.reserveTicket(terminalId, currentUser?.id || null);
+                    const ticket = await posService.reserveTicket(terminalId, currentUserId || null);
                     // v4.3 ANTI-RACE: Sync refs ANTES del setState para que handleTicketAction
                     // nunca lea un accountNum vacío y genere un folio duplicado.
                     accountNumRef.current = ticket.account_num;
@@ -155,7 +159,7 @@ export const usePOSSession = ({
             accountGenPromise.current = null;
             isGeneratingFolioRef.current = false; // Desbloquear auto-save
         }
-    }, [selectedTerminal, currentUser]);
+    }, [selectedTerminal, currentUserId]);
 
     return {
         // Catálogo

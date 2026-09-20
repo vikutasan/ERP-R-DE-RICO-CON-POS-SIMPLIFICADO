@@ -25,12 +25,17 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
         heartbeatInterval: 20000
     });
 
-    // Refs para el cleanup � evita que el efecto dependa de currentUser/selectedTerminal
+    // Refs para el cleanup � evita que el efecto dependa de currentUser/selectedTerminal
     // y dispare unlocks espurios al cambiar la referencia del objeto (Bug Terminal Fantasma v2)
     const selectedTerminalRef = useRef(selectedTerminal);
     const currentUserRef = useRef(currentUser);
     selectedTerminalRef.current = selectedTerminal;
     currentUserRef.current = currentUser;
+
+    // v15 (H1): primitivo estable para las deps de los efectos con setInterval.
+    // Evita que un cambio de REFERENCIA del objeto currentUser re-registre los
+    // intervalos (deuda técnica preventiva; hoy el padre pasa una variable de estado).
+    const currentUserId = currentUser?.id;
 
     // Cargar ajustes del sistema al montar
     useEffect(() => {
@@ -83,8 +88,10 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
             try {
                 const data = await posService.getTerminalsStatus();
                 const myStatus = data[selectedTerminal];
+                // v15 (H1): leer el id VIVO desde el ref (no capturar el objeto en el closure).
+                const uid = currentUserRef.current?.id;
                 
-                if (!myStatus || myStatus.occupier_id !== currentUser?.id) {
+                if (!myStatus || myStatus.occupier_id !== uid) {
                     // El candado se perdió (por TTL o inicio de sesión en otra terminal).
                     // NO re-adquirimos silenciosamente para evitar efecto "ping-pong".
                     console.warn("Candado no encontrado en servidor o ocupado por otra persona.");
@@ -92,7 +99,7 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
                     
                     // Verificar si fue un force_unlock explícito del admin
                     // (la terminal ahora pertenece a otra persona)
-                    if (myStatus && myStatus.occupier_id !== currentUser?.id) {
+                    if (myStatus && myStatus.occupier_id !== uid) {
                         // Un admin transfirió la terminal a otra persona → expulsar
                         setForceLogoutModal(true);
                     }
@@ -107,10 +114,10 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
         
         const intervalId = setInterval(checkMyLock, settings.checkLockPolling);
         return () => clearInterval(intervalId);
-    }, [selectedTerminal, currentUser, forceLogoutModal, settings.checkLockPolling]);
+    }, [selectedTerminal, currentUserId, forceLogoutModal, settings.checkLockPolling]);
 
     // Limpieza al desmontar: liberar terminal si el usuario cierra sesion o cierra la pestana
-    // SOLO se ejecuta al desmontar el componente ([] vacio) � usa refs para leer valores actuales
+    // SOLO se ejecuta al desmontar el componente ([] vacio) � usa refs para leer valores actuales
     // sin causar re-ejecuciones del efecto que disparen unlocks espurios (Bug Terminal Fantasma v2)
     useEffect(() => {
         return () => {
@@ -124,22 +131,25 @@ export const useTerminalLocking = (selectedTerminal, currentUser) => {
 
     // Heartbeat: renueva el timestamp del candado para evitar que expire por TTL
     useEffect(() => {
-        if (!selectedTerminal || !currentUser?.id) return;
+        if (!selectedTerminal || !currentUserId) return;
         
         const sendHeartbeat = () => {
-            posService.heartbeatTerminal(selectedTerminal, currentUser.id)
+            // v15 (H1/D2): lee el id VIVO desde el ref. Si el usuario cambia de id,
+            // el efecto se re-registra (dep currentUserId) y el cleanup borra el
+            // intervalo anterior → no quedan heartbeats huérfanos.
+            posService.heartbeatTerminal(selectedTerminal, currentUserRef.current?.id)
                 .catch(e => {
                     console.warn("Heartbeat network request failed:", e);
-                    // No intentamos re-adquirir el candado aquí para evitar 
+                    // No intentamos re-adquirir el candado aquí para evitar
                     // robo involuntario si el usuario se movió de terminal.
                 });
         };
 
         // Enviar heartbeat inmediatamente al seleccionar terminal
         sendHeartbeat();
-        const intervalId = setInterval(sendHeartbeat, settings.heartbeatInterval); 
+        const intervalId = setInterval(sendHeartbeat, settings.heartbeatInterval);
         return () => clearInterval(intervalId);
-    }, [selectedTerminal, currentUser, settings.heartbeatInterval]);
+    }, [selectedTerminal, currentUserId, settings.heartbeatInterval]);
 
     return { terminalStatuses, setTerminalStatuses, forceLogoutModal, setForceLogoutModal, lockWarning };
 };

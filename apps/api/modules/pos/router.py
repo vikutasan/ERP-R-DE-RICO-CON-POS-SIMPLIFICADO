@@ -244,6 +244,8 @@ async def get_terminals_status(db: AsyncSession = Depends(get_db)):
     from modules.cash.models import CashSession
     from sqlalchemy.future import select
     from datetime import datetime, timedelta
+    # v15 (H2): cutoff de CashSession huérfana en UTC (consistencia con occupancy.py).
+    from core.timestamps import utcnow
     
     CASH_SESSION_MAX_TTL_HOURS = 24  # TTL máximo para sesiones de caja huérfanas
     
@@ -252,7 +254,7 @@ async def get_terminals_status(db: AsyncSession = Depends(get_db)):
     
     # Combinar: locks de DB + caja abierta
     res = dict(locks)
-    cutoff = datetime.now() - timedelta(hours=CASH_SESSION_MAX_TTL_HOURS)
+    cutoff = utcnow() - timedelta(hours=CASH_SESSION_MAX_TTL_HOURS)
     
     for c in active_cash:
         tid = c.terminal_id.strip() if c.terminal_id else ""
@@ -316,6 +318,10 @@ async def release_terminal_lock(terminal_id: str, req: LockRequest, db: AsyncSes
     tid = terminal_id.strip()
     success = await unlock_terminal(db, tid, req.occupier_id)
     if not success:
+        # v15 (H8): 403 ESPERADO, no un bug. Ocurre cuando el solicitante ya no es
+        # el dueño del candado (force_unlock previo, TTL expirado + re-ocupación, o
+        # doble unlock). El frontend lo captura con .catch() y NO reintenta
+        # (regla anti-ping-pong). Ver DOCUMENTACION_MODULO_POS.md §5.6.
         raise HTTPException(status_code=403, detail="No tienes permiso para liberar esta terminal.")
     await db.commit()
     return {"status": "unlocked", "terminal_id": tid}

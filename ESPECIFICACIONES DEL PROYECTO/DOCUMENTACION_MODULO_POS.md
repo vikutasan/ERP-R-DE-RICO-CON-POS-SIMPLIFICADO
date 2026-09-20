@@ -239,9 +239,12 @@ T=32s+  Yami cambia a otra cuenta → la cuenta de $453 se pierde
 Se descubri que la seal posService.unlockTerminal() se estaba enviando de forma silente por culpa de un useEffect de limpieza (cleanup) en useTerminalLocking.js. Este efecto dependa de [selectedTerminal, currentUser].
 El componente padre ExperimentCenterUI.jsx estaba enviando currentUser como un objeto en lnea (currentUser={{ id: userId... }}). Como en React los objetos en lnea generan una nueva referencia en memoria en cada re-render, el useEffect detectaba un cambio, disparaba el cleanup (destruyendo el candado en la DB) y se volva a registrar, ocasionando que la sesin se perdiera.
 
+> **⚠️ CORRECCIÓN v15 (hallazgo H4):** El análisis anterior describe el estado **histórico** del incidente. Verificado línea-por-línea el 2026-09-20: el padre actual [`ExperimentCenterUI.jsx:508`](../apps/ExperimentCenterUI.jsx:508) pasa `currentUser={currentUser}` — una **variable de estado**, **NO** un objeto en línea. Por lo tanto el escenario "nueva referencia en cada render" **ya no ocurre hoy**. La causa raíz (cleanup con deps) ya está blindada con `[]` + refs. La corrección de deps de v15 es **deuda técnica preventiva (🟢)**, no un bug activo.
+
 **Resolucin (Nueva Regla de Componentes Reactivos):**
 - Se impuso la regla del useMemo() en componentes de alto nivel para props tipo objeto que no mutan sus valores reales.
 - **Cambio Crtico en Cleanups de Desmontaje:** Se reescribi el useEffect de limpieza de la terminal para usar un array de dependencias vaco []. Para evitar cierres de estado obsoletos (*stale closures*), se implementaron useRef locales (selectedTerminalRef, currentUserRef) que apuntan a los valores actualizados. As, el cleanup solo se invoca cuando el componente **realmente se destruye** al salir del mdulo o cerrar la pestaa, leyendo los valores directamente de las referencias.
+- **Endurecimiento v15 (hallazgo H1):** Además del cleanup, los efectos con `setInterval` (`checkMyLock` y `sendHeartbeat` en [`useTerminalLocking.js`](../apps/pos/hooks/useTerminalLocking.js:79)) y el `useCallback` de folio en [`usePOSSession.js`](../apps/pos/hooks/usePOSSession.js:111) ya **no dependen del objeto `currentUser`**, sino del primitivo `currentUserId = currentUser?.id`. Los callbacks leen el id vivo desde `currentUserRef.current?.id`. Esto elimina la clase de bug por cambio de referencia de objeto sin alterar el comportamiento actual.
 
 ### Incidente Veracidad de Ocupacin de Terminales (13/Septiembre/2026) — v12
 
@@ -340,6 +343,51 @@ tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
 - **OBLIGATORIO** que todo contrato crítico tenga **tests guardianes** que prueben los casos negativos (`undefined`/`null`/`{}` no autorizan).
 
 **Archivos involucrados:** `apps/pos/hooks/useTicketActions.js`, `apps/pos/RetailVisionPOS.jsx`, `apps/api/modules/pos/router.py`, `apps/pos/hooks/useTicketActions.exitContract.test.js` (nuevo).
+
+### Incidente Lógica de Bloqueo/Desbloqueo de Terminales — Hallazgos H1–H8 (20/Septiembre/2026) — v15
+
+**Terminales afectadas:** Todas (T1, T2, CAJA) — candados de terminal y heartbeat.
+**Síntoma:** No hubo un bug reproducible en producción. Este incidente nace de una **auditoría preventiva** de la lógica de bloqueo/desbloqueo de terminales, que destapó **8 hallazgos** (H1–H8) de distinta gravedad: desde deuda técnica latente hasta un fallo silencioso real. El objetivo fue **blindar** el módulo sin tocar su comportamiento observable.
+
+**Análisis Forense (8 hallazgos):**
+
+| ID | Hallazgo | Gravedad | Naturaleza |
+|----|----------|----------|------------|
+| **H1** | Los efectos con `setInterval` de [`useTerminalLocking.js`](apps/pos/hooks/useTerminalLocking.js) y el `useCallback` de [`usePOSSession.js`](apps/pos/hooks/usePOSSession.js) dependían del **objeto** `currentUser` en sus deps. Un cambio de **referencia** (no de valor) re-registraba los intervalos/callbacks. | Media (latente) | Deuda técnica preventiva |
+| **H2** | [`occupancy.py`](apps/api/modules/pos/occupancy.py) y el cutoff de `CashSession` en [`router.py`](apps/api/modules/pos/router.py) usaban `datetime.now()` (hora local naive) en lugar del helper UTC centralizado. | Media (latente) | Consistencia de zona horaria |
+| **H3** | El payload de `beforeunload` en [`useBeforeUnload.js`](apps/pos/hooks/useBeforeUnload.js) **no incluía `terminal_id`**, por lo que el guardado de emergencia al cerrar la pestaña no podía asociar el ticket a la terminal correcta. | Alta | Bug funcional real |
+| **H4** | La documentación afirmaba que el padre pasaba un **objeto inline** `currentUser`, cuando en realidad pasa una **variable de estado**. | Baja | Consistencia documental |
+| **H5** | No existía una **regla explícita de timestamps** en la documentación, pese a ser un principio transversal ("Store UTC, Display Local"). | Baja | Consistencia documental |
+| **H6** | El checklist de revisión no cubría los hallazgos H1–H5, por lo que podían reaparecer sin detección. | Baja | Consistencia documental |
+| **H7** | [`heartbeatTerminal`](apps/pos/services/POSService.js:117) devolvía `false` **en silencio** ante un `404`/`403`, haciendo indistinguible un candado perdido de un blip de red. | Alta | Bug funcional real |
+| **H8** | El `403` de `unlock` (cuando el solicitante ya no es dueño del candado) **parecía un bug** y no estaba documentado como comportamiento esperado. | Media | Documentación de comportamiento |
+
+**Solución implementada (v15 — 7 fases):**
+
+- **Fase 1 — H3 (`terminal_id` en `beforeunload`):** [`useBeforeUnload.js`](apps/pos/hooks/useBeforeUnload.js:44) ahora incluye `terminal_id: selectedTerminalRef.current || null` en el payload del `sendBeacon`, para que el guardado de emergencia asocie el ticket a la terminal correcta. Se auditó además el efecto `[currentUser]` para documentar su intención.
+- **Fase 2 — H2 (`utcnow()`):** Se sustituyó `datetime.now()` por `utcnow()` (helper de [`core/timestamps.py`](apps/api/core/timestamps.py:21)) en las 4 ocurrencias de [`occupancy.py`](apps/api/modules/pos/occupancy.py) (líneas 18, 55, 65, 116) y en el cutoff de `CashSession` de [`router.py`](apps/api/modules/pos/router.py:255). **Paso 0 de verificación:** se comprobó que el contenedor `rderico-api-dev` (servicio `api`) corre en **UTC** (`now` y `utc` coinciden), por lo que el valor es idéntico; el cambio solo hace **explícita** la intención y elimina la dependencia accidental de la TZ del host.
+- **Fase 3 — H1 (primitivo `currentUserId`):** Se introdujo `const currentUserId = currentUser?.id;` y se usó como dependencia **primitiva y estable** en los dos efectos de [`useTerminalLocking.js`](apps/pos/hooks/useTerminalLocking.js) (`checkMyLock` y `sendHeartbeat`) y en el `useCallback` de folio de [`usePOSSession.js`](apps/pos/hooks/usePOSSession.js:158). Los efectos siguen leyendo el valor actual vía `currentUserRef.current?.id`, evitando re-registros por cambio de referencia.
+- **Fase 4 — H7 (`heartbeatTerminal` señala fallo):** [`heartbeatTerminal`](apps/pos/services/POSService.js:117) ahora **lanza** `Error` cuando `!res.ok`, en lugar de devolver `false` en silencio. El llamador captura el error y **NO re-adquiere** el candado (regla anti-ping-pong), pero ahora puede registrarlo/observarlo.
+- **Fase 5 — H8 (403 espurios documentados):** Se añadió la subsección [§5.6 403 Espurios en `unlock`](#56-403-espurios-en-unlock-comportamiento-esperado--no-es-un-bug) y un comentario explicativo en el endpoint [`release_terminal_lock`](apps/api/modules/pos/router.py:316).
+- **Fase 6 — H4/H5/H6 (consistencia documental):** Se corrigió el análisis forense (H4), se añadió la **REGLA DE TIMESTAMPS** a §5.3 (H5) y se agregaron 5 ítems al checklist de revisión (H6).
+- **Fase 7 — Tests guardianes:** Se creó [`useTerminalLocking.v15.test.js`](apps/pos/hooks/useTerminalLocking.v15.test.js) con **18 tests** que replican las funciones puras `buildBeforeUnloadPayload`, `resolveHeartbeat`, `handleUnlockResult` y `resolveLockCheck`, cubriendo H1/H3/H7/H8.
+
+**Evidencia de aceptación:**
+- `npm test` → **503 passed** (15 archivos), incluidos los 18 tests nuevos.
+- `npm run build` → **built in 9.34s**, sin errores JSX.
+- `docker compose exec -T api python -m py_compile modules/pos/occupancy.py modules/pos/router.py` → **COMPILE_OK**.
+- `docker compose exec -T api python -c "from modules.pos.occupancy import utcnow..."` → **IMPORT_OK**.
+- **Paso 0 (TZ):** `now= 2026-09-20 04:21:22.267665` / `utc= 2026-09-20 04:21:22.267685+00:00` → coinciden → contenedor en **UTC**.
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que las deps de todo efecto con `setInterval`/`setTimeout` y de todo `useCallback` usen **primitivos estables** (`currentUserId`), nunca el **objeto** completo (`currentUser`). Un cambio de referencia no debe re-registrar temporizadores.
+- **OBLIGATORIO** usar `utcnow()` (helper centralizado) para **todo** timestamp de lógica de negocio. **PROHIBIDO** `datetime.now()` (hora local naive) en el backend.
+- **OBLIGATORIO** que todo payload de guardado de emergencia (`sendBeacon`/`beforeunload`) incluya `terminal_id`.
+- **OBLIGATORIO** que toda función de red señale el fallo **explícitamente** (lanzar o retornar un contrato discriminado). **PROHIBIDO** devolver `false` en silencio ante un `404`/`403`.
+- **OBLIGATORIO** documentar como "comportamiento esperado" todo código de estado que parezca un error (p. ej. el `403` de `unlock`) para evitar "correcciones" que rompan la regla anti-ping-pong.
+- **OBLIGATORIO** que todo hallazgo de auditoría quede reflejado en el **checklist de revisión** para que no reaparezca.
+
+**Archivos involucrados:** `apps/pos/hooks/useBeforeUnload.js`, `apps/api/modules/pos/occupancy.py`, `apps/api/modules/pos/router.py`, `apps/pos/hooks/useTerminalLocking.js`, `apps/pos/hooks/usePOSSession.js`, `apps/pos/services/POSService.js`, `apps/pos/hooks/useTerminalLocking.v15.test.js` (nuevo), `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_TERMINALES_V15.md`, `ESPECIFICACIONES DEL PROYECTO/REPORTE_EJECUCION_TERMINALES_V15.md`.
 
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
@@ -497,6 +545,8 @@ Todos los valores son **configurables desde `system_settings`** (tabla `SystemSe
 
 **Regla de seguridad:** El `TTL` del lock siempre debe ser al menos **10 veces mayor** que el intervalo de heartbeat del frontend.
 
+> **⚠️ REGLA DE TIMESTAMPS (v15, hallazgo H2):** Todos los timestamps de candados (`locked_at`) y los cutoffs de TTL **DEBEN** escribirse con el helper [`utcnow()`](../apps/api/core/timestamps.py:21) de `core/timestamps.py`, **NUNCA** con `datetime.now()`. El helper devuelve un datetime **naive en UTC** (sin `tzinfo`), compatible con las columnas `DateTime` sin `timezone=True` de [`TerminalLock`](../apps/api/modules/pos/models.py:15). El frontend asume UTC al parsear ([`parseUtc`](../apps/shared/timezone.js:60)), por lo que escribir hora local produciría un desfase que falsea `lockAge`. **Prohibido** reintroducir `datetime.now()` en [`occupancy.py`](../apps/api/modules/pos/occupancy.py:1) o en el cutoff de CashSession de [`router.py`](../apps/api/modules/pos/router.py:255).
+
 ### 5.4 Desbloqueo Forzado, Permisos y Auditoría
 
 #### Permisos requeridos (validados en BACKEND, no solo en frontend)
@@ -527,7 +577,29 @@ Cada ejecución de `force_unlock` genera un log con: Terminal afectada, quién e
 - El frontend (`useTerminalLocking.js`) **NUNCA** expulsa automáticamente al cajero si pierde el lock — solo muestra una advertencia visual.
 - El frontend **NUNCA** re-adquiere un lock perdido automáticamente.
 
-### 5.6 Sesiones de Caja vs Candados de Terminal
+### 5.6 403 Espurios en `unlock` (Comportamiento Esperado — NO es un Bug)
+
+> **Añadido en v15 (hallazgo H8).** Documentación de un comportamiento que parece un error pero es correcto.
+
+El endpoint [`release_terminal_lock`](../apps/api/modules/pos/router.py:316) responde **HTTP 403** cuando `unlock_terminal()` devuelve `False`, es decir, cuando el `occupier_id` que solicita el desbloqueo **no es el dueño actual del candado**.
+
+**Escenarios que producen un 403 legítimo (no espurio):**
+
+| Escenario | Por qué ocurre | ¿Es un bug? |
+|-----------|----------------|-------------|
+| El admin ejecutó `force_unlock` y otro usuario tomó la terminal | El candado ya pertenece a otra persona; el unlock del dueño anterior es rechazado | ❌ No |
+| El TTL expiró y la terminal fue re-ocupada por otro empleado | El lock viejo ya no existe o cambió de dueño | ❌ No |
+| El cleanup de desmontaje (`useTerminalLocking.js`) se dispara **después** de un `force_unlock` | El usuario ya no es dueño; el unlock de limpieza es rechazado | ❌ No |
+| Doble unlock (pestaña cerrada + logout explícito) | El segundo intento encuentra el lock ya liberado por el primero | ❌ No |
+
+**Contrato de `unlock_terminal()`** ([`occupancy.py:72`](../apps/api/modules/pos/occupancy.py:72)):
+- Devuelve `True` si el lock no existía (ya estaba libre) → **idempotente**.
+- Devuelve `True` si el solicitante es el dueño → libera.
+- Devuelve `False` si el solicitante **no** es el dueño → el router responde 403.
+
+**Regla para el frontend:** un 403 en `unlock` **NO debe** tratarse como error fatal ni reintentarse. El cleanup de [`useTerminalLocking.js:120`](../apps/pos/hooks/useTerminalLocking.js:120) ya lo captura con `.catch()` y solo emite un `console.warn`. **Prohibido** convertir este 403 en una expulsión o en un bucle de reintentos (violaría la regla anti-ping-pong).
+
+### 5.7 Sesiones de Caja vs Candados de Terminal
 - `terminal_locks`: Bloquea físicamente la pantalla (T1, T2, CAJA).
 - `cash_sessions`: Permite que un empleado registre ingresos/egresos monetarios en una terminal habilitada para cobrar.
 
@@ -582,6 +654,11 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿El force logout dispara `sendBeacon` a `/pos/tickets/emergency-save` con `terminal_id` sin bloquear el logout? (v7.0.3)
 - [ ] ¿`emergency_save_ticket` filtra la sesión por `terminal_id` (con fallback documentado)? (v7.0.3)
 - [ ] ¿Existen tests guardianes que prueben que `undefined`/`null`/`{}` NO autorizan la salida? (v7.0.3)
+- [ ] ¿Los timestamps de candados usan `utcnow()` y NO `datetime.now()`? (v15)
+- [ ] ¿Los efectos con `setInterval` y los `useCallback` dependen de `currentUserId` (primitivo) y NO del objeto `currentUser`? (v15)
+- [ ] ¿El payload de `beforeunload` incluye `terminal_id`? (v15)
+- [ ] ¿`heartbeatTerminal` lanza error en respuesta no-OK (en vez de devolver `false` en silencio)? (v15)
+- [ ] ¿Un 403 en `unlock` se trata como esperado (sin reintentos ni expulsión)? (v15)
 
 ---
 

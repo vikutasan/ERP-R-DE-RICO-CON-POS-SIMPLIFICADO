@@ -11,11 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete, func
 from .models import TerminalLock
+# v15 (H2): usar el helper UTC centralizado en lugar de datetime.now() (hora local naive).
+# Verificado en Paso 0: el contenedor corre en UTC, por lo que el valor es idéntico;
+# el cambio solo hace explícita la intención y elimina la dependencia accidental de la TZ del host.
+from core.timestamps import utcnow
 
 
 async def _purge_stale_locks(db: AsyncSession, ttl_minutes: int = 15):
     """Elimina candados cuyo timestamp supere el TTL."""
-    cutoff = datetime.now() - timedelta(minutes=ttl_minutes)
+    cutoff = utcnow() - timedelta(minutes=ttl_minutes)
     stale = await db.execute(
         select(TerminalLock).where(TerminalLock.locked_at < cutoff)
     )
@@ -52,7 +56,7 @@ async def lock_terminal(db: AsyncSession, terminal_id: str, occupier_id: int, oc
     if lock:
         if lock.occupier_id == occupier_id:
             # Renueva TTL si es el mismo usuario
-            lock.locked_at = datetime.now()
+            lock.locked_at = utcnow()
             await db.flush()
             return True
         return False  # Ocupada por otra persona
@@ -62,7 +66,7 @@ async def lock_terminal(db: AsyncSession, terminal_id: str, occupier_id: int, oc
         terminal_id=terminal_id,
         occupier_id=occupier_id,
         occupier_name=occupier_name,
-        locked_at=datetime.now()
+        locked_at=utcnow()
     )
     db.add(new_lock)
     await db.flush()
@@ -113,7 +117,7 @@ async def heartbeat(db: AsyncSession, terminal_id: str, occupier_id: int, ttl_mi
     )
     lock = result.scalars().first()
     if lock:
-        lock.locked_at = datetime.now()
+        lock.locked_at = utcnow()
         await db.flush()
         return True
     return False

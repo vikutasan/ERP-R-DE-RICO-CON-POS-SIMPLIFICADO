@@ -120,7 +120,14 @@ class POSService {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ occupier_id: occupierId, occupier_name: "heartbeat" })
         });
-        return res.ok;
+        // v15 (H7): señalar el fallo explícitamente. Antes devolvía `false` en silencio,
+        // por lo que un candado perdido (404/403) era indistinguible de un blip de red.
+        // El llamador (useTerminalLocking) captura el error y NO re-adquiere el candado
+        // (regla anti-ping-pong), pero ahora puede registrarlo/observarlo.
+        if (!res.ok) {
+            throw new Error(`Heartbeat falló con estado ${res.status}`);
+        }
+        return true;
     }
 
     // ── FASE 2: Persistencia Inmediata ──────────────────────────────────

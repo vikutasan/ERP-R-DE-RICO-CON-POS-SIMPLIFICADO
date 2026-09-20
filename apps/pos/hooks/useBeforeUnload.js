@@ -24,6 +24,9 @@ export const useBeforeUnload = (cartRef, accountNumRef, apiBaseUrl, selectedTerm
         selectedTerminalRef.current = selectedTerminal;
     }, [selectedTerminal]);
 
+    // v15: este efecto depende del OBJETO currentUser y se re-ejecuta si cambia
+    // de referencia. Es INOFENSIVO: solo reasigna un ref (no hay timers ni fetch).
+    // Se deja como está a propósito (auditoría v15, hallazgo D5).
     useEffect(() => {
         currentUserRef.current = currentUser;
     }, [currentUser]);
@@ -35,8 +38,12 @@ export const useBeforeUnload = (cartRef, accountNumRef, apiBaseUrl, selectedTerm
                 e.returnValue = '⚠️ Tiene productos en el ticket sin guardar. ¿Seguro que desea salir?';
 
                 try {
+                    // v15 (H3): incluir terminal_id para que el backend asocie el ticket
+                    // a la terminal correcta (evita el fallback "cualquier sesión activa").
+                    // Mismo contrato que el force logout de v7.0.3 (RetailVisionPOS.jsx:430).
                     const payload = JSON.stringify({
                         account_num: accountNumRef.current,
+                        terminal_id: selectedTerminalRef.current || null,
                         items: cartRef.current.map(i => ({ product_id: i.id, quantity: i.quantity || 1 })),
                         status: 'OPEN',
                         emergency_save: true
