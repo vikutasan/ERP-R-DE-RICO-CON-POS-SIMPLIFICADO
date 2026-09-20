@@ -453,7 +453,7 @@ Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), 
 - **Fase 0 — Reproducción (BLOQUEANTE):** Se creó el tag `pre-v18-estado-pos` (→ `23be478`). Baseline: **533 tests**, build **9.81s**. Se añadieron **8 tests** al `describe` "v18" de [`architecture.test.js`](apps/pos/state/architecture.test.js). **Reconciliación empírica:** la predicción del plan (6 rojos + 2 verdes) era incorrecta; la ejecución real dio **5 rojos funcionales (2,3,4,5,6) + 3 verdes de invariante (1,7,8)**. Los tests 7 y 8 verifican invariantes que ya se cumplían (el bloque ya terminaba en `onForceLogout();`; las rutas de v17 ya contenían el patch).
 - **Fase 1 — Migración:** [`handleForceLogout`](apps/pos/RetailVisionPOS.jsx:450) ahora aplica `buildResetPatch()` en un **PASO 2** explícito (orden estricto: **beacon → limpieza → `onForceLogout()`**). Se sincronizan las 5 refs a mano. Se añadió el extractor `extractForceLogoutFull` (incluye el cierre de la función) para el test de última sentencia.
 - **Fase 2 — Documentación de código:** Se actualizó el encabezado de [`sessionReset.js`](apps/pos/state/sessionReset.js) para declarar el contrato **CERRADO** (las 4 rutas de limpieza aplican el patch).
-- **Fase 3 — Validación manual:** Los 5 flujos de salida (3 de v17 + force logout + cierre de pestaña) validados en navegador → **5/5 OK, cero residuos**.
+- **Fase 3 — Validación manual (PENDIENTE):** Los 5 flujos de salida (3 de v17 + force logout + cierre de pestaña) deben validarse en navegador. **Aún no ejecutada** — requiere interacción humana. Los tests de arquitectura cubren el contrato a nivel de código, pero la validación empírica en navegador queda pendiente.
 - **Fase 4 — Documentación y respaldo:** Este incidente, la actualización de la Regla 19, los ítems del checklist y el respaldo en GitHub.
 
 **Evidencia de aceptación:**
@@ -462,7 +462,7 @@ Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), 
 - **5 rojos funcionales** en Fase 0 (tests 2,3,4,5,6) → **verdes** en Fase 1.
 - **Test de asimetría (O4)** de v17 sigue verde (18 tests en `sessionReset.*`).
 - **Diff limpio:** solo `RetailVisionPOS.jsx` modificado (52 inserciones, 1 deleción) — las 3 rutas de v17 intactas.
-- **5 flujos de salida** validados manualmente: 5/5 OK, cero residuos.
+- **5 flujos de salida:** validación manual en navegador **pendiente** (Fase 3). El contrato está verificado por los 8 tests de arquitectura; la comprobación empírica de residuos en navegador queda por hacer.
 
 **Lección (Nuevas Reglas Arquitectónicas Derivadas):**
 - **OBLIGATORIO** que toda ruta de salida limpie **por contrato explícito** (`buildResetPatch()`), **nunca** confiando en el desmontaje del componente como mecanismo de limpieza.
