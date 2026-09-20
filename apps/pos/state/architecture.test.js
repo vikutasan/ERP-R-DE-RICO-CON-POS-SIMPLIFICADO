@@ -231,3 +231,102 @@ describe('Arquitectura POS — v7.0.3: terminal_id dentro del payload de emergen
         expect(block).toContain('/pos/tickets/emergency-save');
     });
 });
+
+describe('Arquitectura POS — v18: handleForceLogout aplica buildResetPatch() (cierre del contrato)', () => {
+    const posSource = readSource(resolve(POS_ROOT, 'RetailVisionPOS.jsx'));
+
+    /**
+     * Extrae el bloque de `handleForceLogout` EXCLUYENDO `onForceLogout();`.
+     * (slice(start, end) es exclusivo en `end`.) Se usa para los tests 1-6.
+     */
+    function extractForceLogoutBlock(source) {
+        const start = source.indexOf('const handleForceLogout = () => {');
+        if (start === -1) return null;
+        const end = source.indexOf('onForceLogout();', start);
+        if (end === -1) return null;
+        return source.slice(start, end);
+    }
+
+    /**
+     * NUEVO extractor (P1) — incluye el cierre de la función, por lo que SÍ
+     * contiene `onForceLogout();`. Se usa SOLO para el test de última sentencia.
+     */
+    function extractForceLogoutFull(source) {
+        const start = source.indexOf('const handleForceLogout = () => {');
+        if (start === -1) return null;
+        const end = source.indexOf('\n    };', start);   // cierre de la arrow function
+        if (end === -1) return null;
+        return source.slice(start, end + '\n    };'.length);
+    }
+
+    // Test 1 (O8, P2 — PERMANENTE): sanidad "no vacuo".
+    // PASA en FASE 0 y FASE 1. Su misión es evitar que los demás tests pasen
+    // sobre un bloque vacío, NO detectar la migración.
+    it('1. sanidad: el bloque de handleForceLogout no es vacuo (length > 100)', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block, 'No se encontró handleForceLogout en RetailVisionPOS.jsx').not.toBeNull();
+        expect(block.length).toBeGreaterThan(100);
+    });
+
+    // Test 2 (presencia): el bloque aplica la fuente única de verdad.
+    it('2. presencia: handleForceLogout contiene buildResetPatch()', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('const patch = buildResetPatch();');
+    });
+
+    // Test 3 (D1, P7 — best-effort): el beacon se construye ANTES de limpiar.
+    it('3. ORDEN: el beacon (JSON.stringify) se construye antes del patch', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block).not.toBeNull();
+        const beaconIdx = block.indexOf('JSON.stringify({');
+        const patchIdx = block.indexOf('const patch = buildResetPatch()');
+        expect(beaconIdx, 'No se encontró el beacon JSON.stringify').toBeGreaterThan(-1);
+        expect(patchIdx, 'No se encontró const patch = buildResetPatch()').toBeGreaterThan(-1);
+        expect(beaconIdx).toBeLessThan(patchIdx);
+    });
+
+    // Test 4 (refs): sincroniza las 5 refs.
+    it('4. refs: sincroniza las 5 refs de sesión', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('cartRef.current = []');
+        expect(block).toContain("accountNumRef.current = ''");
+        expect(block).toContain('originalCapturerRef.current = null');
+        expect(block).toContain('ticketVersionRef.current = null');
+        expect(block).toContain('savedTicketRef.current = null');
+    });
+
+    // Test 5 (claves de la asimetría A2): las claves que v17 corrigió.
+    it('5. claves de asimetría: limpia showExitModal, pendingExitAction y savedTicketRef', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('setShowExitModal(patch.showExitModal)');
+        expect(block).toContain('setPendingExitAction(patch.pendingExitAction)');
+        expect(block).toContain('savedTicketRef.current = null');
+    });
+
+    // Test 6 (D2, P3 — por STRING, no regex): NO duplica la clave del carrito.
+    // PASA en FASE 0 (el código actual no tiene ningún removeItem) y debe seguir
+    // pasando: es un guardián de no-duplicación.
+    it('6. no duplica la clave del carrito (solo borra la de sesión)', () => {
+        const block = extractForceLogoutBlock(posSource);
+        expect(block).not.toBeNull();
+        expect(block).not.toContain('removeItem(`pos_cart_');
+        expect(block).toContain('removeItem(`pos_session_');
+    });
+
+    // Test 7 (N3, P1 — usa extractForceLogoutFull): onForceLogout() es la última sentencia.
+    it('7. última sentencia: onForceLogout(); cierra la función', () => {
+        const full = extractForceLogoutFull(posSource);
+        expect(full, 'No se pudo extraer el bloque completo de handleForceLogout').not.toBeNull();
+        expect(full.trimEnd().endsWith('onForceLogout();\n    };')).toBe(true);
+    });
+
+    // Test 8 (P4 — lee DOS archivos): las 4 rutas de limpieza aplican el patch.
+    it('8. contraste: las 4 rutas de limpieza contienen buildResetPatch()', () => {
+        const ticketActionsSource = readSource(resolve(POS_ROOT, 'hooks/useTicketActions.js'));
+        expect(posSource).toContain('const patch = buildResetPatch();');
+        expect(ticketActionsSource).toContain('const patch = buildResetPatch();');
+    });
+});
