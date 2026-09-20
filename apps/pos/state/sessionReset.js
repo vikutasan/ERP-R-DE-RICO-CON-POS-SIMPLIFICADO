@@ -1,7 +1,7 @@
 /**
- * v17 — Fuente ÚNICA de verdad de "cómo se limpia una sesión de captura" del POS.
+ * v17 + v18 — Fuente ÚNICA de verdad de "cómo se limpia una sesión de captura" del POS.
  *
- * PROBLEMA QUE RESUELVE (ver PLAN_CORRECCION_ESTADO_POS_V17.md §1.4):
+ * PROBLEMA QUE RESOLVIÓ (ver PLAN_CORRECCION_ESTADO_POS_V17.md §1.4):
  *   La limpieza de sesión estaba escrita A MANO en 5 rutas de salida distintas
  *   (handleExitWithoutSaving, rama success de handleTicketAction, doTerminalExit,
  *   handleForceLogout, window.requestPOSExit). Cada ruta limpiaba un subconjunto
@@ -14,6 +14,17 @@
  * SOLUCIÓN:
  *   Una función PURA que devuelve el conjunto EXACTO de valores de reset.
  *   Las rutas de salida aplican este patch en vez de limpiar a mano.
+ *
+ * ESTADO DEL CONTRATO (v18 — CERRADO):
+ *   Las 4 rutas de limpieza aplican buildResetPatch():
+ *     1. handleExitWithoutSaving          ✅ (v17)
+ *     2. rama success de handleTicketAction ✅ (v17)
+ *     3. doTerminalExit                   ✅ (v17)
+ *     4. handleForceLogout                ✅ (v18 — antes limpiaba IMPLÍCITAMENTE
+ *        vía desmontaje del componente; ahora lo hace por contrato explícito)
+ *   La 5ª ruta (window.requestPOSExit) NO es de limpieza: es un interceptor.
+ *   Guardián: architecture.test.js (describe "v18") verifica que las 4 rutas
+ *   contienen `const patch = buildResetPatch();`.
  *
  * QUÉ **NO** INCLUYE (límite explícito — ver §3.2 del plan):
  *   - cart / cartState  → vive en useCart con su candado Anti-Wipe (v4.6).
