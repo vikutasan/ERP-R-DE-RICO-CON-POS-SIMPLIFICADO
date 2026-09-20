@@ -448,6 +448,8 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
     // (evita la espera de hasta 6.5s del mutex + reintentos). El beacon incluye
     // terminal_id para que el backend asocie el ticket a la terminal correcta.
     const handleForceLogout = () => {
+        // PASO 1 — Beacon de emergencia (fire-and-forget, SIN await).
+        // Se construye ANTES de limpiar para que el payload contenga los items vivos.
         try {
             const liveCart = cartRef.current;
             const liveAccountNum = accountNumRef.current;
@@ -472,7 +474,56 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         } catch (e) {
             console.warn('Force logout: no se pudo enviar beacon de emergencia:', e);
         }
-        // Delegar el logout real (no se espera el beacon — fire-and-forget)
+
+        // PASO 2 — v18: limpieza EXPLÍCITA de la sesión vía buildResetPatch() (fuente única).
+        // Antes esta ruta NO limpiaba explícitamente: dependía de que el logout del padre
+        // desmontara el componente (limpieza implícita). Ahora el contrato es explícito
+        // y no depende del desmontaje. Las REFS se sincronizan a mano (el patch es puro).
+        //
+        // NOTA (D3): isGeneratingFolioRef e isRecoveringRef NO se resetean aquí.
+        // Son candados de operación de corta duración que se auto-liberan en su `finally`
+        // (usePOSSession.js:160). Resetearlos a mitad de una operación sería un bug.
+        // Además, buildResetPatch() es puro y no puede tocarlos.
+        //
+        // NOTA (O6): el try/catch cubre también clearCart(), que puede lanzar si
+        // localStorage está lleno o bloqueado. Un fallo de limpieza NO debe impedir
+        // el logout (PASO 3): por eso el catch NO re-lanza.
+        try {
+            const patch = buildResetPatch();
+            clearCart();                       // borra la clave del carrito de ESTA terminal (ver useCart.js)
+            cartRef.current = [];
+            accountNumRef.current = '';
+            originalCapturerRef.current = null;
+            ticketVersionRef.current = null;
+            savedTicketRef.current = null;
+            // O5: mismo orden que handleExitWithoutSaving (setOriginalCapturer antes de
+            // setCurrentAccountNum) para que el diff sea comparable entre rutas.
+            setOriginalCapturer(patch.originalCapturer);
+            setCurrentAccountNum(patch.currentAccountNum);
+            setTicketVersion(patch.ticketVersion);
+            setOrderData(patch.orderData);
+            setOrderType(patch.orderType);
+            setLastSaveStatus(patch.lastSaveStatus);
+            setLastSaveTime(patch.lastSaveTime);
+            setShowCheckout(patch.showCheckout);
+            setPaymentsHistory(patch.paymentsHistory);
+            setShowExitModal(patch.showExitModal);
+            setPendingExitAction(patch.pendingExitAction);
+            // NOTA (D2): SOLO se borra la clave de sesión. La clave del carrito ya la
+            // borra clearCart(). NO duplicar (a diferencia de doTerminalExit, que tiene
+            // una redundancia histórica). El test D2 verifica que NO hay removeItem de carrito.
+            try {
+                if (selectedTerminal) localStorage.removeItem(`pos_session_${selectedTerminal}`);
+            } catch (e) { console.warn('Force logout: error al limpiar persistencia:', e); }
+        } catch (cleanupErr) {
+            console.error('Force logout: error limpiando estado de sesión:', cleanupErr);
+        }
+
+        // PASO 3 — Delegar el logout real (no se espera el beacon — fire-and-forget).
+        // INVARIANTE (N3): esta DEBE ser la ÚLTIMA sentencia de la función. El logout
+        // del padre es un setState ASÍNCRONO → el desmontaje ocurre DESPUÉS de que el
+        // PASO 2 se aplica. Si en el futuro se cambiara por un desmontaje SÍNCRONO,
+        // el PASO 2 se perdería. El test de arquitectura verifica que es la última.
         onForceLogout();
     };
 
