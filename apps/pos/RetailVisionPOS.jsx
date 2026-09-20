@@ -359,11 +359,21 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
     const handleSendThenExit = async () => {
         setShowExitModal(false);
         try {
-            await handleTicketAction('OPEN');
-            // Si se envió exitosamente, ejecutar la acción pendiente (logout, cambiar tab, o doTerminalExit)
-            if (pendingExitAction) {
-                pendingExitAction();
-                setPendingExitAction(null);
+            // v7.0.3: Contrato de resultado. NO basta con que no lance excepción:
+            // los fallos de negocio (vacío, ya pagado, verificación fallida) retornan
+            // 'aborted' SIN lanzar. Solo 'success' garantiza persistencia verificada.
+            const result = await handleTicketAction('OPEN');
+            if (result?.outcome === 'success') {
+                // Enviado y verificado: ejecutar la acción pendiente (logout, cambiar tab, o doTerminalExit)
+                if (pendingExitAction) {
+                    pendingExitAction();
+                    setPendingExitAction(null);
+                }
+            } else {
+                // No se persistió: NO salir. Mantener la sesión y avisar al usuario.
+                console.warn('⚠️ Envío no confirmado antes de salir:', result?.outcome, result?.reason);
+                setToastMessage('❌ No se pudo enviar al Pizarrón. La cuenta sigue abierta. Intente de nuevo.');
+                setTimeout(() => setToastMessage(null), 5000);
             }
         } catch (e) {
             console.error('Error enviando al pizarrón antes de salir:', e);
@@ -374,10 +384,69 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
 
     const handleExitWithoutSaving = () => {
         setShowExitModal(false);
+        // v7.0.3: Espejo EXPLÍCITO de la limpieza de handleTicketAction (rama success).
+        // Se evita un helper compartido a propósito: la duplicación visible y testeable
+        // es preferible a una abstracción que pueda desincronizar refs y estado.
+        // Sin esto, el carrito/folio sobreviven al logout y reaparecen en la siguiente sesión.
+        try {
+            clearCart();
+            cartRef.current = [];
+            setOriginalCapturer(null);
+            originalCapturerRef.current = null;
+            setCurrentAccountNum('');
+            accountNumRef.current = '';
+            setTicketVersion(null);
+            ticketVersionRef.current = null;
+            setOrderData(null);
+            setOrderType('VENTA_DIRECTA');
+            setLastSaveStatus('idle');
+            setLastSaveTime(null);
+            setShowCheckout(false);
+            setPaymentsHistory([]);
+            savedTicketRef.current = null;
+            try {
+                if (selectedTerminal) localStorage.removeItem(`pos_session_${selectedTerminal}`);
+            } catch (e) { console.warn("Error al limpiar persistencia:", e); }
+        } catch (cleanupErr) {
+            console.error('Error limpiando estado al salir sin enviar:', cleanupErr);
+        }
         if (pendingExitAction) {
             pendingExitAction();
             setPendingExitAction(null);
         }
+    };
+
+    // v7.0.3: Force logout (la terminal fue tomada por otro usuario).
+    // Se dispara un sendBeacon de emergencia SIN await para no bloquear el logout
+    // (evita la espera de hasta 6.5s del mutex + reintentos). El beacon incluye
+    // terminal_id para que el backend asocie el ticket a la terminal correcta.
+    const handleForceLogout = () => {
+        try {
+            const liveCart = cartRef.current;
+            const liveAccountNum = accountNumRef.current;
+            if (liveCart && liveCart.length > 0 && liveAccountNum) {
+                const payload = JSON.stringify({
+                    account_num: liveAccountNum,
+                    terminal_id: selectedTerminal || null,
+                    items: liveCart.map(i => ({ product_id: i.id, quantity: i.quantity || 1 })),
+                });
+                const url = `${CONFIG.API_BASE_URL}/pos/tickets/emergency-save`;
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+                } else {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: payload,
+                        keepalive: true,
+                    }).catch(() => {});
+                }
+            }
+        } catch (e) {
+            console.warn('Force logout: no se pudo enviar beacon de emergencia:', e);
+        }
+        // Delegar el logout real (no se espera el beacon — fire-and-forget)
+        onForceLogout();
     };
 
     // --- FASE 2: Wrappers con persistencia inmediata ---
@@ -550,13 +619,21 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
                 />
             )}
 
-            <ForceLogoutModal visible={forceLogoutModal} onForceLogout={onForceLogout} />
+            <ForceLogoutModal visible={forceLogoutModal} onForceLogout={handleForceLogout} />
             <ToastNotification message={toastMessage} />
 
             {/* Modal de Confirmación de Salida */}
             {showExitModal && (
                 <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-black/70" onClick={() => setShowExitModal(false)} />
+                    {/* v7.0.3: el backdrop debe limpiar pendingExitAction igual que "Cancelar",
+                        para que una acción pendiente no se dispare en una salida posterior. */}
+                    <div
+                        className="absolute inset-0 bg-black/70"
+                        onClick={() => {
+                            setShowExitModal(false);
+                            setPendingExitAction(null);
+                        }}
+                    />
                     <div className="relative bg-gradient-to-b from-zinc-800 to-zinc-900 rounded-3xl p-8 max-w-md w-full shadow-2xl border border-white/10">
                         {/* Icono de advertencia */}
                         <div className="text-center mb-6">

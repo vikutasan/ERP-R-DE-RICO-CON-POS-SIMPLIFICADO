@@ -2,8 +2,8 @@
 
 > **⚠️ LECTURA OBLIGATORIA.** Cualquier IA o desarrollador que necesite modificar o auditar CUALQUIER aspecto del Punto de Venta (POS) de R de Rico **DEBE leer este documento completo primero.**
 >
-> **Última actualización:** 2026-07-11
-> **Versión de arquitectura POS:** v7.0.2 (Modelo SaaS — Persistencia Atómica + Respuesta Ligera + Verificación Post-Envío + Auto-Reconciliación)
+> **Última actualización:** 2026-09-20
+> **Versión de arquitectura POS:** v7.0.3 (Modelo SaaS — Persistencia Atómica + Respuesta Ligera + Verificación Post-Envío + Auto-Reconciliación + Contrato de Resultado Discriminado)
 > **Archivos gobernados:** `apps/pos/`, `apps/api/modules/pos/`, `apps/api/modules/cash/`
 
 ---
@@ -297,6 +297,50 @@ tickets = await svc.get_tickets(db, search_date="2026-09-14", search=ACC_PREFIX)
 
 **Archivos involucrados:** `apps/api/tests/test_bloque9d_3bugs.py`.
 
+### Incidente Cuentas Perdidas por Salida sin Enviar — Modal de Salida (20/Septiembre/2026) — v7.0.3
+
+**Terminales afectadas:** Todas (vendedores en tablets + CAJA).
+**Síntoma:** El personal se logueaba, comenzaba a capturar una cuenta, **olvidaba presionar "Enviar al Pizarrón"** y cerraba la sesión. El operador de CAJA **no encontraba la cuenta** porque nunca había sido enviada. El Modal de Salida (Regla 6) existía y aparecía, pero **no garantizaba** que la cuenta llegara al Pizarrón.
+
+**Análisis Forense (6 defectos interconectados):**
+
+1. **Defecto raíz — "no lanzar excepción" ≠ "éxito":** [`handleSendThenExit`](apps/pos/RetailVisionPOS.jsx:359) llamaba a `handleTicketAction('OPEN')` dentro de un `try/catch` y, si **no se lanzaba excepción**, ejecutaba la acción pendiente de salida (logout/cambio de terminal). Pero `handleTicketAction` **retornaba silenciosamente** en varios fallos de negocio **sin lanzar**: carrito vacío, folio ya pagado, conflicto de versión auto-sanado, y — el más grave — **verificación post-envío fallida** (Regla 12). En esos casos el vendedor salía creyendo que la cuenta se había enviado, pero el ticket nunca quedó `OPEN` en el servidor.
+2. **`handleExitWithoutSaving` incompleto:** La rama "Salir perdiendo la cuenta" limpiaba solo una parte del estado (carrito y folio), dejando **refs y estado residuales** (`originalCapturer`, `ticketVersion`, `orderData`, `orderType`, `lastSaveStatus`, `paymentsHistory`, `savedTicketRef`, persistencia en `localStorage`). Esto podía contaminar la siguiente sesión en la misma terminal.
+3. **Backdrop del modal no limpiaba `pendingExitAction`:** El botón "Cancelar" sí limpiaba la acción pendiente, pero el **clic en el fondo oscuro (backdrop)** cerraba el modal **sin** limpiarla. Una acción pendiente (p. ej. "cambiar de terminal") podía dispararse en una salida posterior no relacionada.
+4. **Force logout sin persistencia de emergencia:** Cuando otro usuario tomaba la terminal (`ForceLogoutModal`), el logout se ejecutaba **sin intentar** persistir el carrito en curso. La cuenta en progreso se perdía.
+5. **Endpoint de emergencia asociaba la terminal equivocada:** [`emergency_save_ticket`](apps/api/modules/pos/router.py:430) tomaba **la primera sesión activa arbitraria** (`select(TerminalSession).where(is_active == True).limit(1)`), sin filtrar por `terminal_id`. El ticket de emergencia podía quedar asociado a la terminal incorrecta.
+6. **Sin tests guardianes:** No existía ninguna prueba que protegiera el contrato "solo salir si el envío fue confirmado", por lo que el bug podía reaparecer silenciosamente.
+
+**Solución implementada (v7.0.3 — 6 fases):**
+
+- **Fase 1 — Contrato de Resultado Discriminado:** [`handleTicketAction`](apps/pos/hooks/useTicketActions.js:118) ahora retorna **siempre** un objeto `{ outcome, reason }`:
+  - `outcome: 'success'` → el ticket quedó persistido **y verificado** en el servidor.
+  - `outcome: 'aborted'` → no se persistió (vacío, ya pagado, conflicto, verificación fallida). `reason` indica la causa (`empty_cart`, `already_paid`, `version_conflict_autoheal`, `verification_failed`, `verification_error`).
+  - `outcome: 'navigated'` → se abrió otra pantalla (checkout) sin persistir (`checkout_opened`).
+  - `outcome: 'not_finalized'` → se persistió pero con `finalizeUI=false` (`finalize_ui_disabled`).
+  - El `catch` sigue haciendo `throw` (intencional): los llamadores deben manejar **tanto** la promesa rechazada **como** los outcomes no-`success`.
+- **Fase 2 — Consumidor Fail-Safe:** [`handleSendThenExit`](apps/pos/RetailVisionPOS.jsx:359) ahora **solo** ejecuta la acción pendiente si `result?.outcome === 'success'`. En cualquier otro caso muestra un toast de error y **mantiene la cuenta abierta**.
+- **Fase 3 — Limpieza Espejo Explícita:** [`handleExitWithoutSaving`](apps/pos/RetailVisionPOS.jsx:385) limpia **explícitamente** todo el estado y los refs (espejo de la rama `success` de `handleTicketAction`). Se evitó a propósito un helper compartido: la duplicación visible y testeable es preferible a una abstracción que pueda desincronizar refs y estado.
+- **Fase 4 — Backdrop Limpio:** El backdrop del modal ahora limpia `pendingExitAction` igual que "Cancelar".
+- **Fase 5 — Force Logout con Beacon:** Se añadió [`handleForceLogout`](apps/pos/RetailVisionPOS.jsx:423), que dispara un `navigator.sendBeacon` **sin `await`** (fire-and-forget) a `/pos/tickets/emergency-save` con `{ account_num, terminal_id, items }`, y luego delega el logout real. El `sendBeacon` evita la espera de hasta ~6.5s del mutex + reintentos. El backend [`emergency_save_ticket`](apps/api/modules/pos/router.py:430) ahora **filtra por `terminal_id`** (con fallback a cualquier sesión activa para no perder el ticket).
+- **Fase 6 — Tests Guardianes:** Se creó [`useTicketActions.exitContract.test.js`](apps/pos/hooks/useTicketActions.exitContract.test.js) con **13 tests** que replican las funciones puras `shouldExitAfterSend(result)` y `buildEmergencyPayload(...)`. Prueba crítica de regresión: `undefined`, `null` y `{}` **NO** autorizan la salida.
+
+**Evidencia de aceptación:**
+- `npm test` → **485 passed** (14 archivos), incluidos los 13 tests nuevos.
+- `npm run build` → **built in 12.12s**, 1817 módulos transformados, sin errores JSX.
+- `docker compose exec -T api python -m py_compile modules/pos/router.py` → **COMPILE_OK**.
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que toda función de persistencia crítica retorne un **contrato de resultado discriminado** `{ outcome, reason }`. **PROHIBIDO** asumir que "no lanzar excepción" equivale a éxito: los fallos de negocio retornan sin lanzar.
+- **OBLIGATORIO** que todo consumidor de una acción final (salir, cambiar de terminal, cobrar) **verifique explícitamente** `outcome === 'success'` antes de ejecutar efectos irreversibles (logout, limpieza de UI, navegación).
+- **OBLIGATORIO** que toda rama de limpieza de UI sea un **espejo explícito y completo** del estado + refs que limpia la rama de éxito. **PROHIBIDO** dejar refs o `localStorage` residuales.
+- **OBLIGATORIO** que todo cierre de modal (botón **y** backdrop) limpie las acciones pendientes (`pendingExitAction`).
+- **OBLIGATORIO** que el force logout intente persistir el carrito en curso vía `sendBeacon` (fire-and-forget, nunca bloqueante) incluyendo `terminal_id`.
+- **OBLIGATORIO** que el endpoint de emergencia asocie el ticket a la **terminal correcta** (`terminal_id`), con fallback documentado.
+- **OBLIGATORIO** que todo contrato crítico tenga **tests guardianes** que prueben los casos negativos (`undefined`/`null`/`{}` no autorizan).
+
+**Archivos involucrados:** `apps/pos/hooks/useTicketActions.js`, `apps/pos/RetailVisionPOS.jsx`, `apps/api/modules/pos/router.py`, `apps/pos/hooks/useTicketActions.exitContract.test.js` (nuevo).
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
@@ -321,8 +365,15 @@ Para evitar que eso borre el carrito almacenado en `localStorage`, `useCart.js` 
 Debido a la persistencia atómica por ítem, un ticket se crea en la base de datos desde que se escanea el primer producto. Para evitar que dos personas abran y editen el mismo ticket al mismo tiempo, el ticket se mantiene en estado `DRAFT` y **NO es visible** en el Pizarrón de las demás terminales.
 El ticket **solo cambia a estado `OPEN` (y se vuelve visible en el Pizarrón)** cuando el cajero da clic explícitamente en el botón "Guardar en Pizarrón". Esto previene colisiones multi-usuario de raíz.
 
-### ⚡ REGLA 6: Protección Contra Olvidos (Exit Modal)
+### ⚡ REGLA 6: Protección Contra Olvidos (Exit Modal) — v7.0.3
 Como ahora se requiere una acción explícita para mandar una cuenta al Pizarrón, es frecuente que el personal olvide hacerlo y deje tickets en estado `DRAFT` huérfanos. Para remediarlo, el sistema cuenta con una protección: si un usuario intenta **salir del sistema** o **cambiar de terminal** teniendo un carrito con productos no enviados, se lanza un Modal de Advertencia bloqueante. Este modal le obliga a elegir entre "Enviar al Pizarrón y salir", "Salir perdiendo la cuenta", o "Cancelar".
+
+**Garantía v7.0.3 (endurecimiento crítico):** La opción "Enviar al Pizarrón y salir" **solo** ejecuta la salida si `handleTicketAction('OPEN')` retorna `{ outcome: 'success' }`. **PROHIBIDO** asumir que "no lanzar excepción" equivale a éxito: los fallos de negocio (carrito vacío, folio ya pagado, verificación post-envío fallida) retornan **sin lanzar**. Si el envío no se confirma, la cuenta **permanece abierta** y se muestra un error visible.
+- ✅ OBLIGATORIO: `if (result?.outcome === 'success')` antes de ejecutar `pendingExitAction()`.
+- ✅ OBLIGATORIO: Toda rama de limpieza de UI (salir sin guardar) es un **espejo explícito y completo** del estado + refs que limpia la rama de éxito.
+- ✅ OBLIGATORIO: El **backdrop** del modal limpia `pendingExitAction` igual que el botón "Cancelar".
+- ✅ OBLIGATORIO: El **force logout** (terminal tomada por otro usuario) dispara un `sendBeacon` fire-and-forget a `/pos/tickets/emergency-save` con `terminal_id`, sin bloquear el logout.
+- ⛔ PROHIBIDO: Ejecutar el logout/cambio de terminal tras un envío cuyo `outcome` no sea `'success'`.
 
 ### ⚡ REGLA 7: El "Draft Guard" (Blindaje Backend)
 Por seguridad en la API, un ticket en estado `DRAFT` tiene un "dueño" (la terminal que lo creó). El backend (`_upsert_ticket_header`) prohíbe estrictamente que una terminal intente cobrar (`PAID`) un `DRAFT` que pertenece a otra terminal. Si Terminal B quiere cobrar la cuenta de Terminal A, Terminal A primero debe mandarla al Pizarrón (`OPEN`). Esto evita el "robo" accidental de tickets en progreso a nivel base de datos.
@@ -524,6 +575,13 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿El checkout (`createTicket`) tiene retries con `shouldRetry` que excluye errores de negocio? (v7.0.2)
 - [ ] ¿Existe auto-reconciliación que resetea `lastSaveStatus` cuando la red se recupera? (v7.0.2)
 - [ ] ¿La reconciliación descarga el ticket del servidor y sobrescribe el carrito local (servidor gana)? (v7.0.2)
+- [ ] ¿`handleTicketAction` retorna SIEMPRE un contrato `{ outcome, reason }` en TODAS sus ramas? (v7.0.3)
+- [ ] ¿`handleSendThenExit` verifica `result?.outcome === 'success'` antes de ejecutar `pendingExitAction()`? (v7.0.3)
+- [ ] ¿`handleExitWithoutSaving` limpia TODOS los refs y el `localStorage` (espejo completo de la rama success)? (v7.0.3)
+- [ ] ¿El backdrop del modal de salida limpia `pendingExitAction` igual que el botón "Cancelar"? (v7.0.3)
+- [ ] ¿El force logout dispara `sendBeacon` a `/pos/tickets/emergency-save` con `terminal_id` sin bloquear el logout? (v7.0.3)
+- [ ] ¿`emergency_save_ticket` filtra la sesión por `terminal_id` (con fallback documentado)? (v7.0.3)
+- [ ] ¿Existen tests guardianes que prueben que `undefined`/`null`/`{}` NO autorizan la salida? (v7.0.3)
 
 ---
 
@@ -545,8 +603,8 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 
 ---
 
-> **Esta es la FUENTE ÚNICA DE VERDAD de la v7.0.2.**
+> **Esta es la FUENTE ÚNICA DE VERDAD de la v7.0.3.**
 > El POS de R de Rico es un monumento a la evolución: construimos sistemas complejos para sobrevivir, aprendimos que la complejidad causaba errores, y los sustituimos por simplicidad atómica robusta.
-> La v6.1 agregó verificación post-envío y bloqueo visual sin conexión. La v7.0 optimizó el rendimiento eliminando JOINs innecesarios en operaciones de alta frecuencia. La v7.0.1 igualó la resiliencia de las 3 operaciones atómicas con retries simétricos. La v7.0.2 cerró las últimas vulnerabilidades: auto-reconciliación post-fallo, `withRetries` DRY centralizado, y retries inteligentes en el checkout.
+> La v6.1 agregó verificación post-envío y bloqueo visual sin conexión. La v7.0 optimizó el rendimiento eliminando JOINs innecesarios en operaciones de alta frecuencia. La v7.0.1 igualó la resiliencia de las 3 operaciones atómicas con retries simétricos. La v7.0.2 cerró las últimas vulnerabilidades: auto-reconciliación post-fallo, `withRetries` DRY centralizado, y retries inteligentes en el checkout. La v7.0.3 blindó el Modal de Salida con un **contrato de resultado discriminado** (`{ outcome, reason }`): ya no se asume que "no lanzar excepción" equivale a éxito, el force logout persiste el carrito vía `sendBeacon`, y el endpoint de emergencia asocia el ticket a la terminal correcta.
 >
 > *Tu trabajo como IA no es reintroducir la complejidad antigua, sino proteger y expandir esta simplicidad.*

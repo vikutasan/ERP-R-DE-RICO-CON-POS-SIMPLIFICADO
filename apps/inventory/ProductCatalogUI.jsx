@@ -12,6 +12,12 @@ import {
     shouldShowHeladeriaBlock,
     validateHeladeriaIntent,
 } from './utils/heladeriaIntent.js';
+// v8 (POS-THEME): color del recuadro de categoría según su destino de POS.
+// Espejo en frontend de categories.pos_target (backend).
+import {
+    buildCategoryTabClasses,
+    buildCategoryTabTitle,
+} from './utils/categoryPosTheme.js';
 
 /**
  * R DE RICO - PRODUCT MASTER & CATALOG MANAGER (API SYNC)
@@ -736,7 +742,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
     };
 
     return (
-        <div className="bg-[#050505]/60 backdrop-blur-xl min-h-screen text-white p-8 font-sans flex gap-8">
+        <div className="min-h-screen text-white p-8 font-sans flex gap-8">
             {/* Modal de Eliminación de Categoría */}
             {categoryToDelete && ReactDOM.createPortal(
                 <div className="fixed inset-0 z-[200] flex items-start justify-center p-6 pt-20">
@@ -1628,16 +1634,11 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                 }
                             }}
                             onClick={() => setActiveCategory(cat.name)}
-                            className={`
-                                group relative px-6 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest text-center transition-all 
-                                flex items-center justify-center min-w-[140px] h-auto min-h-[56px] whitespace-normal break-words cursor-pointer
-                                ${activeCategory === cat.name 
-                                    ? 'bg-indigo-600 text-white shadow-lg z-10 scale-105' 
-                                    : cat.vision_enabled 
-                                        ? 'bg-gray-800 text-gray-200 border border-gray-700 hover:border-indigo-500 shadow-md' 
-                                        : 'bg-gray-900/40 text-gray-600 border border-gray-800/50 opacity-40 grayscale backdrop-blur-sm hover:opacity-100 hover:grayscale-0'}
-                                ${draggedCatIndex === idx ? 'opacity-30' : ''}
-                            `}
+                            title={buildCategoryTabTitle(cat)}
+                            className={buildCategoryTabClasses(cat, {
+                                isActive: activeCategory === cat.name,
+                                isDragging: draggedCatIndex === idx,
+                            })}
                         >
                             <span>{cat.name}</span>
                             
@@ -1687,7 +1688,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                 onDragOver={(e) => e.preventDefault()}
                                 onDrop={(e) => handleProductDrop(e, idx)}
                                 onClick={() => setEditingProduct(product)}
-                                className={`bg-gray-900/40 border border-gray-800 p-6 rounded-[32px] hover:border-indigo-500 transition-all cursor-pointer group ${draggedProdIndex === idx ? 'opacity-30 scale-95 border-dashed border-indigo-500' : ''}`}
+                                className={`bg-black border border-gray-800 p-6 rounded-[32px] hover:border-indigo-500 transition-all cursor-pointer group ${draggedProdIndex === idx ? 'opacity-30 scale-95 border-dashed border-indigo-500' : ''}`}
                             >
                                 {product.image_url ? (
                                     <div className="h-32 w-full mb-4 rounded-xl overflow-hidden border border-gray-800 relative z-0">

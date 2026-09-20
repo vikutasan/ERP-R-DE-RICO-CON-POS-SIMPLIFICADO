@@ -439,20 +439,33 @@ async def emergency_save_ticket(payload: dict, db: AsyncSession = Depends(get_db
     try:
         account_num = payload.get("account_num")
         items = payload.get("items", [])
+        terminal_id = payload.get("terminal_id")
         
         if not account_num or not items:
             logger.warning("Emergency save: payload incompleto, ignorando")
             return {"status": "ignored", "reason": "incomplete payload"}
         
-        logger.warning(f"🆘 EMERGENCY SAVE: {account_num} con {len(items)} items")
+        logger.warning(f"🆘 EMERGENCY SAVE: {account_num} con {len(items)} items (terminal={terminal_id})")
         
-        # Buscar sesión activa para cualquier terminal
+        # v7.0.3: Buscar la sesión activa de LA TERMINAL indicada.
+        # Antes se tomaba la primera sesión activa arbitraria, lo que podía
+        # asociar el ticket de emergencia a la terminal equivocada.
         from sqlalchemy.future import select
         from .models import TerminalSession
-        result = await db.execute(
-            select(TerminalSession).where(TerminalSession.is_active == True).limit(1)
-        )
+        query = select(TerminalSession).where(TerminalSession.is_active == True)
+        if terminal_id:
+            query = query.where(TerminalSession.terminal_id == terminal_id)
+        result = await db.execute(query.limit(1))
         session = result.scalars().first()
+        
+        # Fallback: si no se encontró por terminal_id, usar cualquier sesión activa
+        # (preserva el comportamiento previo para no perder el ticket de emergencia).
+        if not session and terminal_id:
+            logger.warning(f"Emergency save: sin sesión para terminal {terminal_id}, usando fallback")
+            result = await db.execute(
+                select(TerminalSession).where(TerminalSession.is_active == True).limit(1)
+            )
+            session = result.scalars().first()
         
         if not session:
             logger.error("Emergency save: No hay sesión activa")

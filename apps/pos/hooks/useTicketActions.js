@@ -109,6 +109,12 @@ export const useTicketActions = ({
     }, [printTicketData, currentAccountNum, cart, total, currentUser, selectedTerminal]);
 
     // --- Acción principal de Tickets (SOLO para acciones EXPLÍCITAS: OPEN o PAID) ---
+    // v7.0.3: Contrato de resultado discriminado.
+    // outcome: 'success'   → el ticket quedó persistido y verificado en el servidor
+    //          'aborted'   → no se persistió (vacío, sin pago, error de negocio, verificación fallida)
+    //          'navigated' → se abrió otra pantalla (checkout) sin persistir
+    //          'not_finalized' → se persistió pero finalizeUI=false (no se limpió la UI)
+    // reason: string opcional para diagnóstico/tests (ej. 'empty_cart', 'already_paid')
     const handleTicketAction = async (status, paymentData = null, finalizeUI = true) => {
         // Adquirir Lock Mutex para evitar self-collisions
         const previousPromise = actionMutexRef.current;
@@ -127,13 +133,13 @@ export const useTicketActions = ({
             if (liveCart.length === 0) {
                 setToastMessage("⚠️ El ticket está vacío.");
                 setTimeout(() => setToastMessage(null), 3000);
-                return;
+                return { outcome: 'aborted', reason: 'empty_cart' };
             }
             
             // Si no hay datos de pago y se intenta cobrar, abrir pantalla de pago
             if (status === 'PAID' && (!paymentData || paymentData.length === 0)) {
                 setShowCheckout(true);
-                return;
+                return { outcome: 'navigated', reason: 'checkout_opened' };
             }
 
             // Loading visual para envío al Pizarrón
@@ -194,7 +200,7 @@ export const useTicketActions = ({
                         // Folio ya pagado — informar al cajero claramente
                         setToastMessage(`⚠️ El folio ${targetAccountNum} ya fue cobrado. Recupere la cuenta del Pizarrón o inicie una nueva.`);
                         setTimeout(() => setToastMessage(null), 8000);
-                        return;
+                        return { outcome: 'aborted', reason: 'already_paid' };
 
                     } else if (errorMessage.includes("Conflicto de versión")) {
                         // AUTO-HEAL: Descargar versión fresca del servidor
@@ -229,7 +235,8 @@ export const useTicketActions = ({
                                     requestAnimationFrame(() => {
                                         isRecoveringRef.current = false;
                                     });
-                                    return; // Abortar — el usuario puede reintentar con datos frescos
+                                    // Abortar — el usuario puede reintentar con datos frescos
+                                    return { outcome: 'aborted', reason: 'version_conflict_autoheal' };
                                 }
                             } catch (e) {
                                 console.error("Error auto-recovering ticket", e);
@@ -267,13 +274,15 @@ export const useTicketActions = ({
                                     console.error('⚠️ VERIFICACIÓN FALLÓ: El ticket no se encontró en el servidor después de guardarlo');
                                     setToastMessage('⚠️ ¡ATENCIÓN! El envío pareció exitoso pero el ticket NO se encontró en el servidor. NO se limpió el carrito. Intente de nuevo.');
                                     setTimeout(() => setToastMessage(null), 10000);
-                                    return; // NO limpiar el carrito — el ticket puede no haberse guardado
+                                    // NO limpiar el carrito — el ticket puede no haberse guardado
+                                    return { outcome: 'aborted', reason: 'verification_failed' };
                                 }
                             } catch (verifyErr) {
                                 console.error('⚠️ Error verificando ticket post-envío:', verifyErr);
                                 setToastMessage('⚠️ No se pudo verificar el envío. El carrito NO se limpió por seguridad. Intente de nuevo.');
                                 setTimeout(() => setToastMessage(null), 10000);
-                                return; // NO limpiar — mejor seguro que perder datos
+                                // NO limpiar — mejor seguro que perder datos
+                                return { outcome: 'aborted', reason: 'verification_error' };
                             }
                         }
 
@@ -298,8 +307,13 @@ export const useTicketActions = ({
                             setToastMessage('📌 Cuenta guardada en el Pizarrón exitosamente. ✅ Verificado.');
                             setTimeout(() => setToastMessage(null), 3000);
                         }
+                        return { outcome: 'success', reason: status === 'PAID' ? 'paid' : 'sent_to_pizarron' };
                     }
+                    // finalizeUI=false: se persistió pero NO se limpió la UI (uso interno)
+                    return { outcome: 'not_finalized', reason: 'finalize_ui_disabled' };
                 }
+                // finalizeUI=false y sin savedTicket: nada persistido
+                return { outcome: 'not_finalized', reason: 'finalize_ui_disabled' };
             } catch (error) {
                 console.error("Ticket action error:", error);
                 if (finalizeUI) {
