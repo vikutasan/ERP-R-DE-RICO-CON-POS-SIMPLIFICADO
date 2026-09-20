@@ -891,6 +891,68 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿Cada `useEffect` de re-sincronización declara su dependencia correcta (`[cart]`, `[currentAccountNum]`, `[originalCapturer]`, `[ticketVersion]`)? (v21)
 - [ ] ¿El guardián del `useEffect` (describe "v21") limpia los comentarios (`stripJsComments()`) antes de aseverar? (v21)
 - [ ] ¿Las 4 refs re-sincronizadas son exactamente las 4 que la rama `success` NO limpia manualmente? (v21)
+- [ ] ¿Existe una suite de tests backend (`apps/api/tests/test_pos_*.py`) que cubra las rutas críticas del POS (operaciones atómicas, emergency-save, checkout, ocupación)? (v22)
+- [ ] ¿Los tests capturan los IDs de los fixtures (`producto.id`, `sesion.id`) ANTES de la primera llamada al servicio, para evitar `MissingGreenlet` por el `db.expire_all()` de `add_item_to_ticket`? (v22)
+- [ ] ¿El test del outbox (`test_01_checkout_paid_no_crea_warehouse_event_bug_d28`) documenta el bug D28 (outbox muerto) y asevera `ev is None`? (v22)
+- [ ] ¿El test del fallback de emergency-save asevera que se usó ALGUNA sesión activa (sin depender del `ORDER BY` ausente)? (v22)
+- [ ] ¿El test de D19 (`test_04`) documenta que D19 fue REFUTADO (`expire_on_commit=False`) y asevera que NO lanza? (v22)
+- [ ] ¿Cada una de las 9 mutaciones (M1-M9) del plan v22.7 fue verificada empíricamente como ROJA y luego revertida? (v22)
+- [ ] ¿Las mutaciones M7 y M9 fueron CORREGIDAS porque las originales eran falsos verdes (D30 y D31)? (v22)
+
+---
+
+## 6.1 v22 — SUITE DE TESTS BACKEND DEL POS (CRÍTICO 1)
+
+> **Contexto:** El diagnóstico CRÍTICO 1 reveló que el backend del POS (`service.py`, 1021 líneas, 27 métodos) tenía **0 tests** para sus rutas críticas, mientras el frontend tenía 557. La v22 cierra esa brecha con **33 tests** en 4 archivos, ejecutados contra la BD de desarrollo real dentro del contenedor `rderico-api-dev`.
+
+### 6.1.1 Los 4 archivos de test
+
+| Archivo | FASE | Tests | Cubre |
+|---------|------|-------|-------|
+| `apps/api/tests/test_pos_atomic_ops.py` | 1 | 14 | `add_item_to_ticket`, `update_item_quantity`, `remove_item_from_ticket` (DRAFT, versión, 409, 400, 404) |
+| `apps/api/tests/test_pos_emergency_save.py` | 2 | 6 | `POST /pos/tickets/emergency-save` (éxito, idempotencia, fallback, error interno) |
+| `apps/api/tests/test_pos_checkout.py` | 3 | 7 | `create_ticket` PAID/OPEN/DRAFT, outbox, puente PEDIDO→Order, DRAFT GUARD |
+| `apps/api/tests/test_pos_occupancy.py` | 4 | 6 | `lock_terminal`, `unlock_terminal`, `force_unlock`, `heartbeat`, TTL |
+
+**Comando de ejecución:**
+```
+docker exec rderico-api-dev python -m pytest tests/test_pos_atomic_ops.py tests/test_pos_emergency_save.py tests/test_pos_checkout.py tests/test_pos_occupancy.py -v --no-header -p no:cacheprovider
+```
+**Resultado:** `33 passed in 7.72s`.
+
+### 6.1.2 Defectos descubiertos empíricamente durante la ejecución
+
+| ID | Defecto | Evidencia | Resolución en los tests |
+|----|---------|-----------|--------------------------|
+| **D27** | `add_item_to_ticket` llama `db.expire_all()` ([`service.py:441`](apps/api/modules/pos/service.py:441)) antes de retornar, expirando los fixtures. Acceder a `producto_activo.id` después dispara un lazy-load fuera del greenlet → `MissingGreenlet`. | 6 tests fallaron con `MissingGreenlet` | Capturar `pid = producto_activo.id; sid = sesion_activa.id` ANTES de la primera llamada al servicio |
+| **D28** | El outbox ([`service.py:46-54`](apps/api/modules/pos/service.py:46)) accede a `item.product.sku`, pero los `TicketItem` se crean solo con `product_id` (sin la relación `product` cargada) → lazy-load → `MissingGreenlet` silenciado por `except Exception: pass`. **El puente POS→Almacenes está MUERTO en `create_ticket`.** | `test_01` falló: se esperaba `ev is None` pero el test original asumía que sí se creaba | `test_01_checkout_paid_no_crea_warehouse_event_bug_d28` documenta el bug y asevera `ev is None` |
+| **D29** | El fallback de `emergency_save` ([`router.py:474-477`](apps/api/modules/pos/router.py:474)) hace `select(TerminalSession).where(is_active==True).limit(1)` **sin `ORDER BY`**. Con 7 sesiones activas devuelve la id=1, no la del test. | `test_05` falló al aseverar una sesión específica | El test asevera que se usó ALGUNA sesión activa (no una específica) |
+| **D19 (refutado)** | El plan v22.5 asumía que `db_ticket.id` se perdía tras `_sync_order_from_ticket` (por `expire_on_commit=True`). **FALSO:** [`core/database.py:16`](apps/api/core/database.py:16) define `expire_on_commit=False`. | `test_04` pasó sin el "fix" | `test_04` documenta que D19 fue REFUTADO y asevera que NO lanza |
+
+### 6.1.3 Las 9 mutaciones (verificación de que los guardianes son reales)
+
+Cada mutación modifica **código de producción** y el test guardián debe volver ROJO. Todas fueron revertidas tras verificar.
+
+| # | Mutación | Archivo:línea | Test | Resultado |
+|---|----------|---------------|------|-----------|
+| M1 | Comentar la validación de versión | `service.py:395` | `test_05` (FASE 1) | ✅ ROJO (`DID NOT RAISE HTTPException`) |
+| M2 | `status="DRAFT"` → `"OPEN"` | `service.py:385` | `test_01` (FASE 1) | ✅ ROJO (`assert 'OPEN' == 'DRAFT'`) |
+| M3 | `version=1` → `version=99` | `service.py:386` | `test_01` (FASE 1) | ✅ ROJO (`assert 100 == 2`) |
+| M4 | Comentar el recálculo de total | `service.py:433` | `test_03` (FASE 1) | ✅ ROJO (`assert 0.0 == 50.0`) |
+| M5 | Comentar el DRAFT GUARD | `service.py:113-125` | `test_03` (FASE 3) | ✅ ROJO (`DID NOT RAISE HTTPException`) |
+| M6 | `lock_terminal` siempre `True` | `occupancy.py:62` | `test_02` (FASE 4) | ✅ ROJO (`assert True is False`) |
+| M7 | Guard del outbox `== "PAID"` → `!= "PAID"` | `service.py:46` | `test_05` (FASE 3) | ⚠️ **FALSO VERDE** → corregida (ver D30) |
+| M8 | `heartbeat` devuelve `False` sin renovar | `occupancy.py:119-122` | `test_06` (FASE 4) | ✅ ROJO (`assert False is True`) |
+| M9 | "Arreglar" el bug capturando `ticket_id` antes del sync | `service.py:59-62` | `test_04` (FASE 3) | ⚠️ **FALSO VERDE** → corregida (ver D31) |
+
+### 6.1.4 Defectos en el PROCEDIMIENTO de mutación (D30 y D31)
+
+| ID | Defecto | Causa raíz | Corrección aplicada |
+|----|---------|------------|---------------------|
+| **D30** | M7 (invertir el guard del outbox) NO puso rojo ningún test. | **D28 lo enmascara:** como el outbox está muerto, no se crea `WarehouseEvent` con ningún guard. La mutación es inobservable. | La M7 corregida **primero arregla D28** (pre-carga el mapa de SKUs con un `select(Product)` batch) **y luego** invierte el guard. Así el guard se vuelve observable y `test_05` pasa a ROJO (`assert <WarehouseEvent> is None`). |
+| **D31** | M9 ("arreglar" el bug capturando `ticket_id` antes del sync) NO puso rojo ningún test. | **D19 fue refutado:** con `expire_on_commit=False`, `db_ticket.id` nunca se pierde, así que capturarlo antes o después es indistinto. La mutación es inobservable. | La M9 corregida **introduce el bug que D19 predijo**: añade `db.expire(db_ticket)` tras el sync, forzando la pérdida del `id`. Así `test_04` pasa a ROJO (`MissingGreenlet`). |
+
+> **Lección (v22.7 §12.3):** Una mutación que no pone rojo un test **no prueba que el test sea inútil** — puede probar que la mutación es inobservable porque otro defecto (D28) la enmascara o porque la premisa del bug (D19) era falsa. La corrección correcta es **hacer observable la mutación**, no descartar el test.
 
 ---
 
@@ -914,6 +976,6 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 
 > **Esta es la FUENTE ÚNICA DE VERDAD de la v7.0.3.**
 > El POS de R de Rico es un monumento a la evolución: construimos sistemas complejos para sobrevivir, aprendimos que la complejidad causaba errores, y los sustituimos por simplicidad atómica robusta.
-> La v6.1 agregó verificación post-envío y bloqueo visual sin conexión. La v7.0 optimizó el rendimiento eliminando JOINs innecesarios en operaciones de alta frecuencia. La v7.0.1 igualó la resiliencia de las 3 operaciones atómicas con retries simétricos. La v7.0.2 cerró las últimas vulnerabilidades: auto-reconciliación post-fallo, `withRetries` DRY centralizado, y retries inteligentes en el checkout. La v7.0.3 blindó el Modal de Salida con un **contrato de resultado discriminado** (`{ outcome, reason }`): ya no se asume que "no lanzar excepción" equivale a éxito, el force logout persiste el carrito vía `sendBeacon`, y el endpoint de emergencia asocia el ticket a la terminal correcta.
+> La v6.1 agregó verificación post-envío y bloqueo visual sin conexión. La v7.0 optimizó el rendimiento eliminando JOINs innecesarios en operaciones de alta frecuencia. La v7.0.1 igualó la resiliencia de las 3 operaciones atómicas con retries simétricos. La v7.0.2 cerró las últimas vulnerabilidades: auto-reconciliación post-fallo, `withRetries` DRY centralizado, y retries inteligentes en el checkout. La v7.0.3 blindó el Modal de Salida con un **contrato de resultado discriminado** (`{ outcome, reason }`): ya no se asume que "no lanzar excepción" equivale a éxito, el force logout persiste el carrito vía `sendBeacon`, y el endpoint de emergencia asocia el ticket a la terminal correcta. La v22 cerró el **CRÍTICO 1**: el backend del POS pasó de 0 a **33 tests** en 4 archivos, verificados con 9 mutaciones; en el proceso se descubrieron empíricamente D27 (`expire_all`), D28 (outbox muerto), D29 (fallback sin `ORDER BY`) y se refutó D19 (`expire_on_commit=False`).
 >
 > *Tu trabajo como IA no es reintroducir la complejidad antigua, sino proteger y expandir esta simplicidad.*
