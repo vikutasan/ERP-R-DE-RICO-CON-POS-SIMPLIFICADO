@@ -513,6 +513,58 @@ React.useEffect(() => { cartRef.current = cart; }, [cart]);
 
 **Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`. Los artefactos de proceso (plan v19 y sus 4 revisiones críticas) fueron **eliminados del repositorio** tras la ejecución, ya que su contenido quedó absorbido por esta documentación (mismo criterio que la limpieza de v13-v18).
 
+## 3.6. INCIDENTE v20 — GUARDIÁN DE SIMETRÍA DE LA APLICACIÓN DEL PATCH
+
+**Contexto:** Tras v19, la deuda residual "frágil por acumulación" seguía teniendo un componente vivo: `buildResetPatch()` centraliza los **VALORES** de la limpieza, pero cada una de las **4 rutas de salida** los **APLICA** a mano (11 setters + refs). Añadir una clave a `RESET_PATCH_KEYS` exige recordar aplicarla en las 4 rutas; nada lo garantizaba.
+
+**Dos opciones evaluadas (con revisión crítica previa a tocar código):**
+
+| Opción | Descripción | Veredicto de la revisión crítica |
+|--------|-------------|----------------------------------|
+| **B** | Crear `applyResetPatch()` y aplicarlo a las 3 rutas de `RetailVisionPOS.jsx` (dejar la rama `success` intacta). | **RECHAZADO** — 2 defectos **fatales**: (D1) rompe **11 aserciones** en 2 archivos de test que verifican la presencia literal de `setXxx(patch.xxx)` en el código fuente; (D2) el test de equivalencia resultaba irrealizable sin un harness. |
+| **A** | **Guardián de simetría**: un test que verifica que las 4 rutas aplican el mismo conjunto de setters derivado de `RESET_PATCH_KEYS`. **Aditivo**: no toca código de producción. | **APROBADO CON CORRECCIONES** — 0 fatales. |
+
+**Decisión:** Opción A. 90% del beneficio (detecta la desincronización), 10% del coste (un test), **cero riesgo** de romper tests existentes.
+
+**Solución implementada (v20 — guardián aditivo, 4 fases):**
+
+- **Fase 0 — Reproducción (BLOQUEANTE):** HEAD verificado = `b9cc796`. Baseline: **546 tests** (19 archivos). Se añadió el `describe` "v20" a [`architecture.test.js`](apps/pos/state/architecture.test.js) con **6 tests**.
+  - **Hallazgo de la prueba de mutación (defecto del propio guardián):** la primera versión usaba `toContain` sobre el bloque **crudo**. Al comentar temporalmente `setPendingExitAction(patch.pendingExitAction)` con `//`, el substring **seguía presente en el comentario** y el test **PASABA** (falso verde). Se corrigió añadiendo el helper `stripJsComments()` (elimina `//` y `/* */`) y aplicándolo a cada bloque extraído. **Re-ejecutada la mutación: el guardián FALLÓ** con el mensaje exacto `Ruta handleExitWithoutSaving (RetailVisionPOS.jsx): falta aplicar setPendingExitAction(patch.pendingExitAction)`. Rojo verificado por ejecución.
+- **Fase 1 — Verificación:** Mutación revertida → **552 tests** verdes (546 + 6 nuevos). `npm run build` → **built in 9.27s**, sin errores.
+- **Fase 2 — Documentación:** Esta sección, la Regla 20 y los ítems del checklist.
+- **Fase 3 — Respaldo:** Commit y push a GitHub.
+
+**Cómo funciona el guardián (algoritmo):**
+```js
+function setterNameFor(key) {
+    return 'set' + key.charAt(0).toUpperCase() + key.slice(1);
+}
+const REF_KEYS = { savedTicket: 'savedTicketRef' };
+for (const key of RESET_PATCH_KEYS) {
+    if (REF_KEYS[key]) {
+        expect(block).toContain(`${REF_KEYS[key]}.current = null`);
+    } else {
+        expect(block).toContain(`${setterNameFor(key)}(patch.${key})`);
+    }
+}
+```
+El guardián lee **dos archivos** (`RetailVisionPOS.jsx` para 3 rutas + `useTicketActions.js` para la rama `success`) y verifica **6 invariantes**: (1) las 4 rutas se localizan; (2) las 4 parten de `buildResetPatch()`; (3) las 4 aplican los **11 setters**; (4) las 4 limpian `savedTicketRef`; (5) `RESET_PATCH_KEYS` tiene 12 claves (11 setters + 1 ref); (6) **anti-regresión**: ninguna ruta aplica un setter ajeno al patch.
+
+**¿Por qué el guardián verifica SETTERS pero solo 1 ref?** Porque la asimetría A3 (v19) es una inconsistencia de **estilo aceptada**: la rama `success` aplica 1 ref y las otras 3 aplican 5, pero el `useEffect` de re-sincronización ([`RetailVisionPOS.jsx:95`](apps/pos/RetailVisionPOS.jsx:95)) limpia las demás automáticamente. El único ref que las 4 rutas **deben** limpiar explícitamente es `savedTicketRef`.
+
+**Evidencia de aceptación:**
+- `npx vitest run` → **552 passed** (19 archivos), frente a **546** del baseline (+6 tests).
+- `npm run build` → **built in 9.27s**, sin errores.
+- **Prueba de mutación:** mutar 1 setter → guardián **ROJO** (mensaje preciso); revertir → **VERDE**.
+- **Diff limpio:** solo `architecture.test.js` (+6 tests + helper `stripJsComments`). **Cero cambios en código de producción.**
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que todo guardián basado en `toContain` sobre código fuente **elimine los comentarios** antes de aseverar. Un substring dentro de un comentario produce un **falso verde** (verificado empíricamente en v20).
+- **LECCIÓN DE PROCESO:** la revisión crítica **previa** a tocar código evitó ejecutar la Opción B, que habría roto 11 aserciones. El protocolo (plan → revisión → reformular) demostró su valor: el coste de la revisión fue mínimo frente al coste de romper 11 tests.
+- **LECCIÓN DE ALCANCE:** ante una deuda de "frágil por acumulación", un **guardián aditivo** (que detecta la desincronización sin refactorizar) ofrece la mayor parte del beneficio con **cero riesgo** sobre la ruta crítica.
+
+**Archivos involucrados:** `apps/pos/state/architecture.test.js` (único archivo modificado). Los artefactos de proceso (plan v20 y su revisión crítica) fueron **eliminados del repositorio** tras la ejecución, ya que su contenido quedó absorbido por esta documentación (mismo criterio que la limpieza de v13-v19).
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
@@ -651,6 +703,17 @@ La limpieza del estado de sesión del POS **debe** hacerse **exclusivamente** a 
 - ⛔ PROHIBIDO: Reintroducir "espejos" manuales de limpieza. Fueron la causa raíz de la asimetría A2 (la rama `success` no limpiaba `savedTicketRef`/`showExitModal`/`pendingExitAction`).
 
 **¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado. El v18 cerró el último hueco (A6): `handleForceLogout` limpiaba implícitamente vía desmontaje; ahora lo hace por contrato explícito. El v19 depuró la última redundancia (R1): `doTerminalExit` duplicaba el borrado de `pos_cart_` que `clearCart()` ya realiza; se eliminó. La asimetría A3 se documentó como inconsistencia de estilo aceptada (no un bug), evitando tocar la ruta crítica de cada venta por simetría estética.
+
+### ⚡ REGLA 20: Guardián de Simetría de la Aplicación del Patch (v20)
+`buildResetPatch()` centraliza los **VALORES**, pero cada ruta los **APLICA** a mano. Para que la desincronización no pase inadvertida, **debe** existir un guardián que verifique que las **4 rutas** aplican el **mismo conjunto** de setters derivado de `RESET_PATCH_KEYS`.
+- ✅ OBLIGATORIO: El guardián deriva los setters de `RESET_PATCH_KEYS` (no los escribe a mano): `setterNameFor(key) = 'set' + key[0].toUpperCase() + key.slice(1)`.
+- ✅ OBLIGATORIO: El guardián cubre las **4 rutas** leyendo **2 archivos**: [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx) (`doTerminalExit`, `handleExitWithoutSaving`, `handleForceLogout`) y [`useTicketActions.js`](apps/pos/hooks/useTicketActions.js) (rama `success`).
+- ✅ OBLIGATORIO: El guardián verifica los **11 setters** en las 4 rutas, y el ref `savedTicketRef` (el único que las 4 deben limpiar explícitamente). La asimetría A3 (1 ref vs 5) se respeta: NO se exigen los otros 4 refs.
+- ✅ OBLIGATORIO: El guardián incluye un test **anti-regresión**: ninguna ruta aplica un setter **ajeno** al patch.
+- ✅ OBLIGATORIO (v20): Todo guardián basado en `toContain` sobre código fuente **debe eliminar los comentarios** (`//` y `/* */`) antes de aseverar. Un substring dentro de un comentario produce un **falso verde**. Helper: `stripJsComments()` en [`architecture.test.js`](apps/pos/state/architecture.test.js).
+- ⛔ PROHIBIDO: Refactorizar las rutas a un helper `applyResetPatch()` sin un defecto funcional demostrado. La Opción B fue **RECHAZADA** en v20: rompía 11 aserciones de 2 archivos de test. El guardián es **aditivo** (no toca código de producción).
+
+**¿Por qué?** El guardián cierra el último resquicio de "frágil por acumulación": si alguien añade una clave a `RESET_PATCH_KEYS` y olvida aplicarla en una ruta, el test falla con un mensaje que nombra la ruta, el archivo y el setter faltante. Es la mayor parte del beneficio de un refactor, con **cero riesgo** sobre la ruta crítica. La lección del falso verde (v20) es transversal: **cualquier aserción textual sobre código fuente debe ignorar los comentarios**.
 
 ---
 
@@ -809,6 +872,10 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿`doTerminalExit` NO duplica el borrado de `pos_cart_` (lo hace `clearCart()`)? (v19)
 - [ ] ¿`doTerminalExit` SÍ borra `pos_session_` y sigue llamando a `clearCart()`? (v19)
 - [ ] ¿La asimetría A3 sigue documentada como inconsistencia de estilo aceptada (no se "corrigió" la rama `success`)? (v19)
+- [ ] ¿El guardián de simetría (describe "v20") sigue verde y cubre las 4 rutas (3 en `RetailVisionPOS.jsx` + rama `success` en `useTicketActions.js`)? (v20)
+- [ ] ¿El guardián deriva los setters de `RESET_PATCH_KEYS` (no los escribe a mano) y verifica los 11 setters en las 4 rutas? (v20)
+- [ ] ¿El guardián limpia los comentarios (`stripJsComments()`) antes de aseverar, para evitar falsos verdes? (v20)
+- [ ] ¿Ninguna ruta aplica un setter ajeno al patch (test anti-regresión)? (v20)
 
 ---
 

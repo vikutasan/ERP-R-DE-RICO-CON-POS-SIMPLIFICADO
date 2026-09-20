@@ -37,6 +37,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RESET_PATCH_KEYS } from './sessionReset.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..', '..');
@@ -109,6 +110,31 @@ function liveCodeLines(source) {
 
         out.push(rawLine);
     }
+    return out;
+}
+
+/**
+ * v20 — Elimina comentarios de JavaScript (`//` y `/* ... *​/`) para que las
+ * aserciones `toContain` solo vean CÓDIGO VIVO.
+ *
+ * MOTIVO (hallazgo de la prueba de mutación de v20):
+ *   La primera versión del guardián usaba `toContain` sobre el bloque crudo.
+ *   Al comentar temporalmente `setPendingExitAction(patch.pendingExitAction)`
+ *   con `//`, el substring SEGUÍA presente en el comentario y el test PASABA
+ *   (falso verde). Este helper cierra ese agujero.
+ *
+ * LIMITACIÓN CONOCIDA: no es un parser. No maneja `//` dentro de strings
+ * (p. ej. `'http://...'`) ni regex literales. Para este repo (los bloques de
+ * limpieza no contienen URLs ni regex) es suficiente. Es un detector de humo.
+ */
+function stripJsComments(source) {
+    // 1) Elimina comentarios de bloque (multilínea).
+    let out = source.replace(/\/\*[\s\S]*?\*\//g, '');
+    // 2) Elimina comentarios de línea, preservando el salto de línea.
+    out = out
+        .split('\n')
+        .map(line => line.replace(/\/\/.*$/, ''))
+        .join('\n');
     return out;
 }
 
@@ -401,5 +427,169 @@ describe('Arquitectura POS — v19: doTerminalExit NO duplica la clave del carri
         const block = extractDoTerminalExit(posSource);
         expect(block).not.toBeNull();
         expect(block).toContain('clearCart();');
+    });
+});
+
+/**
+ * v20 — Guardián de SIMETRÍA de la aplicación del patch de limpieza.
+ *
+ * PROBLEMA (frágil por acumulación):
+ *   `buildResetPatch()` (v17) centraliza los VALORES de la limpieza, pero cada
+ *   una de las 4 rutas de salida los APLICA a mano (11 setters + refs). Si en
+ *   el futuro se añade una clave a `RESET_PATCH_KEYS`, es fácil olvidar
+ *   aplicarla en alguna de las 4 rutas → desincronización silenciosa.
+ *
+ * MISIÓN:
+ *   Verificar que las 4 rutas aplican EXACTAMENTE el mismo conjunto de setters
+ *   derivado de `RESET_PATCH_KEYS`. El guardián es ADITIVO: no toca código de
+ *   producción ni modifica tests existentes.
+ *
+ * LAS 4 RUTAS:
+ *   1. doTerminalExit          (RetailVisionPOS.jsx)
+ *   2. handleExitWithoutSaving (RetailVisionPOS.jsx)
+ *   3. handleForceLogout       (RetailVisionPOS.jsx)
+ *   4. rama success            (useTicketActions.js)
+ *
+ * ASIMETRÍA ACEPTADA (v19, A3):
+ *   La rama success aplica SOLO 1 ref (`savedTicketRef`), mientras las otras 3
+ *   aplican 5. NO es un bug: el useEffect de RetailVisionPOS.jsx:95
+ *   (`cartRef.current = cart`) re-sincroniza `cartRef` tras `clearCart()`, y
+ *   `accountNumRef` / `originalCapturerRef` / `ticketVersionRef` se re-sincronizan
+ *   al montar la siguiente cuenta. Por eso este guardián verifica SETTERS
+ *   (simetría estricta) y solo exige el ref `savedTicketRef` (el único que las
+ *   4 rutas deben limpiar explícitamente).
+ *
+ * ALCANCE (best-effort): analiza el TEXTO de los bloques. NO distingue código
+ * muerto. Su valor es el de un detector de humo.
+ */
+describe('Arquitectura POS — v20: las 4 rutas aplican el mismo patch (simetría)', () => {
+    const posSource = readSource(resolve(POS_ROOT, 'RetailVisionPOS.jsx'));
+    const ticketActionsSource = readSource(resolve(POS_ROOT, 'hooks', 'useTicketActions.js'));
+
+    /**
+     * Deriva el nombre del setter a partir de la clave del patch.
+     * `currentAccountNum` -> `setCurrentAccountNum`
+     */
+    function setterNameFor(key) {
+        return 'set' + key.charAt(0).toUpperCase() + key.slice(1);
+    }
+
+    /**
+     * Claves del patch que NO se aplican con un setter sino con una ref.
+     * `savedTicket` -> `savedTicketRef.current = null`
+     */
+    const REF_KEYS = { savedTicket: 'savedTicketRef' };
+
+    /**
+     * Extrae un bloque desde su declaración hasta el cierre `\n    };` y le
+     * quita los comentarios JS (para que `toContain` solo vea código vivo).
+     */
+    function extractBlock(source, declaration) {
+        const start = source.indexOf(declaration);
+        if (start === -1) return null;
+        const end = source.indexOf('\n    };', start);
+        if (end === -1) return null;
+        return stripJsComments(source.slice(start, end + '\n    };'.length));
+    }
+
+    /**
+     * Extrae la rama success de `handleTicketAction` (useTicketActions.js) y le
+     * quita los comentarios JS.
+     * Ancla: desde `const patch = buildResetPatch();` hasta el `return` de
+     * éxito (`return { outcome: 'success'`).
+     */
+    function extractSuccessBranch(source) {
+        const start = source.indexOf('const patch = buildResetPatch();');
+        if (start === -1) return null;
+        const end = source.indexOf("return { outcome: 'success'", start);
+        if (end === -1) return null;
+        return stripJsComments(source.slice(start, end));
+    }
+
+    // Las 4 rutas con su extractor y su archivo de origen.
+    const ROUTES = [
+        {
+            name: 'doTerminalExit',
+            file: 'RetailVisionPOS.jsx',
+            block: extractBlock(posSource, 'const doTerminalExit = async () => {'),
+        },
+        {
+            name: 'handleExitWithoutSaving',
+            file: 'RetailVisionPOS.jsx',
+            block: extractBlock(posSource, 'const handleExitWithoutSaving = () => {'),
+        },
+        {
+            name: 'handleForceLogout',
+            file: 'RetailVisionPOS.jsx',
+            block: extractBlock(posSource, 'const handleForceLogout = () => {'),
+        },
+        {
+            name: 'rama success (handleTicketAction)',
+            file: 'useTicketActions.js',
+            block: extractSuccessBranch(ticketActionsSource),
+        },
+    ];
+
+    // Test 1 (sanidad): las 4 rutas se localizan y no son vacuas.
+    it('1. sanidad: las 4 rutas se localizan y no son vacuas', () => {
+        for (const route of ROUTES) {
+            expect(route.block, `No se encontró la ruta ${route.name} en ${route.file}`).not.toBeNull();
+            expect(route.block.length, `La ruta ${route.name} es sospechosamente corta`).toBeGreaterThan(100);
+        }
+    });
+
+    // Test 2 (contrato): las 4 rutas parten de buildResetPatch().
+    it('2. contrato: las 4 rutas contienen `const patch = buildResetPatch();`', () => {
+        for (const route of ROUTES) {
+            expect(route.block, `Ruta ${route.name}: no parte de buildResetPatch()`)
+                .toContain('const patch = buildResetPatch();');
+        }
+    });
+
+    // Test 3 (simetría — el guardián): cada ruta aplica TODOS los setters.
+    it('3. simetría: cada ruta aplica los 11 setters derivados de RESET_PATCH_KEYS', () => {
+        for (const route of ROUTES) {
+            for (const key of RESET_PATCH_KEYS) {
+                if (REF_KEYS[key]) continue; // se verifica en el Test 4
+                const setter = setterNameFor(key);
+                expect(
+                    route.block,
+                    `Ruta ${route.name} (${route.file}): falta aplicar ${setter}(patch.${key})`
+                ).toContain(`${setter}(patch.${key})`);
+            }
+        }
+    });
+
+    // Test 4 (refs): las 4 rutas limpian explícitamente savedTicketRef.
+    it('4. refs: las 4 rutas limpian savedTicketRef.current = null', () => {
+        for (const route of ROUTES) {
+            expect(
+                route.block,
+                `Ruta ${route.name} (${route.file}): falta savedTicketRef.current = null`
+            ).toContain('savedTicketRef.current = null');
+        }
+    });
+
+    // Test 5 (cobertura): el guardián no es vacuo — cubre las 12 claves.
+    it('5. cobertura: RESET_PATCH_KEYS tiene 12 claves (11 setters + 1 ref)', () => {
+        expect(RESET_PATCH_KEYS.length).toBe(12);
+        const refCount = RESET_PATCH_KEYS.filter(k => REF_KEYS[k]).length;
+        expect(refCount).toBe(1);
+        expect(RESET_PATCH_KEYS.length - refCount).toBe(11);
+    });
+
+    // Test 6 (anti-regresión): ninguna ruta aplica un setter FUERA del patch.
+    it('6. anti-regresión: ninguna ruta aplica un setter ajeno al patch', () => {
+        const allowed = new Set(RESET_PATCH_KEYS.map(setterNameFor));
+        for (const route of ROUTES) {
+            const matches = route.block.match(/set[A-Z]\w*\(patch\.\w+\)/g) || [];
+            for (const call of matches) {
+                const setter = call.slice(0, call.indexOf('('));
+                expect(
+                    allowed.has(setter),
+                    `Ruta ${route.name} (${route.file}): aplica ${call}, que NO está en RESET_PATCH_KEYS`
+                ).toBe(true);
+            }
+        }
     });
 });
