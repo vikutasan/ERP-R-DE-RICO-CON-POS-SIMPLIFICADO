@@ -6,9 +6,11 @@
  * la limpieza vieja sí ponía (o incluye uno que no debía), estos tests fallan.
  *
  * Estrategia: se modela el "estado de sesión" como un objeto plano y se aplican
- * dos reducers:
- *   - `legacyCleanup(state)`  → réplica literal de la limpieza manual v7.0.3.
- *   - `patchedCleanup(state)` → aplica buildResetPatch().
+ * reducers:
+ *   - `legacyCleanup(state)`          → réplica de handleExitWithoutSaving v7.0.3.
+ *   - `legacySuccessCleanup(state)`   → réplica de la rama success ANTES (10 claves).
+ *   - `legacyTerminalExitCleanup(state)` → réplica de doTerminalExit ANTES (3 claves).
+ *   - `patchedCleanup(state)`         → aplica buildResetPatch().
  * Luego se comparan los resultados con toEqual (equivalencia profunda).
  *
  * Ver PLAN_CORRECCION_ESTADO_POS_V17.md FASE 2 y §5 (riesgos).
@@ -18,8 +20,8 @@ import { buildResetPatch } from './sessionReset.js';
 
 /**
  * Estado de sesión de captura "sucio" (como quedaría tras capturar una cuenta).
- * Incluye TODAS las claves que ambas limpiezas tocan, más algunas que NO deben
- * tocarse (para verificar que ninguna de las dos las pisa).
+ * Incluye TODAS las claves que las limpiezas tocan, más algunas que NO deben
+ * tocarse (para verificar que ninguna las pisa).
  */
 function dirtyState() {
     return {
@@ -70,6 +72,7 @@ function legacyCleanup(state) {
 
 /**
  * Limpieza NUEVA: aplica el patch de buildResetPatch().
+ * Es el reducer compartido por las 3 rutas migradas (2a, 2b, 2c).
  */
 function patchedCleanup(state) {
     const patch = buildResetPatch();
@@ -87,6 +90,39 @@ function patchedCleanup(state) {
         savedTicket: patch.savedTicket,
         showExitModal: patch.showExitModal,
         pendingExitAction: patch.pendingExitAction,
+    };
+}
+
+/**
+ * Réplica de la rama success ANTES de v17 (10 claves, sin las 3 asimétricas).
+ */
+function legacySuccessCleanup(state) {
+    return {
+        ...state,
+        originalCapturer: null,
+        currentAccountNum: '',
+        ticketVersion: null,
+        orderData: null,
+        orderType: 'VENTA_DIRECTA',
+        lastSaveStatus: 'idle',
+        lastSaveTime: null,
+        showCheckout: false,
+        paymentsHistory: [],
+        // NO limpia: savedTicket, showExitModal, pendingExitAction
+    };
+}
+
+/**
+ * Réplica de doTerminalExit ANTES de v17 (solo 3 claves a mano).
+ */
+function legacyTerminalExitCleanup(state) {
+    return {
+        ...state,
+        currentAccountNum: '',
+        originalCapturer: null,
+        // NO limpia: ticketVersion, orderData, orderType, lastSaveStatus,
+        // lastSaveTime, showCheckout, paymentsHistory, savedTicket,
+        // showExitModal, pendingExitAction
     };
 }
 
@@ -132,63 +168,17 @@ describe('FASE 2a — Equivalencia de handleExitWithoutSaving (v17)', () => {
 
     it('el patch NO muta el estado de entrada (pureza)', () => {
         const input = dirtyState();
-        const snapshot = JSON.parse(JSON.stringify({
-            ...input,
-            originalCapturer: input.originalCapturer,
-            orderData: input.orderData,
-            paymentsHistory: input.paymentsHistory,
-            savedTicket: input.savedTicket,
-        }));
         patchedCleanup(input);
         // El objeto de entrada no cambió.
         expect(input.currentAccountNum).toBe('A-123');
         expect(input.showExitModal).toBe(true);
         expect(input.paymentsHistory).toEqual([{ id: 1, amount: 100 }]);
         expect(input.savedTicket).toEqual({ id: 99, status: 'OPEN' });
-        expect(input.originalCapturer).toEqual(snapshot.originalCapturer);
+        expect(input.originalCapturer).toEqual({ id: 7, name: 'Ana' });
     });
 });
 
 describe('FASE 2b — La rama success AHORA limpia la asimetría (v17)', () => {
-    /**
-     * Modela la limpieza de la rama success ANTES (10 claves, sin las 3 asimétricas)
-     * y DESPUÉS (con el patch completo).
-     */
-    function legacySuccessCleanup(state) {
-        return {
-            ...state,
-            originalCapturer: null,
-            currentAccountNum: '',
-            ticketVersion: null,
-            orderData: null,
-            orderType: 'VENTA_DIRECTA',
-            lastSaveStatus: 'idle',
-            lastSaveTime: null,
-            showCheckout: false,
-            paymentsHistory: [],
-            // NO limpia: savedTicket, showExitModal, pendingExitAction
-        };
-    }
-
-    function patchedSuccessCleanup(state) {
-        const patch = buildResetPatch();
-        return {
-            ...state,
-            originalCapturer: patch.originalCapturer,
-            currentAccountNum: patch.currentAccountNum,
-            ticketVersion: patch.ticketVersion,
-            orderData: patch.orderData,
-            orderType: patch.orderType,
-            lastSaveStatus: patch.lastSaveStatus,
-            lastSaveTime: patch.lastSaveTime,
-            showCheckout: patch.showCheckout,
-            paymentsHistory: patch.paymentsHistory,
-            savedTicket: patch.savedTicket,
-            showExitModal: patch.showExitModal,
-            pendingExitAction: patch.pendingExitAction,
-        };
-    }
-
     it('ANTES: la rama success dejaba 3 residuos (reproduce la asimetría)', () => {
         const before = legacySuccessCleanup(dirtyState());
         expect(before.savedTicket).toEqual({ id: 99, status: 'OPEN' }); // residuo
@@ -197,15 +187,44 @@ describe('FASE 2b — La rama success AHORA limpia la asimetría (v17)', () => {
     });
 
     it('DESPUÉS: la rama success ya no deja residuos (corrige la asimetría)', () => {
-        const after = patchedSuccessCleanup(dirtyState());
+        const after = patchedCleanup(dirtyState());
         expect(after.savedTicket).toBeNull();
         expect(after.showExitModal).toBe(false);
         expect(after.pendingExitAction).toBeNull();
     });
 
     it('DESPUÉS: la rama success limpia igual que handleExitWithoutSaving', () => {
-        const success = patchedSuccessCleanup(dirtyState());
+        const success = patchedCleanup(dirtyState());
         const exitWithoutSaving = patchedCleanup(dirtyState());
         expect(success).toEqual(exitWithoutSaving);
+    });
+});
+
+describe('FASE 2c — doTerminalExit unifica el contrato (v17)', () => {
+    it('ANTES: doTerminalExit dejaba 10 residuos (contrato incompleto)', () => {
+        const before = legacyTerminalExitCleanup(dirtyState());
+        expect(before.ticketVersion).toBe(3);              // residuo
+        expect(before.orderData).not.toBeNull();           // residuo
+        expect(before.paymentsHistory).toHaveLength(1);    // residuo
+        expect(before.savedTicket).not.toBeNull();         // residuo
+        expect(before.showExitModal).toBe(true);           // residuo
+    });
+
+    it('DESPUÉS: doTerminalExit limpia el mismo conjunto que las demás rutas', () => {
+        const terminalExit = patchedCleanup(dirtyState());
+        const exitWithoutSaving = patchedCleanup(dirtyState());
+        const success = patchedCleanup(dirtyState());
+
+        // Las 3 rutas producen el MISMO estado final.
+        expect(terminalExit).toEqual(exitWithoutSaving);
+        expect(terminalExit).toEqual(success);
+    });
+
+    it('DESPUÉS: doTerminalExit preserva el estado fuera de alcance', () => {
+        const result = patchedCleanup(dirtyState());
+        expect(result.cart).toEqual([{ id: 1, quantity: 2 }]);
+        expect(result.categories).toEqual([{ id: 'pan' }]);
+        expect(result.printTicketData).toEqual({ folio: 'X' });
+        expect(result.viewMode).toBe('grid');
     });
 });

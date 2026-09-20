@@ -352,11 +352,29 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
             await posService.unlockTerminal(selectedTerminal, currentUser?.id);
         } catch(e) { console.error("Could not unlock terminal", e); }
         try {
+            // v17: unifica el contrato de limpieza con buildResetPatch() (fuente única).
+            // Antes esta ruta limpiaba solo 3 valores a mano; ahora limpia el mismo
+            // conjunto que las demás rutas de salida. Las REFS se sincronizan a mano.
+            const patch = buildResetPatch();
             localStorage.removeItem(`pos_session_${selectedTerminal}`);
             localStorage.removeItem(`pos_cart_${selectedTerminal}`);
             clearCart();
-            setCurrentAccountNum('');
-            setOriginalCapturer(null);
+            cartRef.current = [];
+            accountNumRef.current = '';
+            originalCapturerRef.current = null;
+            ticketVersionRef.current = null;
+            savedTicketRef.current = null;
+            setCurrentAccountNum(patch.currentAccountNum);
+            setOriginalCapturer(patch.originalCapturer);
+            setTicketVersion(patch.ticketVersion);
+            setOrderData(patch.orderData);
+            setOrderType(patch.orderType);
+            setLastSaveStatus(patch.lastSaveStatus);
+            setLastSaveTime(patch.lastSaveTime);
+            setShowCheckout(patch.showCheckout);
+            setPaymentsHistory(patch.paymentsHistory);
+            setShowExitModal(patch.showExitModal);
+            setPendingExitAction(patch.pendingExitAction);
         } catch(e) {}
         setSelectedTerminal(null);
     };
