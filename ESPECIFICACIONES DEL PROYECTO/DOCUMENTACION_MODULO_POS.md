@@ -472,6 +472,47 @@ Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), 
 
 **Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`. Los artefactos de proceso (plan v18 y sus 3 revisiones críticas) fueron **eliminados del repositorio** tras la ejecución, ya que su contenido quedó absorbido por esta documentación (mismo criterio que la limpieza de v13-v17).
 
+---
+
+## 3.5. INCIDENTE v19 — REDUNDANCIA EN `doTerminalExit` Y DECISIÓN SOBRE LA ASIMETRÍA A3
+
+**Contexto:** Tras cerrar el contrato de limpieza en v18 (las 4 rutas aplican `buildResetPatch()`), quedó documentada una **deuda residual** con dos componentes: (a) una **redundancia** en `doTerminalExit`, y (b) una **asimetría** en la rama `success` de `handleTicketAction`. El v19 se abrió para decidir si ambos debían corregirse.
+
+**Hallazgos (verificados empíricamente, no razonados):**
+
+| # | Hallazgo | Severidad | Tipo | Decisión v19 |
+|----|----------|-----------|------|--------------|
+| **R1** | `doTerminalExit` ejecutaba `localStorage.removeItem(\`pos_cart_${selectedTerminal}\`)` **además** de `clearCart()`, que ya borra esa misma clave (`useCart.js`: `removeItem(storageKey)`, `storageKey = pos_cart_${terminalId}`). Redundancia histórica de 1 línea. | Baja (latente) | Defecto real | **CORREGIDO** |
+| **A3** | La rama `success` de `handleTicketAction` aplica **1 ref** (`savedTicketRef`); las otras 3 rutas aplican **5 refs**. | Ninguna | Inconsistencia de **estilo** | **ACEPTADA** (no se corrige) |
+
+**Solución implementada (v19 — alternativa mínima, 4 fases):**
+
+- **Fase 0 — Reproducción (BLOQUEANTE):** HEAD verificado = `1dcbbb9`. Baseline: **541 tests** (19 archivos), build **9.23s**. Se añadieron **5 tests** al `describe` "v19" de [`architecture.test.js`](apps/pos/state/architecture.test.js). **Reconciliación empírica:** el test 3 ("NO duplica la clave del carrito") **FALLÓ** (rojo); los tests 1, 2, 4 y 5 pasaron. Rojo verificado por ejecución, no por razonamiento.
+- **Fase 1 — Corrección:** Se **eliminó la línea redundante** de [`doTerminalExit`](apps/pos/RetailVisionPOS.jsx:349). `clearCart()` sigue siendo la **fuente real** del borrado del carrito; `doTerminalExit` conserva el borrado de `pos_session_` (que `clearCart()` NO toca). Rojo→verde verificado: **546 tests** verdes.
+- **Fase 2 — Documentación de código:** Se añadió una sección v19 al encabezado de [`sessionReset.js`](apps/pos/state/sessionReset.js) que **documenta la asimetría A3 como inconsistencia de estilo ACEPTADA**, con la justificación técnica (el `useEffect` de `RetailVisionPOS.jsx:95` re-sincroniza `cartRef.current = cart` automáticamente tras `clearCart()`).
+- **Fase 4 — Documentación y respaldo:** Este incidente, la actualización de la Regla 19, los ítems del checklist y el respaldo en GitHub.
+
+**¿Por qué la asimetría A3 NO es un bug?** Verificado en [`RetailVisionPOS.jsx:95`](apps/pos/RetailVisionPOS.jsx:95):
+```js
+React.useEffect(() => { cartRef.current = cart; }, [cart]);
+```
+`clearCart()` hace `setCartState(items: [])` → `cart` cambia de referencia → el `useEffect` se dispara → `cartRef.current = []`. Por tanto `cartRef` se limpia **automáticamente** tras `clearCart()`. La rama `success` no necesita escribirlo. Lo mismo aplica a `accountNumRef`/`originalCapturerRef`/`ticketVersionRef`, que tienen sus propios `useEffect` de re-sincronización (l.96-98).
+
+**¿Por qué NO se corrigió la asimetría A3?** Corregirla exigiría tocar la rama `success` — la ruta de **CADA VENTA** — sin beneficio funcional, añadiendo riesgo a la ruta crítica. El único defecto **real** era la redundancia R1 (1 línea), que sí se corrigió.
+
+**Evidencia de aceptación:**
+- `npm test` → **546 passed** (19 archivos), frente a **541** del baseline (+5 tests).
+- `npm run build` → **built in 9.23s**, sin errores.
+- **1 rojo funcional** en Fase 0 (test 3) → **verde** en Fase 1.
+- **Diff limpio:** solo `RetailVisionPOS.jsx` (1 deleción + comentario), `sessionReset.js` (encabezado) y `architecture.test.js` (+5 tests).
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que cada ruta de salida borre **solo** las claves que le corresponden. `clearCart()` es la fuente única del borrado de `pos_cart_`; ninguna ruta debe duplicarlo.
+- **LECCIÓN DE PROCESO (reincidente):** 4 versiones del plan v19 fueron rechazadas por verificar lo mecánico (existencia de símbolos) y **asumir lo semántico** (que un cambio "no tiene impacto funcional"). La lección de v18 ("clasificar un test como rojo→verde debe verificarse ejecutándolo") se extendió a **toda afirmación de impacto**: debe verificarse leyendo el código, no razonarse.
+- **LECCIÓN DE ALCANCE:** ante una deuda residual con un defecto real (R1) y una inconsistencia de estilo (A3), el alcance correcto es **corregir el defecto y documentar la inconsistencia**, no refactorizar la ruta crítica por simetría estética.
+
+**Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`. Los artefactos de proceso (plan v19 y sus 4 revisiones críticas) fueron **eliminados del repositorio** tras la ejecución, ya que su contenido quedó absorbido por esta documentación (mismo criterio que la limpieza de v13-v18).
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
@@ -597,17 +638,19 @@ El checkout (`createTicket`) **debe** tener retries para errores de red, pero **
 
 **¿Por qué?** Sin retries en checkout, agregar una Concha de $8 tiene 3 intentos pero cobrar una cuenta de $2,000 es todo-o-nada al primer intento. Un micro-corte de LAN de 500ms durante el cobro obliga al cajero a presionar “Cobrar” de nuevo manualmente.
 
-### ⚡ REGLA 19: Limpieza Única de Sesión vía `buildResetPatch()` (v17, contrato CERRADO en v18)
+### ⚡ REGLA 19: Limpieza Única de Sesión vía `buildResetPatch()` (v17, contrato CERRADO en v18, depurado en v19)
 La limpieza del estado de sesión del POS **debe** hacerse **exclusivamente** a través de la función pura `buildResetPatch()` de [`apps/pos/state/sessionReset.js`](apps/pos/state/sessionReset.js). **PROHIBIDO** limpiar el estado de sesión a mano en cualquier ruta de salida.
 - ✅ OBLIGATORIO: Toda ruta de salida (`handleExitWithoutSaving`, rama `success` de `handleTicketAction`, `doTerminalExit`, `handleForceLogout`) aplica `buildResetPatch()`. **Las 4 rutas están migradas** (v17: 3 rutas; v18: `handleForceLogout`). `window.requestPOSExit` NO es ruta de limpieza (es interceptor).
 - ✅ OBLIGATORIO: Sincronizar las **refs** explícitamente en cada ruta (`cartRef`, `accountNumRef`, `originalCapturerRef`, `ticketVersionRef`, `savedTicketRef`). `buildResetPatch()` es **pura** y no puede tocarlas: define los VALORES, el llamador los APLICA.
 - ✅ OBLIGATORIO: Todo valor de estado nuevo que deba resetearse se añade a `buildResetPatch()` **y** a `RESET_PATCH_KEYS`. El test de contrato fallará si no.
 - ✅ OBLIGATORIO (v18): Toda ruta de salida limpia **por contrato explícito**, **nunca** confiando en el desmontaje del componente como mecanismo de limpieza. El desmontaje no es un contrato (no está documentado ni testeado).
 - ✅ OBLIGATORIO (v18): En `handleForceLogout`, el beacon de emergencia se construye **antes** de la limpieza, y `onForceLogout()` es la **última** sentencia (el logout del padre es un `setState` asíncrono).
+- ✅ OBLIGATORIO (v19): Cada ruta de salida borra **solo** las claves de `localStorage` que le corresponden. `clearCart()` es la **fuente única** del borrado de `pos_cart_`; **PROHIBIDO** duplicarlo con un `removeItem(\`pos_cart_...\`)` explícito en cualquier ruta. Guardián: `architecture.test.js` (describe "v19").
+- ✅ OBLIGATORIO (v19): La asimetría A3 (la rama `success` aplica 1 ref; las otras 3 aplican 5) se **ACEPTA** como inconsistencia de **estilo**, NO como bug. Está justificada por el `useEffect` de re-sincronización de refs ([`RetailVisionPOS.jsx:95`](apps/pos/RetailVisionPOS.jsx:95)). **PROHIBIDO** "corregirla" tocando la rama `success` sin un defecto funcional demostrado.
 - ⛔ PROHIBIDO: Añadir a `buildResetPatch()` valores de **catálogo** (`categories`, `initialProducts`, `activeCategory`), **carrito** (`cart`, `cartState`), **impresión** (`printTicketData`) o **UI** (`viewMode`, `currentPage`, `showCorkboard`, `allOpenAccounts`, `isCashEnabled`, `showGestorCaja`, `cashSessionId`, `showProgramacion`). Ver `FORBIDDEN_PATCH_KEYS`.
 - ⛔ PROHIBIDO: Reintroducir "espejos" manuales de limpieza. Fueron la causa raíz de la asimetría A2 (la rama `success` no limpiaba `savedTicketRef`/`showExitModal`/`pendingExitAction`).
 
-**¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado. El v18 cerró el último hueco (A6): `handleForceLogout` limpiaba implícitamente vía desmontaje; ahora lo hace por contrato explícito.
+**¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado. El v18 cerró el último hueco (A6): `handleForceLogout` limpiaba implícitamente vía desmontaje; ahora lo hace por contrato explícito. El v19 depuró la última redundancia (R1): `doTerminalExit` duplicaba el borrado de `pos_cart_` que `clearCart()` ya realiza; se eliminó. La asimetría A3 se documentó como inconsistencia de estilo aceptada (no un bug), evitando tocar la ruta crítica de cada venta por simetría estética.
 
 ---
 
@@ -763,6 +806,9 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿`handleForceLogout` aplica `buildResetPatch()` (no confía en el desmontaje)? (v18)
 - [ ] ¿En `handleForceLogout` el beacon se construye ANTES de la limpieza y `onForceLogout()` es la última sentencia? (v18)
 - [ ] ¿`handleForceLogout` borra SOLO la clave de sesión (`pos_session_`), sin duplicar el borrado del carrito (`pos_cart_`)? (v18)
+- [ ] ¿`doTerminalExit` NO duplica el borrado de `pos_cart_` (lo hace `clearCart()`)? (v19)
+- [ ] ¿`doTerminalExit` SÍ borra `pos_session_` y sigue llamando a `clearCart()`? (v19)
+- [ ] ¿La asimetría A3 sigue documentada como inconsistencia de estilo aceptada (no se "corrigió" la rama `success`)? (v19)
 
 ---
 

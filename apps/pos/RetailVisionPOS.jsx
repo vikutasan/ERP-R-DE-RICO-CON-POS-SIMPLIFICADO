@@ -355,9 +355,13 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
             // v17: unifica el contrato de limpieza con buildResetPatch() (fuente única).
             // Antes esta ruta limpiaba solo 3 valores a mano; ahora limpia el mismo
             // conjunto que las demás rutas de salida. Las REFS se sincronizan a mano.
+            //
+            // v19: se ELIMINÓ la línea `localStorage.removeItem(\`pos_cart_${selectedTerminal}\`)`.
+            // Era una redundancia histórica: clearCart() YA borra esa misma clave
+            // (ver useCart.js: localStorage.removeItem(storageKey), storageKey = pos_cart_${terminalId}).
+            // NO duplicar. Guardián: architecture.test.js (describe "v19").
             const patch = buildResetPatch();
             localStorage.removeItem(`pos_session_${selectedTerminal}`);
-            localStorage.removeItem(`pos_cart_${selectedTerminal}`);
             clearCart();
             cartRef.current = [];
             accountNumRef.current = '';

@@ -43,6 +43,34 @@
  *   originalCapturerRef, ticketVersionRef, savedTicketRef). El LLAMADOR debe
  *   sincronizarlas explícitamente. La función define los VALORES; el llamador
  *   los APLICA. Ver §3.3 del plan.
+ *
+ * -----------------------------------------------------------------------------
+ * v19 — DECISIÓN SOBRE LA ASIMETRÍA A3 (documentada, NO corregida)
+ * -----------------------------------------------------------------------------
+ *   ASIMETRÍA A3 (verificada empíricamente en v19):
+ *     - handleExitWithoutSaving  → aplica 5 refs + 11 setters + 1 localStorage = 17
+ *     - rama success             → aplica 1 ref  + 11 setters + 1 localStorage = 13
+ *     - doTerminalExit           → aplica 5 refs + 11 setters + 2 localStorage = 18
+ *     - handleForceLogout        → aplica 5 refs + 11 setters + 1 localStorage = 17
+ *
+ *   La rama success aplica SOLO 1 ref (savedTicketRef); las otras 3 aplican 5.
+ *
+ *   ¿ES UN BUG? NO. Verificado en RetailVisionPOS.jsx:95:
+ *       React.useEffect(() => { cartRef.current = cart; }, [cart]);
+ *   clearCart() hace setCartState(items: []) → `cart` cambia de referencia →
+ *   el useEffect se dispara → cartRef.current = []. Por tanto cartRef se limpia
+ *   AUTOMÁTICAMENTE tras clearCart(). La rama success no necesita escribirlo.
+ *   Lo mismo aplica a accountNumRef/originalCapturerRef/ticketVersionRef, que
+ *   tienen sus propios useEffect de re-sincronización (l.96-98).
+ *
+ *   DECISIÓN v19: la asimetría A3 se ACEPTA como inconsistencia de ESTILO.
+ *   NO se corrige. Razón: corregirla exigiría tocar la rama success (la ruta
+ *   de CADA VENTA) sin beneficio funcional, añadiendo riesgo a la ruta crítica.
+ *   El único defecto REAL era la redundancia de doTerminalExit (1 línea), que
+ *   SÍ se corrigió en v19 (ver RetailVisionPOS.jsx, doTerminalExit).
+ *
+ *   Guardián: architecture.test.js (describe "v19") verifica que doTerminalExit
+ *   NO duplica removeItem(`pos_cart_`).
  */
 
 /**

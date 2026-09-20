@@ -330,3 +330,76 @@ describe('Arquitectura POS — v18: handleForceLogout aplica buildResetPatch() (
         expect(ticketActionsSource).toContain('const patch = buildResetPatch();');
     });
 });
+
+/**
+ * v19 — Guardián de la redundancia de `doTerminalExit`.
+ *
+ * HISTORIA:
+ *   `doTerminalExit` borraba a mano `pos_cart_${selectedTerminal}` (línea 360)
+ *   ANTES de llamar a `clearCart()`. Pero `clearCart()` YA borra esa misma
+ *   clave (ver useCart.js: `localStorage.removeItem(storageKey)` donde
+ *   `storageKey = pos_cart_${terminalId}`). Era una redundancia histórica.
+ *
+ * MISIÓN ACTUAL: garantizar que la redundancia NO reaparezca. Si alguien
+ * vuelve a añadir un `removeItem(\`pos_cart_\`)` en `doTerminalExit`, este
+ * test falla.
+ *
+ * ALCANCE (best-effort): analiza el TEXTO del bloque de `doTerminalExit`.
+ * NO distingue código muerto. Su valor es el de un detector de humo.
+ *
+ * NOTA (v19): este test es la ÚNICA corrección real de v19. La asimetría A3
+ * (la rama success aplica 1 ref, las otras 3 aplican 5) se documenta como
+ * inconsistencia de estilo ACEPTADA, no como bug: el useEffect de
+ * RetailVisionPOS.jsx:95 (cartRef.current = cart) ya re-sincroniza cartRef
+ * tras clearCart(). NO se toca la rama success (ruta de cada venta).
+ */
+describe('Arquitectura POS — v19: doTerminalExit NO duplica la clave del carrito', () => {
+    const posSource = readSource(resolve(POS_ROOT, 'RetailVisionPOS.jsx'));
+
+    /**
+     * Extrae el bloque de `doTerminalExit` desde su declaración hasta el
+     * cierre de la función (`\n    };`).
+     */
+    function extractDoTerminalExit(source) {
+        const start = source.indexOf('const doTerminalExit = async () => {');
+        if (start === -1) return null;
+        const end = source.indexOf('\n    };', start);
+        if (end === -1) return null;
+        return source.slice(start, end + '\n    };'.length);
+    }
+
+    // Test 1 (sanidad): el bloque se localiza y no es vacuo.
+    it('1. sanidad: el bloque de doTerminalExit no es vacuo (length > 100)', () => {
+        const block = extractDoTerminalExit(posSource);
+        expect(block, 'No se encontró doTerminalExit en RetailVisionPOS.jsx').not.toBeNull();
+        expect(block.length).toBeGreaterThan(100);
+    });
+
+    // Test 2 (presencia): sigue aplicando la fuente única de verdad.
+    it('2. presencia: doTerminalExit contiene buildResetPatch()', () => {
+        const block = extractDoTerminalExit(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('const patch = buildResetPatch();');
+    });
+
+    // Test 3 (v19 — el guardián): NO duplica la clave del carrito.
+    it('3. NO duplica la clave del carrito (clearCart() ya la borra)', () => {
+        const block = extractDoTerminalExit(posSource);
+        expect(block).not.toBeNull();
+        expect(block).not.toContain('removeItem(`pos_cart_');
+    });
+
+    // Test 4 (contraste): SÍ borra la clave de sesión (esa NO la borra clearCart).
+    it('4. SÍ borra la clave de sesión (pos_session_)', () => {
+        const block = extractDoTerminalExit(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('removeItem(`pos_session_');
+    });
+
+    // Test 5 (contraste): sigue llamando a clearCart() (que borra pos_cart_).
+    it('5. sigue llamando a clearCart() (fuente real del borrado del carrito)', () => {
+        const block = extractDoTerminalExit(posSource);
+        expect(block).not.toBeNull();
+        expect(block).toContain('clearCart();');
+    });
+});
