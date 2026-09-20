@@ -470,7 +470,7 @@ Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), 
 - **OBLIGATORIO** que `onForceLogout()` sea la **última** sentencia de `handleForceLogout` (el logout del padre es un `setState` asíncrono; un desmontaje síncrono futuro perdería la limpieza).
 - **LECCIÓN DE PROCESO:** la clasificación de un test como rojo→verde debe **verificarse ejecutándolo**, no razonándolo. El plan v18 predijo mal 3 de 8 tests; la ejecución lo corrigió.
 
-**Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`, `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_PLAN_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_V2_PLAN_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_V3_PLAN_ESTADO_POS_V18.md`.
+**Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`. Los artefactos de proceso (plan v18 y sus 3 revisiones críticas) fueron **eliminados del repositorio** tras la ejecución, ya que su contenido quedó absorbido por esta documentación (mismo criterio que la limpieza de v13-v17).
 
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
