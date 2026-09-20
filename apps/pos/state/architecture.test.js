@@ -593,3 +593,101 @@ describe('Arquitectura POS — v20: las 4 rutas aplican el mismo patch (simetrí
         }
     });
 });
+
+/**
+ * Arquitectura POS — v21: guardián del useEffect de re-sincronización de refs.
+ *
+ * CONTEXTO (asimetría A3, aceptada como estilo en v19):
+ *   La rama `success` de `handleTicketAction` (useTicketActions.js) aplica
+ *   buildResetPatch() y limpia explícitamente 1 ref (`savedTicketRef`), pero
+ *   NO las otras 4 refs (`cartRef`, `accountNumRef`, `originalCapturerRef`,
+ *   `ticketVersionRef`) porque no tiene acceso a ellas (viven en
+ *   RetailVisionPOS.jsx y no se le pasan al hook).
+ *
+ *   Esas 4 refs se limpian de forma IMPLÍCITA: al cambiar el state, los 4
+ *   useEffect de re-sincronización (RetailVisionPOS.jsx) copian el nuevo
+ *   valor del state a la ref. Si alguien BORRA o COMENTA esos useEffect, la
+ *   rama `success` deja de limpiar 4 refs EN SILENCIO (fuga de estado entre
+ *   tickets). Este guardián cierra ese riesgo real.
+ *
+ * ALCANCE (best-effort): analiza el TEXTO del bloque de re-sincronización.
+ * No ejecuta React. Es un detector de humo, igual que el guardián de v20.
+ */
+describe('Arquitectura POS — v21: guardián del useEffect de re-sincronización de refs', () => {
+    const posSource = readSource(resolve(POS_ROOT, 'RetailVisionPOS.jsx'));
+
+    /**
+     * Extrae el bloque de los 4 useEffect de re-sincronización y le quita los
+     * comentarios JS (para que `toContain` solo vea código vivo).
+     * Ancla: desde `// --- Mantener refs sincronizadas con state` hasta el
+     * siguiente bloque `// --- v7.0.2`.
+     */
+    function extractRefSyncBlock(source) {
+        const start = source.indexOf('// --- Mantener refs sincronizadas con state');
+        if (start === -1) return null;
+        const end = source.indexOf('// --- v7.0.2', start);
+        if (end === -1) return null;
+        return stripJsComments(source.slice(start, end));
+    }
+
+    // Las 4 refs que la rama success NO limpia manualmente y que dependen del
+    // useEffect. Cada una con su state fuente y su dependencia declarada.
+    const REF_SYNC = [
+        { ref: 'cartRef', state: 'cart' },
+        { ref: 'accountNumRef', state: 'currentAccountNum' },
+        { ref: 'originalCapturerRef', state: 'originalCapturer' },
+        { ref: 'ticketVersionRef', state: 'ticketVersion' },
+    ];
+
+    const block = extractRefSyncBlock(posSource);
+
+    // Test 1 (sanidad): el bloque se localiza y no es vacuo.
+    it('1. sanidad: el bloque de re-sincronización se localiza y no es vacuo', () => {
+        expect(block, 'No se encontró el bloque de useEffect de re-sincronización').not.toBeNull();
+        expect(block.length, 'El bloque de re-sincronización es sospechosamente corto').toBeGreaterThan(100);
+    });
+
+    // Test 2 (existencia): los 4 useEffect existen con su cuerpo exacto.
+    it('2. existencia: los 4 useEffect re-sincronizan su ref con su state', () => {
+        for (const { ref, state } of REF_SYNC) {
+            expect(
+                block,
+                `Falta el useEffect que re-sincroniza ${ref}.current = ${state}`
+            ).toContain(`${ref}.current = ${state};`);
+        }
+    });
+
+    // Test 3 (dependencias): cada useEffect declara la dependencia correcta.
+    it('3. dependencias: cada useEffect declara [state] como dependencia', () => {
+        for (const { ref, state } of REF_SYNC) {
+            expect(
+                block,
+                `El useEffect de ${ref} no declara [${state}] como dependencia`
+            ).toContain(`}, [${state}]);`);
+        }
+    });
+
+    // Test 4 (anti-regresión): el bloque NO está comentado (falso verde de v20).
+    it('4. anti-regresión: el bloque de re-sincronización no está comentado', () => {
+        // stripJsComments() ya eliminó los comentarios; si el bloque estuviera
+        // comentado, las sentencias NO aparecerían en el texto limpio.
+        for (const { ref, state } of REF_SYNC) {
+            expect(
+                block,
+                `El useEffect de ${ref} está comentado o eliminado (falso verde)`
+            ).toContain(`${ref}.current = ${state};`);
+        }
+    });
+
+    // Test 5 (cobertura): las 4 refs re-sincronizadas son exactamente las 4
+    // que la rama success NO limpia manualmente.
+    it('5. cobertura: las 4 refs re-sincronizadas son las 4 que success no limpia', () => {
+        expect(REF_SYNC.length).toBe(4);
+        // La rama success SÍ limpia savedTicketRef manualmente; las otras 4
+        // dependen del useEffect. Si esta lista cambia, el guardián debe
+        // revisarse (acoplamiento implícito documentado en REGLA 21).
+        const refs = REF_SYNC.map(r => r.ref);
+        expect(refs).toEqual(['cartRef', 'accountNumRef', 'originalCapturerRef', 'ticketVersionRef']);
+        expect(refs).not.toContain('savedTicketRef');
+    });
+});

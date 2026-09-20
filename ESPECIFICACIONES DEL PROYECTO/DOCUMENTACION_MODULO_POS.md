@@ -715,6 +715,17 @@ La limpieza del estado de sesión del POS **debe** hacerse **exclusivamente** a 
 
 **¿Por qué?** El guardián cierra el último resquicio de "frágil por acumulación": si alguien añade una clave a `RESET_PATCH_KEYS` y olvida aplicarla en una ruta, el test falla con un mensaje que nombra la ruta, el archivo y el setter faltante. Es la mayor parte del beneficio de un refactor, con **cero riesgo** sobre la ruta crítica. La lección del falso verde (v20) es transversal: **cualquier aserción textual sobre código fuente debe ignorar los comentarios**.
 
+### ⚡ REGLA 21: Guardián del `useEffect` de Re-sincronización de Refs (v21)
+La rama `success` de `handleTicketAction` limpia explícitamente **1 ref** (`savedTicketRef`) pero **NO** las otras 4 (`cartRef`, `accountNumRef`, `originalCapturerRef`, `ticketVersionRef`), porque no tiene acceso a ellas (viven en [`RetailVisionPOS.jsx`](apps/pos/RetailVisionPOS.jsx) y no se le pasan al hook). Esas 4 refs se limpian de forma **implícita** vía los 4 `useEffect` de re-sincronización. Para que ese acoplamiento implícito no se rompa en silencio, **debe** existir un guardián que verifique que los 4 `useEffect` existen y están intactos.
+- ✅ OBLIGATORIO: Los 4 `useEffect` de re-sincronización ([`RetailVisionPOS.jsx:95`](apps/pos/RetailVisionPOS.jsx:95)) **deben** existir, cada uno copiando su state a su ref (`cartRef.current = cart`, `accountNumRef.current = currentAccountNum`, `originalCapturerRef.current = originalCapturer`, `ticketVersionRef.current = ticketVersion`).
+- ✅ OBLIGATORIO: Cada `useEffect` **debe** declarar su dependencia correcta (`[cart]`, `[currentAccountNum]`, `[originalCapturer]`, `[ticketVersion]`). Sin la dependencia, la ref no se re-sincroniza al cambiar el state.
+- ✅ OBLIGATORIO: El guardián **debe** eliminar los comentarios (`stripJsComments()`) antes de aseverar, para evitar el falso verde (lección de v20).
+- ✅ OBLIGATORIO: El guardián **debe** incluir un test de cobertura que verifique que las 4 refs re-sincronizadas son **exactamente** las 4 que la rama `success` NO limpia manualmente (acoplamiento implícito documentado). Si esa lista cambia, el guardián debe revisarse.
+- ⛔ PROHIBIDO: Eliminar o comentar cualquiera de los 4 `useEffect` sin migrar la limpieza de las 4 refs a un mecanismo explícito (p. ej. pasarlas al hook). El guardián fallará (rojo verificado por prueba de mutación en v21).
+- ⛔ PROHIBIDO: "Corregir" la asimetría A3 eliminando los 4 refs redundantes de las 3 rutas de `RetailVisionPOS.jsx` (Opción E, **RECHAZADA** en v21): la premisa era falsa para `handleForceLogout` (el desmontaje impide que los `useEffect` se disparen) y no había cierre de diseño sobre el guardián de v20. La Opción D (guardián aditivo) es la elegida.
+
+**¿Por qué?** La asimetría A3 (1 ref vs 5) se aceptó en v19 como estilo, pero descansaba sobre un acoplamiento **implícito y no testeado**: la rama `success` dependía de que los 4 `useEffect` existieran para limpiar las 4 refs que no toca. Si alguien los borra o comenta, la rama `success` deja de limpiar 4 refs **en silencio** (fuga de estado entre tickets: el siguiente ticket heredaría `cartRef`/`accountNumRef`/`originalCapturerRef`/`ticketVersionRef` obsoletos). El guardián de v21 cierra ese riesgo real con **cero cambios en producción** (aditivo), a diferencia de la Opción E que tocaba la ruta crítica de cada venta. La prueba de mutación (comentar un `useEffect` → 3 tests en rojo) demostró que el guardián no es un falso verde.
+
 ---
 
 ## 5. LÓGICA DE TERMINALES Y OCUPACIÓN
@@ -876,6 +887,10 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿El guardián deriva los setters de `RESET_PATCH_KEYS` (no los escribe a mano) y verifica los 11 setters en las 4 rutas? (v20)
 - [ ] ¿El guardián limpia los comentarios (`stripJsComments()`) antes de aseverar, para evitar falsos verdes? (v20)
 - [ ] ¿Ninguna ruta aplica un setter ajeno al patch (test anti-regresión)? (v20)
+- [ ] ¿Los 4 `useEffect` de re-sincronización de refs existen y copian su state a su ref? (v21)
+- [ ] ¿Cada `useEffect` de re-sincronización declara su dependencia correcta (`[cart]`, `[currentAccountNum]`, `[originalCapturer]`, `[ticketVersion]`)? (v21)
+- [ ] ¿El guardián del `useEffect` (describe "v21") limpia los comentarios (`stripJsComments()`) antes de aseverar? (v21)
+- [ ] ¿Las 4 refs re-sincronizadas son exactamente las 4 que la rama `success` NO limpia manualmente? (v21)
 
 ---
 
