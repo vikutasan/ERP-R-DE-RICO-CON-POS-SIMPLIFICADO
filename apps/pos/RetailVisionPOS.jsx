@@ -9,6 +9,7 @@ import { useBarcodeScanner } from './hooks/useBarcodeScanner';
 import { useNetworkHealth } from './hooks/useNetworkHealth';
 import { usePOSSession } from './hooks/usePOSSession';
 import { useTicketActions } from './hooks/useTicketActions';
+import { buildResetPatch } from './state/sessionReset';
 import { CONFIG } from './config';
 
 // Sub-componentes
@@ -384,26 +385,30 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
 
     const handleExitWithoutSaving = () => {
         setShowExitModal(false);
-        // v7.0.3: Espejo EXPLÍCITO de la limpieza de handleTicketAction (rama success).
-        // Se evita un helper compartido a propósito: la duplicación visible y testeable
-        // es preferible a una abstracción que pueda desincronizar refs y estado.
-        // Sin esto, el carrito/folio sobreviven al logout y reaparecen en la siguiente sesión.
+        // v17: La limpieza de sesión se centraliza en buildResetPatch() (fuente única
+        // de verdad). Antes era un "espejo" manual que podía desincronizarse de la
+        // rama success de handleTicketAction (asimetría verificada en FASE 0).
+        // Las REFS se siguen sincronizando a mano: buildResetPatch() es pura y no
+        // puede tocarlas. La función define los VALORES; aquí se APLICAN.
         try {
+            const patch = buildResetPatch();
             clearCart();
             cartRef.current = [];
-            setOriginalCapturer(null);
-            originalCapturerRef.current = null;
-            setCurrentAccountNum('');
             accountNumRef.current = '';
-            setTicketVersion(null);
+            originalCapturerRef.current = null;
             ticketVersionRef.current = null;
-            setOrderData(null);
-            setOrderType('VENTA_DIRECTA');
-            setLastSaveStatus('idle');
-            setLastSaveTime(null);
-            setShowCheckout(false);
-            setPaymentsHistory([]);
             savedTicketRef.current = null;
+            setOriginalCapturer(patch.originalCapturer);
+            setCurrentAccountNum(patch.currentAccountNum);
+            setTicketVersion(patch.ticketVersion);
+            setOrderData(patch.orderData);
+            setOrderType(patch.orderType);
+            setLastSaveStatus(patch.lastSaveStatus);
+            setLastSaveTime(patch.lastSaveTime);
+            setShowCheckout(patch.showCheckout);
+            setPaymentsHistory(patch.paymentsHistory);
+            setShowExitModal(patch.showExitModal);
+            setPendingExitAction(patch.pendingExitAction);
             try {
                 if (selectedTerminal) localStorage.removeItem(`pos_session_${selectedTerminal}`);
             } catch (e) { console.warn("Error al limpiar persistencia:", e); }
