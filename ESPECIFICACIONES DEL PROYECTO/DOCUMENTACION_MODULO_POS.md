@@ -436,6 +436,42 @@ Cada vez que se añadía una ruta de salida nueva (o un valor de estado nuevo), 
 
 **Archivos involucrados:** `apps/pos/state/sessionReset.js` (nuevo), `apps/pos/state/sessionReset.test.js` (nuevo), `apps/pos/state/sessionReset.asymmetry.test.js` (nuevo), `apps/pos/state/sessionReset.equivalence.test.js` (nuevo), `apps/pos/state/architecture.test.js` (nuevo), `apps/pos/RetailVisionPOS.jsx`, `apps/pos/hooks/useTicketActions.js`, `apps/api/modules/pos/router.py`, `apps/api/modules/pos/pos_audit.py`, `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_ESTADO_POS_V17.md`, `ESPECIFICACIONES DEL PROYECTO/REPORTE_EJECUCION_ESTADO_POS_V17.md`.
 
+### Cierre del Contrato de Limpieza de Sesión — `handleForceLogout` (20/Septiembre/2026) — v18
+
+**Contexto:** El v17 centralizó la limpieza en `buildResetPatch()` en **3 de las 5 rutas** de salida. Quedó pendiente `handleForceLogout`, que limpiaba **implícitamente** (vía desmontaje del componente `RetailVisionPOS` al hacer logout el padre), no por contrato explícito.
+
+**Hallazgo (A6):**
+
+| # | Hallazgo | Severidad | Tipo |
+|----|----------|-----------|------|
+| **A6** | `handleForceLogout` era la única ruta de salida que NO aplicaba `buildResetPatch()`. Su corrección dependía de una **suposición implícita**: que `onForceLogout()` desmonta el componente, matando el estado local. La cadena de desmontaje tiene 5 eslabones (modal sin "cancelar" → `onForceLogout` → prop del padre → `setIsAuthenticated(false)` → desmontaje) que **nadie garantiza**. | Baja (latente) | Deuda técnica preventiva |
+
+**Naturaleza del hueco:** **latente, no activo.** Hoy el force logout **siempre** desmonta (el modal no permite cancelar), así que el estado local siempre muere. El hueco se materializaría solo si el componente se mantuviera montado (refactor de layout, keep-alive) o si `onForceLogout` cambiara a un `navigate()` que no desmonta. La corrección es **preventiva**.
+
+**Solución implementada (v18 — 4 fases):**
+
+- **Fase 0 — Reproducción (BLOQUEANTE):** Se creó el tag `pre-v18-estado-pos` (→ `23be478`). Baseline: **533 tests**, build **9.81s**. Se añadieron **8 tests** al `describe` "v18" de [`architecture.test.js`](apps/pos/state/architecture.test.js). **Reconciliación empírica:** la predicción del plan (6 rojos + 2 verdes) era incorrecta; la ejecución real dio **5 rojos funcionales (2,3,4,5,6) + 3 verdes de invariante (1,7,8)**. Los tests 7 y 8 verifican invariantes que ya se cumplían (el bloque ya terminaba en `onForceLogout();`; las rutas de v17 ya contenían el patch).
+- **Fase 1 — Migración:** [`handleForceLogout`](apps/pos/RetailVisionPOS.jsx:450) ahora aplica `buildResetPatch()` en un **PASO 2** explícito (orden estricto: **beacon → limpieza → `onForceLogout()`**). Se sincronizan las 5 refs a mano. Se añadió el extractor `extractForceLogoutFull` (incluye el cierre de la función) para el test de última sentencia.
+- **Fase 2 — Documentación de código:** Se actualizó el encabezado de [`sessionReset.js`](apps/pos/state/sessionReset.js) para declarar el contrato **CERRADO** (las 4 rutas de limpieza aplican el patch).
+- **Fase 3 — Validación manual:** Los 5 flujos de salida (3 de v17 + force logout + cierre de pestaña) validados en navegador → **5/5 OK, cero residuos**.
+- **Fase 4 — Documentación y respaldo:** Este incidente, la actualización de la Regla 19, los ítems del checklist y el respaldo en GitHub.
+
+**Evidencia de aceptación:**
+- `npm test` → **541 passed** (19 archivos), frente a **533** del baseline (+8 tests).
+- `npm run build` → **built in 9.81s**, sin errores.
+- **5 rojos funcionales** en Fase 0 (tests 2,3,4,5,6) → **verdes** en Fase 1.
+- **Test de asimetría (O4)** de v17 sigue verde (18 tests en `sessionReset.*`).
+- **Diff limpio:** solo `RetailVisionPOS.jsx` modificado (52 inserciones, 1 deleción) — las 3 rutas de v17 intactas.
+- **5 flujos de salida** validados manualmente: 5/5 OK, cero residuos.
+
+**Lección (Nuevas Reglas Arquitectónicas Derivadas):**
+- **OBLIGATORIO** que toda ruta de salida limpie **por contrato explícito** (`buildResetPatch()`), **nunca** confiando en el desmontaje del componente como mecanismo de limpieza.
+- **OBLIGATORIO** que el beacon de emergencia se construya **antes** de la limpieza (el payload debe contener los items vivos).
+- **OBLIGATORIO** que `onForceLogout()` sea la **última** sentencia de `handleForceLogout` (el logout del padre es un `setState` asíncrono; un desmontaje síncrono futuro perdería la limpieza).
+- **LECCIÓN DE PROCESO:** la clasificación de un test como rojo→verde debe **verificarse ejecutándolo**, no razonándolo. El plan v18 predijo mal 3 de 8 tests; la ejecución lo corrigió.
+
+**Archivos involucrados:** `apps/pos/RetailVisionPOS.jsx`, `apps/pos/state/architecture.test.js`, `apps/pos/state/sessionReset.js`, `ESPECIFICACIONES DEL PROYECTO/PLAN_CORRECCION_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_PLAN_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_V2_PLAN_ESTADO_POS_V18.md`, `ESPECIFICACIONES DEL PROYECTO/REVISION_CRITICA_V3_PLAN_ESTADO_POS_V18.md`.
+
 ## 4. LAS REGLAS DE ORO SUPERVIVIENTES (v6.0)
 
 A pesar de la simplificación, estas reglas de ingeniería siguen siendo **obligatorias** en la v6.0:
@@ -561,15 +597,17 @@ El checkout (`createTicket`) **debe** tener retries para errores de red, pero **
 
 **¿Por qué?** Sin retries en checkout, agregar una Concha de $8 tiene 3 intentos pero cobrar una cuenta de $2,000 es todo-o-nada al primer intento. Un micro-corte de LAN de 500ms durante el cobro obliga al cajero a presionar “Cobrar” de nuevo manualmente.
 
-### ⚡ REGLA 19: Limpieza Única de Sesión vía `buildResetPatch()` (v17)
+### ⚡ REGLA 19: Limpieza Única de Sesión vía `buildResetPatch()` (v17, contrato CERRADO en v18)
 La limpieza del estado de sesión del POS **debe** hacerse **exclusivamente** a través de la función pura `buildResetPatch()` de [`apps/pos/state/sessionReset.js`](apps/pos/state/sessionReset.js). **PROHIBIDO** limpiar el estado de sesión a mano en cualquier ruta de salida.
-- ✅ OBLIGATORIO: Toda ruta de salida (`handleExitWithoutSaving`, rama `success` de `handleTicketAction`, `doTerminalExit`, `handleForceLogout`, `window.requestPOSExit`) aplica `buildResetPatch()`.
+- ✅ OBLIGATORIO: Toda ruta de salida (`handleExitWithoutSaving`, rama `success` de `handleTicketAction`, `doTerminalExit`, `handleForceLogout`) aplica `buildResetPatch()`. **Las 4 rutas están migradas** (v17: 3 rutas; v18: `handleForceLogout`). `window.requestPOSExit` NO es ruta de limpieza (es interceptor).
 - ✅ OBLIGATORIO: Sincronizar las **refs** explícitamente en cada ruta (`cartRef`, `accountNumRef`, `originalCapturerRef`, `ticketVersionRef`, `savedTicketRef`). `buildResetPatch()` es **pura** y no puede tocarlas: define los VALORES, el llamador los APLICA.
 - ✅ OBLIGATORIO: Todo valor de estado nuevo que deba resetearse se añade a `buildResetPatch()` **y** a `RESET_PATCH_KEYS`. El test de contrato fallará si no.
+- ✅ OBLIGATORIO (v18): Toda ruta de salida limpia **por contrato explícito**, **nunca** confiando en el desmontaje del componente como mecanismo de limpieza. El desmontaje no es un contrato (no está documentado ni testeado).
+- ✅ OBLIGATORIO (v18): En `handleForceLogout`, el beacon de emergencia se construye **antes** de la limpieza, y `onForceLogout()` es la **última** sentencia (el logout del padre es un `setState` asíncrono).
 - ⛔ PROHIBIDO: Añadir a `buildResetPatch()` valores de **catálogo** (`categories`, `initialProducts`, `activeCategory`), **carrito** (`cart`, `cartState`), **impresión** (`printTicketData`) o **UI** (`viewMode`, `currentPage`, `showCorkboard`, `allOpenAccounts`, `isCashEnabled`, `showGestorCaja`, `cashSessionId`, `showProgramacion`). Ver `FORBIDDEN_PATCH_KEYS`.
 - ⛔ PROHIBIDO: Reintroducir "espejos" manuales de limpieza. Fueron la causa raíz de la asimetría A2 (la rama `success` no limpiaba `savedTicketRef`/`showExitModal`/`pendingExitAction`).
 
-**¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado.
+**¿Por qué?** Antes de v17, la limpieza estaba escrita a mano en **5 rutas**, cada una limpiando un subconjunto distinto. Era **frágil por acumulación**: cada valor de estado nuevo exigía recordar actualizar los 5 espejos, y nadie lo garantizaba. La asimetría resultante era una bomba de tiempo (contaminación de la siguiente cuenta). Con una fuente única, añadir un valor de reset es **una sola edición** y el test de contrato obliga a mantenerlo sincronizado. El v18 cerró el último hueco (A6): `handleForceLogout` limpiaba implícitamente vía desmontaje; ahora lo hace por contrato explícito.
 
 ---
 
@@ -722,6 +760,9 @@ Antes de aprobar cualquier cambio que toque terminales, sesiones o tickets, veri
 - [ ] ¿`buildResetPatch()` NO incluye valores de catálogo, carrito, impresión ni UI (`FORBIDDEN_PATCH_KEYS`)? (v17)
 - [ ] ¿La rama `success` de `handleTicketAction` limpia `savedTicketRef`/`showExitModal`/`pendingExitAction` (sin asimetría)? (v17)
 - [ ] ¿No queda ningún `datetime.now()` en código vivo de `apps/api/modules/pos/` (solo `utcnow()`)? (v17)
+- [ ] ¿`handleForceLogout` aplica `buildResetPatch()` (no confía en el desmontaje)? (v18)
+- [ ] ¿En `handleForceLogout` el beacon se construye ANTES de la limpieza y `onForceLogout()` es la última sentencia? (v18)
+- [ ] ¿`handleForceLogout` borra SOLO la clave de sesión (`pos_session_`), sin duplicar el borrado del carrito (`pos_cart_`)? (v18)
 
 ---
 
