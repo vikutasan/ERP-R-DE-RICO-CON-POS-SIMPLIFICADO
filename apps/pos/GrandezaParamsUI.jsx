@@ -1562,8 +1562,11 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     )}
                 </div>
 
-                {/* Tabs de Navegación Interna */}
-                <div className="flex gap-4 md:gap-8 px-2 mt-4 overflow-x-auto whitespace-nowrap custom-scrollbar pb-2">
+                {/* Tabs de Navegación Interna
+                    Móvil: se envuelven en varias filas (flex-wrap) para que las 5
+                    pestañas sean SIEMPRE visibles sin scroll horizontal oculto.
+                    Escritorio: fila única con scroll horizontal si no cabe. */}
+                <div className="flex flex-wrap md:flex-nowrap gap-x-4 md:gap-x-8 gap-y-1 px-2 mt-4 md:overflow-x-auto md:whitespace-nowrap custom-scrollbar pb-2">
                     {[
                         { id: 'products', label: 'Productos Vinculados', icon: '🍞' },
                         { id: 'clients', label: 'Directorio de Clientes', icon: '👥' },
@@ -1574,9 +1577,9 @@ export const GrandezaParamsUI = ({ onBack }) => {
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`pb-3 px-2 font-black uppercase tracking-widest text-sm transition-all relative shrink-0 ${
-                                activeTab === tab.id 
-                                ? 'text-amber-400' 
+                            className={`pb-3 px-2 font-black uppercase tracking-widest text-xs md:text-sm transition-all relative shrink-0 ${
+                                activeTab === tab.id
+                                ? 'text-amber-400'
                                 : 'text-gray-500 hover:text-gray-300'
                             }`}
                         >
