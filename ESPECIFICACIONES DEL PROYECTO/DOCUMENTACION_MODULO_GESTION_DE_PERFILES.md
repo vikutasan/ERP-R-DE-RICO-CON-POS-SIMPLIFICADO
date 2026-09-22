@@ -76,7 +76,7 @@ Los perfiles personalizados (ej: "RG", "EMBOLSADOR") sí son eliminables.
 | `pos_retail` | Punto de Venta IA | Acceso al POS completo |
 | `inventory` | Gestión de Productos | Catálogo de productos |
 | `warehouse` | Gestión de Almacenes | Control de almacenes |
-| `vision_train` | Entrenamiento IA | Entrenamiento del modelo de visión |
+| `vision_train` | Centro de IA | Estado del motor, Visión y Voz (módulo paraguas) |
 | `production` | Maestro Panadero | Módulo de producción |
 | `financials` | Módulo Financiero | Finanzas y contabilidad |
 | `invoicing` | Facturación CFDI | Facturación electrónica |

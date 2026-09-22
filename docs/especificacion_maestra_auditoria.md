@@ -31,7 +31,7 @@ Este documento es la **guía suprema** dictada por el Arquitecto Full-Stack Seni
 El sistema es una plataforma de **Visión Artificial** para retail alimentario.
 - **Hardware Agóstico**: La arquitectura debe ser "Plug & Play". El código debe permitir inyectar flujos de video de cualquier cámara (USB, IP, móviles) mediante una capa de abstracción.
 - **Identidad en el POS**: Los componentes de visión en la interfaz del POS (visor del escáner, botones de activación) deben funcionar exactamente como hasta ahora y **no deben moverse de su lugar**.
-- **Entrenamiento IA**: Se debe conservar el módulo de "Entrenamiento IA" del ERP. La refactorización debe asegurar que el flujo de datos para el entrenamiento de reconocimiento de panes sea más robusto y nunca se interrumpa.
+- **Centro de IA**: Se debe conservar el módulo de IA del ERP (hoy "Centro de IA", antes "Entrenamiento IA"). La refactorización debe asegurar que el flujo de datos para el entrenamiento de reconocimiento de panes sea más robusto y nunca se interrumpa.
 - **Sincronización de Básculas**: Capacidad de integrar datos de peso en tiempo real con el reconocimiento visual del producto.
 
 ---

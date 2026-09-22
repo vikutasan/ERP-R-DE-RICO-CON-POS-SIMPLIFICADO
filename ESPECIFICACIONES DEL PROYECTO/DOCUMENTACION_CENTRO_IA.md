@@ -1,17 +1,56 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v26.1 — Centro de IA (3 capacidades)
+> **Versión:** v26.1 — Centro de IA (3 capacidades) + Fine-tuning de Visión (v7 Fase 8)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
 > **Última actualización:** 22 Sep 2026
 > **Documentos relacionados:**
-> - [`DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md`](DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md) — Detalle del fine-tuning de YOLO (pestaña Visión)
 > - [`CONTEXTO_SISTEMA_IA.md`](CONTEXTO_SISTEMA_IA.md) — Arquitectura del AI Gateway y reglas de resiliencia
+> - [`DOCUMENTACION_MODULO_POS.md`](DOCUMENTACION_MODULO_POS.md) — Módulo POS (consumidor de la voz y la visión)
 > - [`../../docs/SPEC_AI_GATEWAY_TRANSVERSAL.md`](../../docs/SPEC_AI_GATEWAY_TRANSVERSAL.md) — Especificación del Gateway transversal
 > - [`../../plans/PLAN_CENTRO_IA_V26.md`](../../plans/PLAN_CENTRO_IA_V26.md) — Plan de implementación aprobado
+> - [`../../plans/AUTOCRITICA_PLAN_CENTRO_IA_V26.md`](../../plans/AUTOCRITICA_PLAN_CENTRO_IA_V26.md) — Autocrítica que originó la v26.1
 
 ---
 
-## 0. RESUMEN EJECUTIVO
+## ÍNDICE GENERAL
+
+**PARTE I — EL CENTRO DE IA (módulo paraguas)**
+1. Resumen ejecutivo
+2. Problema que resuelve
+3. Arquitectura general
+4. Estructura de archivos
+5. Las tres pestañas
+6. Constantes centralizadas
+7. Servicio HTTP centralizado
+8. Endpoints utilizados (0 nuevos)
+9. Permisos
+10. Criterios de aceptación
+11. Fuera de alcance
+12. Historial de versiones del Centro de IA
+
+**PARTE II — FINE-TUNING DE VISIÓN (pestaña Visión)**
+13. Problema que resuelve el fine-tuning
+14. Arquitectura del pipeline de entrenamiento
+15. Componentes en detalle
+16. Flujo completo paso a paso
+17. Decisiones de diseño y su justificación
+18. Contratos de datos (schemas)
+19. Formato YOLO de las etiquetas
+20. Configuración y despliegue
+21. Validación (smoke test)
+22. Bug resuelto — la ruta doble `apps/api`
+23. Seguridad y límites
+24. Archivos involucrados
+25. Estado actual y trabajo pendiente
+26. Glosario
+27. Historial de cambios
+
+---
+---
+
+# PARTE I — EL CENTRO DE IA (MÓDULO PARAGUAS)
+
+## 1. RESUMEN EJECUTIVO
 
 El **Centro de IA** es un **módulo paraguas** que agrupa, en una sola pantalla con pestañas, las
 **tres capacidades de inteligencia artificial** del ERP:
@@ -32,9 +71,9 @@ Esto evita duplicar la lógica de permisos, el registro de módulos y la navegac
 
 ---
 
-## 1. PROBLEMA QUE RESUELVE
+## 2. PROBLEMA QUE RESUELVE
 
-### 1.1 El problema de negocio
+### 2.1 El problema de negocio
 
 Antes de v26.1, la IA estaba **fragmentada y opaca**:
 
@@ -44,7 +83,7 @@ Antes de v26.1, la IA estaba **fragmentada y opaca**:
 - Los parámetros de la voz (`VOZ_CONFIG`) vivían **duplicados** dentro de `useVoiceCart.js`, sin
   forma de inspeccionarlos desde la UI.
 
-### 1.2 El problema técnico
+### 2.2 El problema técnico
 
 | Problema | Consecuencia |
 |---|---|
@@ -53,7 +92,7 @@ Antes de v26.1, la IA estaba **fragmentada y opaca**:
 | Constantes duplicadas | Cambiar un umbral de voz exige tocar el hook del POS |
 | Sin diagnóstico de micrófono | El operador no sabe si su hardware funciona |
 
-### 1.3 La restricción de arquitectura (Regla de Oro §1.2)
+### 2.3 La restricción de arquitectura (Regla de Oro §1.2)
 
 > **El ERP NUNCA importa `torch`, `whisper` ni `ultralytics`.**
 
@@ -62,9 +101,9 @@ diseño del Centro de IA: **no se añadió ni un solo endpoint nuevo**.
 
 ---
 
-## 2. ARQUITECTURA GENERAL
+## 3. ARQUITECTURA GENERAL
 
-### 2.1 Diagrama de capas
+### 3.1 Diagrama de capas
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -89,7 +128,7 @@ diseño del Centro de IA: **no se añadió ni un solo endpoint nuevo**.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Principio de "estado preservado" (fix del defecto D3)
+### 3.2 Principio de "estado preservado" (fix del defecto D3)
 
 `VisionTrainingUI` mantiene en su estado interno las fotos capturadas (`capturedImages`), el
 dataset (`dataset`), la imagen activa (`activeImage`) y las cajas dibujadas (`boxes`). Si el
@@ -109,9 +148,9 @@ consulta la red cuando su pestaña está visible (**lazy-fetch**).
 
 ---
 
-## 3. ESTRUCTURA DE ARCHIVOS
+## 4. ESTRUCTURA DE ARCHIVOS
 
-### 3.1 Archivos nuevos (v26.1)
+### 4.1 Archivos nuevos (v26.1)
 
 | Archivo | Responsabilidad |
 |---|---|
@@ -121,7 +160,7 @@ consulta la red cuando su pestaña está visible (**lazy-fetch**).
 | [`apps/ai/services/AICenterService.js`](../../apps/ai/services/AICenterService.js) | Cliente HTTP centralizado del Centro de IA |
 | [`apps/ai/utils/aiCenterConstants.js`](../../apps/ai/utils/aiCenterConstants.js) | Constantes de negocio centralizadas (incluye `VOZ_CONFIG`) |
 
-### 3.2 Archivos modificados
+### 4.2 Archivos modificados
 
 | Archivo | Cambio |
 |---|---|
@@ -130,7 +169,7 @@ consulta la red cuando su pestaña está visible (**lazy-fetch**).
 | [`apps/pos/VisionTrainingUI.jsx`](../../apps/pos/VisionTrainingUI.jsx) | Nueva prop `activo` + guarda en el `useEffect` de carga del dataset |
 | [`apps/pos/hooks/useVoiceCart.js`](../../apps/pos/hooks/useVoiceCart.js) | Elimina `VOZ_CONFIG` local; lo importa de `aiCenterConstants.js` |
 
-### 3.3 Ubicación transversal
+### 4.3 Ubicación transversal
 
 El Centro de IA vive en `apps/ai/`, **no** en `apps/pos/`. Es un módulo **transversal**: la voz
 la usan el POS y Almacenes; la visión la usan el POS y Almacenes; el estado del motor interesa a
@@ -138,9 +177,9 @@ todos. Ponerlo bajo `pos/` habría sido una decisión injustificada (defecto D5 
 
 ---
 
-## 4. LAS TRES PESTAÑAS
+## 5. LAS TRES PESTAÑAS
 
-### 4.1 📊 Estado del Motor
+### 5.1 📊 Estado del Motor
 
 **Endpoint:** `GET /api/v1/ai/status` (existente, sin cambios).
 
@@ -168,7 +207,7 @@ todos. Ponerlo bajo `pos/` habría sido una decisión injustificada (defecto D5 
 error dentro). El panel interpreta ese 503 como "motor caído" (semáforo rojo), **no** como un
 crash de la UI. Esto respeta la política inviolable del gateway.
 
-### 4.2 👁️ Visión
+### 5.2 👁️ Visión
 
 **Componente:** [`VisionTrainingUI`](../../apps/pos/VisionTrainingUI.jsx) — **reutilizado sin
 duplicar**. Conserva sus dos sub-pestañas (Captura y Anotación) y toda su lógica de fine-tuning.
@@ -183,10 +222,9 @@ useEffect(() => {
 }, [activo, tab, selectedProduct, cargarDataset]);
 ```
 
-El detalle completo del fine-tuning está en
-[`DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md`](DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md).
+El detalle completo del fine-tuning está en la **PARTE II** de este documento.
 
-### 4.3 🎙️ Voz
+### 5.3 🎙️ Voz
 
 **Componente:** [`AIVoicePanel.jsx`](../../apps/ai/components/AIVoicePanel.jsx).
 
@@ -217,9 +255,9 @@ useEffect(() => {
 
 ---
 
-## 5. CONSTANTES CENTRALIZADAS
+## 6. CONSTANTES CENTRALIZADAS
 
-### 5.1 `VOZ_CONFIG` — fuente única de verdad
+### 6.1 `VOZ_CONFIG` — fuente única de verdad
 
 Antes vivía duplicado en `useVoiceCart.js`. Ahora vive en
 [`aiCenterConstants.js`](../../apps/ai/utils/aiCenterConstants.js) y **ambos** consumidores lo
@@ -239,7 +277,7 @@ export const VOZ_CONFIG = {
 **Regla del manifiesto aplicada:** las constantes de negocio van en MAYÚSCULAS en un archivo de
 configuración central, no dispersas en los componentes.
 
-### 5.2 Lista blanca de intenciones
+### 6.2 Lista blanca de intenciones
 
 ```js
 export const INTENCIONES_POR_MODULO = {
@@ -253,7 +291,7 @@ regla de negocio es: **la IA PROPONE, el humano CONFIRMA**.
 
 ---
 
-## 6. SERVICIO HTTP CENTRALIZADO
+## 7. SERVICIO HTTP CENTRALIZADO
 
 [`AICenterService.js`](../../apps/ai/services/AICenterService.js) encapsula las llamadas y
 traduce los errores:
@@ -271,7 +309,7 @@ La clase `AICenterError` expone un getter `esNoDisponible` que detecta el **503
 
 ---
 
-## 7. ENDPOINTS UTILIZADOS (0 NUEVOS)
+## 8. ENDPOINTS UTILIZADOS (0 NUEVOS)
 
 | Método | Ruta | Usado por | Estado |
 |---|---|---|---|
@@ -289,7 +327,7 @@ existentes.
 
 ---
 
-## 8. PERMISOS
+## 9. PERMISOS
 
 El módulo conserva su `id` histórico `vision_train` para **no romper** la matriz de permisos ya
 persistida en base de datos. Solo cambian el nombre visible y el icono:
@@ -302,7 +340,7 @@ persistida en base de datos. Solo cambian el nombre visible y el icono:
 
 ---
 
-## 9. CRITERIOS DE ACEPTACIÓN
+## 10. CRITERIOS DE ACEPTACIÓN
 
 | # | Criterio | Verificación |
 |---|---|---|
@@ -314,12 +352,12 @@ persistida en base de datos. Solo cambian el nombre visible y el icono:
 | 6 | Cambiar de pestaña NO pierde las fotos capturadas | Montaje persistente + CSS `hidden` |
 | 7 | La pestaña Voz muestra el medidor RMS en vivo | `AIVoicePanel.jsx` |
 | 8 | `VOZ_CONFIG` tiene una sola fuente de verdad | `aiCenterConstants.js` |
-| 9 | Cero endpoints nuevos | §7 |
+| 9 | Cero endpoints nuevos | §8 |
 | 10 | `npm run build` pasa sin errores | Exit code 0 (1827 módulos) |
 
 ---
 
-## 10. FUERA DE ALCANCE (NO se hizo)
+## 11. FUERA DE ALCANCE (NO se hizo)
 
 - ❌ Crear un módulo separado "IA por Voz".
 - ❌ Añadir endpoints nuevos al gateway.
@@ -329,7 +367,7 @@ persistida en base de datos. Solo cambian el nombre visible y el icono:
 
 ---
 
-## 11. HISTORIAL DE VERSIONES
+## 12. HISTORIAL DE VERSIONES DEL CENTRO DE IA
 
 | Versión | Fecha | Cambio |
 |---|---|---|
@@ -342,11 +380,820 @@ pérdida de estado al cambiar de pestaña) y 5 menores. Ver
 [`../../plans/AUTOCRITICA_PLAN_CENTRO_IA_V26.md`](../../plans/AUTOCRITICA_PLAN_CENTRO_IA_V26.md).
 
 ---
+---
 
-## 12. RESUMEN EJECUTIVO FINAL
+# PARTE II — FINE-TUNING DE VISIÓN (PESTAÑA VISIÓN)
 
-El **Centro de IA** unifica las tres capacidades de IA del ERP en un solo módulo con pestañas,
-**sin crear un módulo nuevo**, **sin añadir endpoints** y **sin tocar el gateway, el POS ni la
-base de datos**. Reutiliza `VisionTrainingUI` íntegro, centraliza `VOZ_CONFIG` como fuente única
-de verdad y añade un panel de diagnóstico de estado y de voz. El estado de trabajo del operador
-sobrevive al cambio de pestaña gracias al montaje persistente con ocultamiento por CSS.
+> Esta parte documenta la **pestaña Visión** del Centro de IA. Corresponde al antiguo
+> `DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md` (v7 Fase 8), ahora absorbido aquí. El contenido
+> técnico es idéntico porque el pipeline de fine-tuning **no cambió** en v26.1: solo cambió
+> **dónde se monta la UI** (antes un módulo propio, ahora la pestaña Visión del Centro de IA).
+
+## 13. PROBLEMA QUE RESUELVE EL FINE-TUNING
+
+### 13.1 El problema de negocio
+
+El conteo de pan en el POS requiere que la IA reconozca piezas en una charola. Un modelo
+genérico (`yolov8n.pt`, entrenado con COCO) **no conoce el pan de R de Rico**: confunde
+conchas con bolillos, no distingue piezas pegadas y falla con la iluminación del local.
+
+### 13.2 El problema técnico
+
+Entrenar YOLO es:
+
+| Característica | Implicación |
+|---|---|
+| **Largo** | Minutos (decenas de minutos con datasets reales) |
+| **Bloqueante** | Consume CPU/RAM al 100% durante todo el proceso |
+| **Con estado** | Solo puede haber UN entrenamiento a la vez |
+| **Falible** | Puede fallar por dataset vacío, OOM, error de ultralytics |
+
+Si el entrenamiento corriera dentro del event loop de FastAPI, **congelaría el motor de IA
+completo**: la voz (`/voice/*`) y la detección (`/vision/detect`) dejarían de responder, y el
+POS perdería la IA en plena operación.
+
+### 13.3 La restricción de arquitectura (Regla de Oro §1.2)
+
+> **El ERP NUNCA importa `torch`, `whisper` ni `ultralytics`.**
+
+El ERP solo conoce `AI_LOCAL_URL` y habla HTTP. Si el motor de IA se cae, el POS sigue operando
+en modo manual. Esta regla es **inviolable** y condiciona todo el diseño del módulo.
+
+---
+
+## 14. ARQUITECTURA DEL PIPELINE DE ENTRENAMIENTO
+
+### 14.1 Diagrama de capas
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  NAVEGADOR (Centro de IA → pestaña Visión)                                   │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  VisionTrainingUI.jsx  (sub-pestaña "Anotación")                       │  │
+│  │    · Selector de épocas (1..500)                                       │  │
+│  │    · Botón "🧠 Entrenar con N imagen(es)"                              │  │
+│  │    · iniciarEntrenamiento() → posService.trainVision({skus, epochs})   │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────┬──────────────────────────────────────────┘
+                                    │ HTTP POST /api/v1/ai/vision/train
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  CONTENEDOR "api"  (ERP — FastAPI)                                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  apps/api/modules/ai/router.py                                         │  │
+│  │    POST /vision/train          → service.entrenar_vision()             │  │
+│  │    GET  /vision/train/status   → service.estado_entrenamiento()        │  │
+│  │    GET  /vision/dataset-summary→ service.resumen_dataset()             │  │
+│  ├────────────────────────────────────────────────────────────────────────┤  │
+│  │  apps/api/modules/ai/service.py                                        │  │
+│  │    · _timeout_entrenamiento()  (default 3600s, env AI_LOCAL_TRAIN_TIMEOUT)│
+│  │    · _llamar_motor_get()       (proxy GET)                             │  │
+│  │    · entrenar_vision()         (proxy POST con timeout largo)          │  │
+│  │    · Traduce 400/409 → HTTPException; 5xx/timeout → 503 IA_NO_DISPONIBLE│ │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│  ⚠️  NO importa torch / ultralytics / whisper                                │
+└───────────────────────────────────┬──────────────────────────────────────────┘
+                                    │ HTTP (red interna rderico-ia-net)
+                                    │ POST http://ia-local:9000/vision/train
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  CONTENEDOR "ia-local"  (Motor de IA — FastAPI)                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  ai-local/app/main.py                                                  │  │
+│  │    POST /vision/train          → training.entrenar()                   │  │
+│  │    GET  /vision/train/status   → training.estado_actual()              │  │
+│  │    GET  /vision/dataset-summary→ training._resumen_dataset()           │  │
+│  ├────────────────────────────────────────────────────────────────────────┤  │
+│  │  ai-local/app/engines/training.py                                      │  │
+│  │    · ESTADO_ENTRENAMIENTO (dict compartido, 1 entrenamiento a la vez)  │  │
+│  │    · _resumen_dataset()   (pre-validación: ¿hay etiquetas?)            │  │
+│  │    · _correr_subproceso() (asyncio.create_subprocess_exec)             │  │
+│  │    · entrenar()           (orquesta + HOT-RELOAD)                      │  │
+│  ├────────────────────────────────────────────────────────────────────────┤  │
+│  │  ai-local/app/engines/vision.py                                        │  │
+│  │    · cargar_modelo(ruta)  ← recarga el modelo en memoria (hot-reload)  │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                         │
+│                                    │ subprocess (proceso SEPARADO)           │
+│                                    ▼                                         │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │  python -m train.train_bakery --epochs N --imgsz 640 --sku 10 ...      │  │
+│  │  ai-local/train/train_bakery.py                                        │  │
+│  │    1. descubrir_dataset()      lee /dataset/<sku>/                     │  │
+│  │    2. construir_dataset_yolo() arma images/ + labels/ + data.yaml      │  │
+│  │    3. entrenar()               YOLO.train()  ← CPU-bound, minutos      │  │
+│  │    4. publicar_modelo()        copia best.pt → /training/best.pt       │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 14.2 Flujo de datos (volúmenes compartidos)
+
+El punto crítico del diseño es que **el dataset que el ERP escribe es el mismo directorio físico
+que el motor de IA lee**. Se logra con un bind mount al MISMO directorio del host:
+
+```
+HOST (Windows)                                  CONTENEDOR "api"        CONTENEDOR "ia-local"
+─────────────────────────────────────────────   ────────────────────    ─────────────────────
+ERP-R-DE-RICO-DATA/vision_training/  ─────────► /app/static/training    /dataset  (read-only)
+   └── 10/                                       (VISION_TRAINING_DIR)   (DATASET_DIR)
+        ├── pan_001.jpg  ◄── escribe el ERP      ▲                       ▲
+        ├── pan_001.txt  ◄── anota el operador   │                       │
+        ├── pan_002.jpg                          │                       │
+        └── pan_002.txt                          │                       │
+                                                 │                       │
+ERP-R-DE-RICO-DATA/ai_training/      ───────────┼───────────────────────┘
+   ├── best.pt       ◄── modelo afinado          │        /training  (read-write)
+   ├── dataset_yolo/ ◄── dataset YOLO temporal   │        (TRAINING_DIR)
+   └── runs/         ◄── logs de ultralytics     │
+```
+
+| Variable de entorno | Contenedor | Valor | Propósito |
+|---|---|---|---|
+| `VISION_TRAINING_DIR` | `api` | `/app/static/training` | Raíz donde el ERP escribe imágenes + labels |
+| `DATASET_DIR` | `ia-local` | `/dataset` | Raíz donde el motor LEE el dataset (ro) |
+| `TRAINING_DIR` | `ia-local` | `/training` | Raíz donde el motor ESCRIBE el modelo |
+| `YOLO_MODEL` | `ia-local` | `yolov8n.pt` | Pesos base para el fine-tuning |
+| `AI_LOCAL_TRAIN_TIMEOUT` | `api` | `3600` | Timeout del proxy de entrenamiento (segundos) |
+
+---
+
+## 15. COMPONENTES EN DETALLE
+
+### 15.1 Frontend — [`VisionTrainingUI.jsx`](../../apps/pos/VisionTrainingUI.jsx)
+
+La UI de entrenamiento vive **dentro de la sub-pestaña "Anotación"**, no en una pantalla aparte.
+Esto es deliberado: el operador anota y entrena en el mismo contexto mental.
+
+> **Cambio v26.1:** este componente ya no se monta directamente desde `ExperimentCenterUI`, sino
+> desde [`AICenterUI.jsx`](../../apps/ai/AICenterUI.jsx) como la pestaña Visión. Recibe la prop
+> `activo` para el lazy-fetch. Su lógica interna es idéntica.
+
+**Estado de entrenamiento:**
+
+```javascript
+// --- Estado de entrenamiento (v7 Fase 8) ---
+const [training, setTraining] = useState(false);
+const [trainMsg, setTrainMsg] = useState('');
+const [trainError, setTrainError] = useState('');
+const [epochs, setEpochs] = useState(50);
+```
+
+**Disparador:**
+
+```javascript
+const iniciarEntrenamiento = async () => {
+    if (!selectedProduct) return;
+    setTraining(true);
+    setTrainMsg('');
+    setTrainError('');
+    try {
+        // Entrena SOLO con el SKU seleccionado (el operador anota por producto).
+        const res = await posService.trainVision({
+            skus: [selectedProduct.sku],
+            epochs,
+        });
+        if (res.ok) {
+            setTrainMsg(
+                `✅ Entrenamiento completado (${res.resumen?.imagenes ?? '?'} imágenes). Modelo recargado.`
+            );
+        } else {
+            setTrainError(res.error || res.mensaje || 'El entrenamiento falló.');
+        }
+    } catch (error) {
+        // 503 = motor de IA caído; 400/409 = dataset o concurrencia.
+        setTrainError(
+            error.status === 503
+                ? 'El motor de IA Local no está disponible. Entrena más tarde.'
+                : error.message || 'No se pudo iniciar el entrenamiento.'
+        );
+    } finally {
+        setTraining(false);
+    }
+};
+```
+
+**Reglas de UX implementadas:**
+
+1. **El botón solo aparece si hay etiquetas.** La condición es
+   `{dataset && dataset.annotated > 0 && (...)}`. Si no hay nada anotado, no se
+   muestra el bloque de entrenamiento: no se puede entrenar con cero etiquetas.
+2. **El botón se deshabilita mientras entrena** (`disabled={training}`) y cambia el texto a
+   `🧠 Entrenando... (puede tardar minutos)`.
+3. **El selector de épocas** está acotado a `min={1} max={500}` y se deshabilita durante el
+   entrenamiento.
+4. **El mensaje de éxito incluye el número de imágenes** usadas, para que el operador sepa
+   con qué dataset se entrenó.
+5. **Los errores se traducen a lenguaje humano**: `503` → "El motor de IA Local no está
+   disponible. Entrena más tarde."
+
+> **Nota de diseño:** el entrenamiento se lanza **por SKU** (`skus: [selectedProduct.sku]`),
+> porque el operador anota producto por producto. El backend soporta entrenar varios SKUs a la
+> vez (o todos si se omite `skus`), pero la UI actual entrena uno.
+
+### 15.2 Cliente HTTP — [`POSService.js`](../../apps/pos/services/POSService.js)
+
+Tres métodos:
+
+```javascript
+async getDatasetSummary() {
+    const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/dataset-summary`);
+    // ...
+}
+
+async getTrainStatus() {
+    const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/train/status`);
+    // ...
+}
+
+async trainVision({ skus = null, epochs = 50, imgsz = 640, batch = 8, runName = 'bakery' } = {}) {
+    const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/train`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skus, epochs, imgsz, batch, run_name: runName }),
+    });
+    // ...
+}
+```
+
+> **Ojo con el prefijo:** `CONFIG.API_BASE_URL` ya incluye `/api/v1`, por lo que la ruta final
+> es `/api/v1/ai/vision/train`. El router del Gateway está montado en `/api/v1/ai`
+> (ver [`apps/api/main.py`](../../apps/api/main.py:317)), **no** en `/ai`.
+
+### 15.3 API Gateway — [`apps/api/modules/ai/router.py`](../../apps/api/modules/ai/router.py)
+
+Tres endpoints:
+
+```python
+@router.get("/vision/dataset-summary", response_model=schemas.DatasetSummaryResponse)
+async def dataset_summary():
+    return await service.resumen_dataset()
+
+@router.get("/vision/train/status", response_model=schemas.TrainStatusResponse)
+async def train_status():
+    return await service.estado_entrenamiento()
+
+@router.post("/vision/train", response_model=schemas.TrainStatusResponse)
+async def train(payload: schemas.TrainRequest):
+    return await service.entrenar_vision(payload)
+```
+
+> **Nota:** el router del Gateway **no** contiene lógica de negocio. Solo delega en
+> [`service.py`](../../apps/api/modules/ai/service.py). Toda la traducción de errores y los
+> timeouts viven en la capa de servicio.
+
+### 15.4 Servicio del Gateway — [`apps/api/modules/ai/service.py`](../../apps/api/modules/ai/service.py)
+
+El servicio es el **guardián de la política de errores**. Tiene dos timeouts distintos:
+
+```python
+def _timeout_motor_ia() -> float:
+    """Timeout en segundos para las llamadas al motor. Default 30s."""
+    try:
+        return float(os.getenv("AI_LOCAL_TIMEOUT", "30"))
+    except (TypeError, ValueError):
+        return 30.0
+
+def _timeout_entrenamiento() -> float:
+    """Timeout (segundos) para el entrenamiento. Default 1h."""
+    try:
+        return float(os.getenv("AI_TRAIN_TIMEOUT", "3600"))
+    except (TypeError, ValueError):
+        return 3600.0
+```
+
+**¿Por qué dos timeouts?** Porque el entrenamiento tarda minutos u horas, mientras que una
+detección de visión tarda milisegundos. Usar el mismo timeout para ambos sería un error: o
+cortaríamos el entrenamiento, o dejaríamos una detección colgada 1 hora.
+
+La función clave es `entrenar_vision()`, que traduce los errores del motor:
+
+```python
+async def entrenar_vision(payload: schemas.TrainRequest) -> schemas.TrainStatusResponse:
+    """Lanza el fine-tuning en el motor y espera el resultado.
+
+    El entrenamiento es LARGO: usa un timeout propio (`AI_TRAIN_TIMEOUT`, default 1h).
+    """
+    _verificar_configuracion("entrenamiento")
+    url = f"{_base_motor()}/vision/train"
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_entrenamiento()) as cliente:
+            resp = await cliente.post(url, json=payload.model_dump())
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+        _lanzar_no_disponible(f"Motor de IA inalcanzable: {exc}")
+    except httpx.HTTPError as exc:
+        _lanzar_no_disponible(f"Error de transporte con el motor: {exc}")
+
+    if resp.status_code >= 500:
+        _lanzar_no_disponible(f"El motor devolvió {resp.status_code}")
+
+    if resp.status_code >= 400:
+        # 400/409 son errores de NEGOCIO (dataset vacío, entrenamiento en curso).
+        # Se propagan tal cual para que la UI pueda explicarlos.
+        detalle = {}
+        try:
+            detalle = resp.json()
+        except ValueError:
+            detalle = {}
+        raise HTTPException(status_code=resp.status_code, detail=detalle)
+
+    try:
+        return schemas.TrainStatusResponse(**resp.json())
+    except (ValueError, TypeError) as exc:
+        _lanzar_no_disponible(f"Respuesta inválida del motor: {exc}")
+```
+
+**Tabla de traducción de errores:**
+
+| Situación | Código del motor | Respuesta del Gateway | ¿Por qué? |
+|---|---|---|---|
+| Motor caído / timeout | — | **503** `IA_NO_DISPONIBLE` | La IA es opcional; el POS no debe romperse |
+| Motor devuelve 5xx | 500 | **503** `IA_NO_DISPONIBLE` | Un 500 del motor es un fallo de infraestructura |
+| Dataset vacío | 400 | **400** (propagado) | Es un error de **negocio**, la UI debe explicarlo |
+| Entrenamiento en curso | 409 | **409** (propagado) | Es un estado válido, no un fallo |
+| JSON inválido | 200 | **503** `IA_NO_DISPONIBLE` | Contrato roto = motor no confiable |
+
+> **Regla de oro del Gateway:** *"Cualquier fallo del motor (timeout, conexión rechazada, 5xx,
+> JSON inválido) se traduce a 503 `IA_NO_DISPONIBLE`. Nunca se propaga un 500 al POS."*
+> La única excepción son los errores **4xx de negocio** (400/409), que sí se propagan porque
+> son información útil para el operador.
+
+### 15.5 Endpoints del motor — [`ai-local/app/main.py`](../../ai-local/app/main.py)
+
+El motor expone tres endpoints de entrenamiento:
+
+```python
+@app.get("/vision/dataset-summary", response_model=schemas.DatasetSummaryResponse)
+async def dataset_summary() -> schemas.DatasetSummaryResponse:
+    return training.resumen_dataset()
+
+@app.get("/vision/train/status", response_model=schemas.TrainStatusResponse)
+async def train_status() -> schemas.TrainStatusResponse:
+    return training.estado_actual()
+
+@app.post("/vision/train", response_model=schemas.TrainStatusResponse)
+async def train(payload: schemas.TrainRequest) -> schemas.TrainStatusResponse:
+    """Lanza el fine-tuning de YOLO sobre el dataset anotado."""
+    return await training.entrenar(payload)
+```
+
+### 15.6 Orquestador — [`ai-local/app/engines/training.py`](../../ai-local/app/engines/training.py)
+
+El orquestador mantiene un **estado global en memoria** y lanza el pipeline en un **subproceso
+aislado**:
+
+```python
+ESTADO_ENTRENAMIENTO: dict = {
+    "en_curso": False,
+    "iniciado_en": None,
+    "terminado_en": None,
+    "exito": None,
+    "mensaje": "",
+    "run_name": None,
+    "log_tail": [],
+}
+```
+
+**¿Por qué un subproceso?** Porque `ultralytics`/`torch` pueden consumir toda la RAM y bloquear
+el event loop de FastAPI. Al aislarlo en un subproceso:
+
+1. El motor sigue respondiendo a `/status` y `/vision/detect` mientras entrena.
+2. Si el subproceso muere (OOM), el motor sobrevive.
+3. Se puede matar el entrenamiento sin reiniciar el contenedor.
+
+La función `_correr_subproceso()` ejecuta el pipeline y captura el log:
+
+```python
+async def _correr_subproceso(
+    cmd: list[str],
+    log_path: Path,
+    timeout: float,
+) -> tuple[int, str]:
+    """Ejecuta el pipeline en un subproceso y devuelve (returncode, tail_log)."""
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        proceso = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=log_file,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            await asyncio.wait_for(proceso.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proceso.kill()
+            await proceso.wait()
+            return -1, "Timeout: el entrenamiento excedió el límite."
+    return proceso.returncode or 0, _leer_tail_log(log_path)
+```
+
+**Hot-reload del modelo:** al terminar con éxito, el orquestador recarga el modelo en memoria
+**sin reiniciar el contenedor**:
+
+```python
+if exito:
+    best = Path("/training/best.pt")
+    if best.exists():
+        vision.cargar_modelo(str(best))  # hot-reload
+```
+
+Esto es clave: el operador entrena y **de inmediato** el POS usa el modelo nuevo.
+
+### 15.7 Pipeline — [`ai-local/train/train_bakery.py`](../../ai-local/train/train_bakery.py)
+
+El pipeline tiene **4 etapas** independientes y testeables:
+
+| Etapa | Función | Qué hace |
+|---|---|---|
+| 1. Descubrir | `descubrir_dataset(skus)` | Empareja cada imagen con su `.txt` YOLO |
+| 2. Construir | `construir_dataset_yolo(...)` | Copia a `train/` y `val/` con split 80/20 |
+| 3. Entrenar | `entrenar(...)` | Llama a `YOLO.train()` con el dataset temporal |
+| 4. Publicar | `publicar_modelo(best, destino)` | Copia `best.pt` a `/training/best.pt` |
+
+```python
+def descubrir_dataset(skus: list[str] | None = None) -> dict[str, list[tuple[Path, Path]]]:
+    """Devuelve {sku: [(imagen, label), ...]} solo para pares completos."""
+    ...
+
+def construir_dataset_yolo(
+    pares: dict[str, list[tuple[Path, Path]]],
+    destino: Path,
+    val_ratio: float = 0.2,
+) -> Path:
+    """Copia las imágenes y etiquetas a la estructura YOLO train/val."""
+    ...
+
+def entrenar(dataset_dir: Path, epochs: int, imgsz: int, batch: int, run_name: str) -> Path:
+    """Entrena YOLO y devuelve la ruta del best.pt."""
+    ...
+
+def publicar_modelo(best: Path, destino: Path) -> Path:
+    """Copia el best.pt al destino final (montado como volumen)."""
+    ...
+```
+
+---
+
+## 16. FLUJO COMPLETO PASO A PASO
+
+### 16.1 Camino feliz (happy path)
+
+1. El operador entra al **Centro de IA** → pestaña **Visión**.
+2. Selecciona un producto (SKU) en el desplegable.
+3. Captura fotos con la cámara (`VisionScanner`).
+4. Sincroniza las fotos al backend (`POST /pos/vision/training/upload`).
+5. Anota cada foto dibujando cajas (`AnnotationCanvas`).
+6. Guarda las anotaciones (`POST /pos/vision/annotations`) → se escriben los `.txt` YOLO.
+7. El panel consulta `GET /ai/vision/dataset-summary` y muestra `annotated > 0`.
+8. El botón **"Entrenar modelo"** aparece (solo si hay etiquetas).
+9. El operador elige épocas y pulsa el botón.
+10. `POST /ai/vision/train` → Gateway → Motor → subproceso `train_bakery.py`.
+11. El pipeline descubre, construye, entrena y publica `best.pt`.
+12. El orquestador hace **hot-reload** del modelo.
+13. La UI muestra "✅ Entrenamiento completado con N imágenes".
+14. El POS ya usa el modelo nuevo en la siguiente detección.
+
+### 16.2 Caminos de error
+
+| # | Escenario | Dónde falla | Respuesta | UX |
+|---|---|---|---|---|
+| 1 | Motor de IA caído | Gateway no conecta | **503** `IA_NO_DISPONIBLE` | "El motor de IA Local no está disponible. Entrena más tarde." |
+| 2 | Dataset vacío (0 etiquetas) | Motor valida | **400** | "No hay imágenes anotadas para entrenar." |
+| 3 | Entrenamiento ya en curso | Motor valida | **409** | "Ya hay un entrenamiento en curso." |
+| 4 | Timeout del entrenamiento | Subproceso excede `AI_TRAIN_TIMEOUT` | **503** | "El entrenamiento tardó demasiado." |
+
+---
+
+## 17. DECISIONES DE DISEÑO Y SU JUSTIFICACIÓN
+
+### 17.1 Subproceso aislado en vez de hilo
+
+**Decisión:** el entrenamiento corre en un subproceso (`asyncio.create_subprocess_exec`), no en
+un hilo ni en el event loop.
+
+**Razón:** `torch` y `ultralytics` son librerías CPU-intensivas y con estado global. Un hilo
+compartiría el GIL y bloquearía el event loop. Un subproceso aísla la memoria y permite matarlo
+sin tumbar el motor.
+
+### 17.2 Hot-reload en vez de reinicio
+
+**Decisión:** al terminar el entrenamiento, se recarga el modelo en memoria
+(`vision.cargar_modelo(best.pt)`).
+
+**Razón:** reiniciar el contenedor del motor tardaría ~30s y dejaría la IA caída durante ese
+tiempo. El hot-reload es instantáneo y transparente para el POS.
+
+### 17.3 Dataset de solo lectura
+
+**Decisión:** el volumen del dataset se monta como **solo lectura** en el contenedor del motor.
+
+**Razón:** el motor **nunca** debe modificar las imágenes originales del operador. Solo las lee
+para construir el dataset temporal de entrenamiento.
+
+### 17.4 Ruta de salida fija
+
+**Decisión:** el modelo entrenado siempre se publica en `/training/best.pt` (ruta fija).
+
+**Razón:** el hot-reload necesita una ruta **conocida y estable**. Si la ruta variara por
+`run_name`, el motor no sabría qué archivo cargar.
+
+### 17.5 Timeout separado para el entrenamiento
+
+**Decisión:** `AI_TRAIN_TIMEOUT` (default 1h) es independiente de `AI_LOCAL_TIMEOUT` (default 30s).
+
+**Razón:** ver §15.4. Un timeout único rompería uno de los dos casos de uso.
+
+### 17.6 El botón de entrenar solo aparece con etiquetas
+
+**Decisión:** la UI oculta el bloque de entrenamiento si `dataset.annotated === 0`.
+
+**Razón:** entrenar con cero etiquetas es un error garantizado. Es mejor **no ofrecer** la
+acción que ofrecerla y fallar.
+
+### 17.7 Errores de negocio vs errores de infraestructura
+
+**Decisión:** los 4xx del motor se propagan; los 5xx se convierten en 503.
+
+**Razón:** un dataset vacío (400) es información útil para el operador. Un motor caído (503) es
+un fallo de infraestructura que el POS debe poder tolerar sin romperse.
+
+---
+
+## 18. CONTRATOS DE DATOS (SCHEMAS)
+
+### 18.1 `TrainRequest` (entrada)
+
+```python
+class TrainRequest(BaseModel):
+    skus: Optional[List[str]] = Field(
+        default=None,
+        description="SKUs a entrenar. None = todos los que tengan dataset.",
+    )
+    epochs: int = Field(default=50, ge=1, le=500)
+    imgsz: int = Field(default=640, ge=160, le=1280)
+    batch: int = Field(default=8, ge=1, le=64)
+    run_name: str = Field(default="bakery")
+```
+
+### 18.2 `TrainStatusResponse` (salida)
+
+```python
+class TrainStatusResponse(BaseModel):
+    en_curso: bool
+    exito: Optional[bool] = None
+    mensaje: str = ""
+    run_name: Optional[str] = None
+    imagenes_usadas: int = 0
+    log_tail: List[str] = Field(default_factory=list)
+```
+
+### 18.3 `DatasetSummaryResponse` (salida)
+
+```python
+class DatasetSummaryResponse(BaseModel):
+    total_imagenes: int
+    anotadas: int
+    sin_anotar: int
+    por_sku: dict[str, int] = Field(default_factory=dict)
+```
+
+---
+
+## 19. FORMATO YOLO DE LAS ETIQUETAS
+
+Cada imagen `foto.jpg` tiene un archivo `foto.txt` hermano con **una línea por caja**:
+
+```
+<class_id> <x_center> <y_center> <width> <height>
+```
+
+- Todos los valores están **normalizados** entre 0 y 1 (relativos al ancho/alto de la imagen).
+- `class_id` es `0` (una sola clase: "pan").
+- Ejemplo: `0 0.512 0.487 0.221 0.334`
+
+**Conversión desde píxeles (lo que hace `AnnotationCanvas`):**
+
+```javascript
+const xCenter = (x + w / 2) / imageWidth;
+const yCenter = (y + h / 2) / imageHeight;
+const normW = w / imageWidth;
+const normH = h / imageHeight;
+```
+
+**¿Por qué normalizado?** Porque YOLO redimensiona las imágenes a `imgsz` durante el
+entrenamiento. Las coordenadas normalizadas son **invariantes a la resolución**.
+
+---
+
+## 20. CONFIGURACIÓN Y DESPLIEGUE
+
+### 20.1 Variables de entorno
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `AI_LOCAL_URL` | `http://ia-local:9000` | URL del motor de IA Local |
+| `AI_LOCAL_TIMEOUT` | `30` | Timeout (s) para detección/transcripción |
+| `AI_TRAIN_TIMEOUT` | `3600` | Timeout (s) para el entrenamiento |
+| `AI_HABILITADA` | `true` | Interruptor maestro de la IA |
+
+### 20.2 Volúmenes (docker-compose.ai.yml)
+
+| Volumen host | Volumen contenedor | Modo | Propósito |
+|---|---|---|---|
+| `./ai-local/train` | `/app/train` | `ro` | Código del pipeline |
+| `./data/vision_dataset` | `/dataset` | `ro` | Imágenes y etiquetas del operador |
+| `./data/vision_models` | `/training` | `rw` | Salida del modelo (`best.pt`) |
+
+### 20.3 Comandos
+
+```bash
+# Levantar el motor de IA
+docker compose -f docker-compose.ai.yml up -d
+
+# Ver logs del motor
+docker compose -f docker-compose.ai.yml logs -f ia-local
+
+# Verificar estado
+curl http://localhost:9000/status
+```
+
+---
+
+## 21. VALIDACIÓN (SMOKE TEST)
+
+**Dataset de prueba:** 8 imágenes anotadas de un SKU.
+
+**Parámetros:** `epochs=1`, `imgsz=160`, `batch=2`.
+
+**Resultado esperado:**
+
+| Métrica | Valor |
+|---|---|
+| Duración | ~2-4 min (CPU) |
+| `best.pt` | ~6,189,866 bytes |
+| `exito` | `true` |
+| Hot-reload | Modelo recargado sin reinicio |
+
+**Cómo verificar:**
+
+```bash
+# 1. Lanzar el entrenamiento
+curl -X POST http://localhost:3001/api/v1/ai/vision/train \
+  -H "Content-Type: application/json" \
+  -d '{"epochs":1,"imgsz":160,"batch":2}'
+
+# 2. Consultar el estado
+curl http://localhost:3001/api/v1/ai/vision/train/status
+
+# 3. Verificar que el modelo se publicó
+docker exec ia-local ls -la /training/best.pt
+```
+
+---
+
+## 22. BUG RESUELTO — LA RUTA DOBLE `apps/api`
+
+### 22.1 Síntoma
+
+El entrenamiento fallaba con "dataset no encontrado" aunque las imágenes existían.
+
+### 22.2 Causa raíz
+
+El contenedor del motor montaba el dataset en una ruta que incluía `apps/api` **dos veces**:
+
+```
+/app/apps/api/data/vision_dataset   ← ruta real (incorrecta)
+/app/data/vision_dataset            ← ruta esperada
+```
+
+El `docker-compose.ai.yml` tenía un `working_dir` que duplicaba el prefijo.
+
+### 22.3 Solución
+
+Se corrigió el `volumes` del `docker-compose.ai.yml` para montar en la ruta absoluta correcta:
+
+```yaml
+volumes:
+  - ./data/vision_dataset:/dataset:ro
+```
+
+Y el pipeline usa la constante `DATASET_DIR = Path("/dataset")` en vez de una ruta relativa.
+
+### 22.4 Lección
+
+**Nunca usar rutas relativas dentro de contenedores.** El `working_dir` puede cambiar y romper
+todo. Siempre rutas absolutas desde la raíz del contenedor.
+
+---
+
+## 23. SEGURIDAD Y LÍMITES
+
+### 23.1 Límites de recursos
+
+| Recurso | Límite | Razón |
+|---|---|---|
+| Memoria del motor | `mem_limit: 6g` | `torch` + YOLO consumen mucha RAM |
+| Concurrencia de entrenamiento | 1 (mutex `ESTADO_ENTRENAMIENTO`) | Evitar 2 entrenamientos simultáneos |
+| Timeout de entrenamiento | 1h | Evitar procesos zombis |
+
+### 23.2 Protección contra path traversal
+
+El endpoint `POST /pos/vision/annotations` valida que el `sku` y el `filename` **no contengan**
+`..` ni separadores de ruta:
+
+```python
+if ".." in sku or "/" in sku or "\\" in sku:
+    raise HTTPException(status_code=400, detail="SKU inválido")
+```
+
+### 23.3 Aislamiento del motor
+
+El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP. Solo ve:
+
+- El dataset (solo lectura).
+- El directorio de salida del modelo (escritura).
+- La red interna de Docker.
+
+---
+
+## 24. ARCHIVOS INVOLUCRADOS
+
+### 24.1 Frontend
+
+| Archivo | Rol |
+|---|---|
+| [`apps/pos/VisionTrainingUI.jsx`](../../apps/pos/VisionTrainingUI.jsx) | Panel de Visión (captura, anotación, entrenamiento) |
+| [`apps/pos/components/AnnotationCanvas.jsx`](../../apps/pos/components/AnnotationCanvas.jsx) | Lienzo de dibujo de cajas |
+| [`apps/pos/VisionScanner.jsx`](../../apps/pos/VisionScanner.jsx) | Captura de cámara |
+| [`apps/pos/services/POSService.js`](../../apps/pos/services/POSService.js) | Cliente HTTP (3 métodos de entrenamiento) |
+
+### 24.2 Backend (Gateway)
+
+| Archivo | Rol |
+|---|---|
+| [`apps/api/modules/ai/router.py`](../../apps/api/modules/ai/router.py) | 3 endpoints de entrenamiento |
+| [`apps/api/modules/ai/service.py`](../../apps/api/modules/ai/service.py) | Traducción de errores + timeouts |
+| [`apps/api/modules/ai/schemas.py`](../../apps/api/modules/ai/schemas.py) | Contratos Pydantic |
+| [`apps/api/modules/pos/service.py`](../../apps/api/modules/pos/service.py) | Upload, anotaciones, dataset |
+
+### 24.3 Motor de IA
+
+| Archivo | Rol |
+|---|---|
+| [`ai-local/app/main.py`](../../ai-local/app/main.py) | 3 endpoints de entrenamiento |
+| [`ai-local/app/engines/training.py`](../../ai-local/app/engines/training.py) | Orquestador + subproceso + hot-reload |
+| [`ai-local/train/train_bakery.py`](../../ai-local/train/train_bakery.py) | Pipeline de 4 etapas |
+| [`ai-local/app/engines/vision.py`](../../ai-local/app/engines/vision.py) | Carga del modelo YOLO |
+
+---
+
+## 25. ESTADO ACTUAL Y TRABAJO PENDIENTE
+
+### 25.1 Estado
+
+| Componente | Estado |
+|---|---|
+| Captura de fotos | ✅ Funcional |
+| Anotación de cajas | ✅ Funcional |
+| Upload al backend | ✅ Funcional |
+| Dataset summary | ✅ Funcional |
+| Entrenamiento | ✅ Funcional (validado con smoke test) |
+| Hot-reload | ✅ Funcional |
+| Integración en Centro de IA | ✅ Funcional (v26.1) |
+
+### 25.2 Trabajo pendiente
+
+- **Validación manual en navegador** de los 5 flujos del Centro de IA (FASE 3).
+- **Ampliar el dataset** a más SKUs para mejorar la precisión.
+- **Evaluar GPU** si el volumen de entrenamiento crece.
+
+---
+
+## 26. GLOSARIO
+
+| Término | Definición |
+|---|---|
+| **Fine-tuning** | Reentrenar un modelo preentrenado con datos propios |
+| **YOLO** | "You Only Look Once", modelo de detección de objetos |
+| **best.pt** | El mejor checkpoint del entrenamiento (pesos del modelo) |
+| **Hot-reload** | Recargar un modelo en memoria sin reiniciar el proceso |
+| **Subproceso** | Proceso hijo aislado del proceso principal |
+| **Dataset** | Conjunto de imágenes + etiquetas para entrenar |
+| **Anotación** | Dibujar cajas sobre una imagen para etiquetar objetos |
+| **Epoch** | Una pasada completa sobre el dataset de entrenamiento |
+| **imgsz** | Tamaño al que se redimensionan las imágenes para entrenar |
+| **batch** | Número de imágenes procesadas antes de actualizar los pesos |
+| **SKU** | Stock Keeping Unit, identificador único de un producto |
+| **Gateway** | Capa intermedia que traduce y protege al ERP del motor |
+
+---
+
+## 27. HISTORIAL DE CAMBIOS
+
+| Versión | Fecha | Cambio |
+|---|---|---|
+| v7 Fase 8 | — | Fine-tuning de YOLO: pipeline, orquestador, hot-reload, smoke test |
+| v26.1 | 22 Sep 2026 | Fusión de la documentación de entrenamiento dentro del Centro de IA |
+
+---
+
+> **Fin del documento.** Este documento absorbe y reemplaza a
+> `DOCUMENTACION_MODULO_ENTRENAMIENTO_IA.md` (eliminado en v26.1).
