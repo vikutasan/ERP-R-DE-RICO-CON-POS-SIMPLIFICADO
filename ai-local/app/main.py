@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from . import schemas
-from .engines import vision, voice, nlu
+from .engines import vision, voice, nlu, training
 
 logger = logging.getLogger("rderico.ia.motor")
 logging.basicConfig(level=logging.INFO)
@@ -189,3 +189,68 @@ async def parse_intent(payload: schemas.VoiceParseIntentRequest) -> schemas.Voic
             status_code=503,
             detail={"codigo": "MOTOR_NLU_ERROR", "mensaje": str(exc)},
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# v7 (Fase 8) — Fine-tuning de YOLO
+# ---------------------------------------------------------------------------
+# Estos endpoints NO son parte del contrato human-in-the-loop del POS: son
+# herramientas de MANTENIMIENTO. El ERP los proxya desde el modulo ai.
+# ---------------------------------------------------------------------------
+@app.get("/vision/dataset-summary", response_model=schemas.DatasetSummaryResponse)
+async def dataset_summary() -> schemas.DatasetSummaryResponse:
+    """Resumen del dataset anotado disponible para entrenar.
+
+    Permite a la UI pre-validar ANTES de lanzar un entrenamiento largo:
+    si no hay etiquetas, no tiene sentido empezar.
+    """
+    return schemas.DatasetSummaryResponse(**training._resumen_dataset())
+
+
+@app.get("/vision/train/status", response_model=schemas.TrainStatusResponse)
+async def train_status() -> schemas.TrainStatusResponse:
+    """Estado del entrenamiento en curso (o del ultimo).
+
+    NUNCA lanza error: siempre responde 200 con el estado real.
+    """
+    return schemas.TrainStatusResponse(**training.estado_actual())
+
+
+@app.post("/vision/train", response_model=schemas.TrainStatusResponse)
+async def train(payload: schemas.TrainRequest) -> schemas.TrainStatusResponse:
+    """Lanza el fine-tuning de YOLO sobre el dataset anotado.
+
+    BLOQUEANTE respecto al cliente (espera a que termine) pero NO respecto al
+    motor: el entrenamiento corre en un SUBPROCESO, asi que /status, /vision/detect
+    y /voice/* siguen respondiendo mientras entrena.
+
+    Si ya hay un entrenamiento en curso -> 409.
+    Si no hay etiquetas -> 400.
+    """
+    if training.ESTADO_ENTRENAMIENTO["activo"]:
+        raise HTTPException(
+            status_code=409,
+            detail={"codigo": "ENTRENAMIENTO_EN_CURSO", "mensaje": "Ya hay un entrenamiento en curso."},
+        )
+    try:
+        resultado = await training.entrenar(
+            skus=payload.skus,
+            epochs=payload.epochs,
+            imgsz=payload.imgsz,
+            batch=payload.batch,
+            run_name=payload.run_name,
+        )
+    except ValueError as exc:
+        # Pre-validacion fallida (sin etiquetas, etc.) -> error del cliente.
+        raise HTTPException(
+            status_code=400,
+            detail={"codigo": "DATASET_INVALIDO", "mensaje": str(exc)},
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error en entrenamiento: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "MOTOR_ENTRENAMIENTO_ERROR", "mensaje": str(exc)},
+        ) from exc
+
+    return schemas.TrainStatusResponse(**resultado)

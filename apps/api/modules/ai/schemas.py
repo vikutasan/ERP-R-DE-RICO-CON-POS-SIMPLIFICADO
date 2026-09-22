@@ -88,3 +88,43 @@ class VoiceParseIntentResponse(BaseModel):
     confianza: float = Field(0.0, ge=0.0, le=1.0)
     texto_original: str = ""
     requiere_confirmacion: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Entrenamiento (v7 Fase 8 — fine-tuning de YOLO)
+# ---------------------------------------------------------------------------
+# NOTA: estos contratos NO son human-in-the-loop del POS. Son herramientas de
+# MANTENIMIENTO que el operador/admin dispara desde la pestana Anotacion.
+# ---------------------------------------------------------------------------
+class TrainRequest(BaseModel):
+    """Peticion de fine-tuning. Todos los parametros tienen defaults seguros."""
+
+    skus: Optional[List[str]] = Field(
+        None, description="SKUs a entrenar. Si falta, entrena con TODOS."
+    )
+    epochs: int = Field(50, ge=1, le=500, description="Epocas de entrenamiento")
+    imgsz: int = Field(640, ge=160, le=1280, description="Tamano de imagen")
+    batch: int = Field(8, ge=1, le=64, description="Tamano de lote")
+    run_name: str = Field("bakery", description="Nombre del run (carpeta de salida)")
+
+
+class TrainStatusResponse(BaseModel):
+    """Estado del entrenamiento. La UI lo consulta para mostrar progreso."""
+
+    activo: bool = False
+    iniciado_en: Optional[str] = None
+    terminado_en: Optional[str] = None
+    ok: Optional[bool] = None
+    mensaje: str = ""
+    resumen: Optional[dict] = None
+    error: Optional[str] = None
+    log_tail: List[str] = Field(default_factory=list)
+
+
+class DatasetSummaryResponse(BaseModel):
+    """Resumen del dataset anotado disponible para entrenar."""
+
+    disponible: bool = False
+    skus: dict = Field(default_factory=dict)
+    total_imagenes: int = 0
+    total_etiquetas: int = 0

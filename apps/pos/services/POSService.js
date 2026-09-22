@@ -203,6 +203,40 @@ class POSService {
         if (!res.ok) throw new Error("Error en predicción local");
         return res.json();
     }
+
+    // v7 (Fase 8): fine-tuning de YOLO sobre el dataset anotado.
+    // El entrenamiento tarda minutos: el backend usa un timeout largo (1h).
+    async getDatasetSummary() {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/dataset-summary`, { cache: 'no-store' });
+        if (!res.ok) throw new Error("Error consultando el dataset");
+        return res.json();
+    }
+
+    async getTrainStatus() {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/train/status`, { cache: 'no-store' });
+        if (!res.ok) throw new Error("Error consultando el estado de entrenamiento");
+        return res.json();
+    }
+
+    async trainVision({ skus = null, epochs = 50, imgsz = 640, batch = 8, runName = 'bakery' } = {}) {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/ai/vision/train`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ skus, epochs, imgsz, batch, run_name: runName })
+        });
+        if (!res.ok) {
+            // 400/409 traen un detail con mensaje accionable; 503 es IA caida.
+            let detalle = null;
+            try { detalle = (await res.json()).detail; } catch { /* sin cuerpo */ }
+            const err = new Error(
+                (detalle && detalle.mensaje) || "No se pudo iniciar el entrenamiento"
+            );
+            err.status = res.status;
+            err.codigo = detalle && detalle.codigo;
+            throw err;
+        }
+        return res.json();
+    }
 }
 
 export const posService = new POSService();

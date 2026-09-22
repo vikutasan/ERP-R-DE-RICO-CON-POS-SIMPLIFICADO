@@ -138,6 +138,37 @@ async def _llamar_motor(ruta: str, cuerpo: dict, etiqueta: str) -> dict:
         _lanzar_no_disponible(f"{etiqueta}: respuesta invalida")
 
 
+async def _llamar_motor_get(ruta: str, etiqueta: str) -> dict:
+    """Igual que `_llamar_motor` pero con GET (para consultas de estado).
+
+    Se separa porque el motor expone /vision/train/status y
+    /vision/dataset-summary como GET (idempotentes, sin cuerpo).
+    """
+    url = f"{_url_motor_ia()}{ruta}"
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_motor_ia()) as cliente:
+            respuesta = await cliente.get(url)
+    except httpx.TimeoutException:
+        logger.warning("Motor IA timeout en GET %s", ruta)
+        _lanzar_no_disponible(f"{etiqueta}: timeout")
+    except httpx.HTTPError as exc:
+        logger.warning("Motor IA inalcanzable en GET %s: %s", ruta, exc)
+        _lanzar_no_disponible(f"{etiqueta}: motor inalcanzable")
+
+    if respuesta.status_code >= 400:
+        logger.warning(
+            "Motor IA devolvio %s en GET %s: %s",
+            respuesta.status_code, ruta, respuesta.text[:200],
+        )
+        _lanzar_no_disponible(f"{etiqueta}: motor no disponible")
+
+    try:
+        return respuesta.json()
+    except ValueError:
+        logger.error("Motor IA devolvio JSON invalido en GET %s", ruta)
+        _lanzar_no_disponible(f"{etiqueta}: respuesta invalida")
+
+
 def estado_gateway() -> dict:
     """Estado del gateway para diagnostico (no expone secretos)."""
     habilitada = _ia_habilitada()
@@ -249,3 +280,89 @@ async def interpretar_intencion(payload: schemas.VoiceParseIntentRequest) -> sch
         texto_original=payload.texto,
         requiere_confirmacion=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# v7 (Fase 8) — Entrenamiento (fine-tuning de YOLO)
+# ---------------------------------------------------------------------------
+# El entrenamiento tarda MINUTOS. El timeout por defecto (120s) no alcanza,
+# asi que se usa uno dedicado y configurable (AI_LOCAL_TRAIN_TIMEOUT).
+# ---------------------------------------------------------------------------
+_TIMEOUT_ENTRENAMIENTO_DEFECTO = 3600.0  # 1 hora
+
+
+def _timeout_entrenamiento() -> float:
+    """Timeout (segundos) para el entrenamiento. Default 1h."""
+    try:
+        return float(os.getenv("AI_LOCAL_TRAIN_TIMEOUT", str(_TIMEOUT_ENTRENAMIENTO_DEFECTO)))
+    except (TypeError, ValueError):
+        return _TIMEOUT_ENTRENAMIENTO_DEFECTO
+
+
+async def resumen_dataset() -> schemas.DatasetSummaryResponse:
+    """Proxy del resumen del dataset anotado (pre-validacion de la UI)."""
+    _verificar_configuracion("dataset")
+    datos = await _llamar_motor_get("/vision/dataset-summary", "dataset")
+    return schemas.DatasetSummaryResponse(
+        disponible=bool(datos.get("disponible")),
+        skus=datos.get("skus") or {},
+        total_imagenes=int(datos.get("total_imagenes") or 0),
+        total_etiquetas=int(datos.get("total_etiquetas") or 0),
+    )
+
+
+async def estado_entrenamiento() -> schemas.TrainStatusResponse:
+    """Proxy del estado del entrenamiento en curso (o del ultimo)."""
+    _verificar_configuracion("entrenamiento")
+    datos = await _llamar_motor_get("/vision/train/status", "entrenamiento")
+    return schemas.TrainStatusResponse(**datos)
+
+
+async def entrenar_vision(payload: schemas.TrainRequest) -> schemas.TrainStatusResponse:
+    """Lanza el fine-tuning en el motor y espera el resultado.
+
+    Usa un timeout LARGO (1h por defecto): el entrenamiento es lento y
+    bloquearia el request. La UI debe mostrar un spinner y consultar
+    /vision/train/status en paralelo si quiere progreso.
+    """
+    _verificar_configuracion("entrenamiento")
+
+    cuerpo_motor = {
+        "skus": payload.skus,
+        "epochs": payload.epochs,
+        "imgsz": payload.imgsz,
+        "batch": payload.batch,
+        "run_name": payload.run_name,
+    }
+
+    url = f"{_url_motor_ia()}/vision/train"
+    try:
+        async with httpx.AsyncClient(timeout=_timeout_entrenamiento()) as cliente:
+            respuesta = await cliente.post(url, json=cuerpo_motor)
+    except httpx.TimeoutException:
+        logger.warning("Entrenamiento: timeout del motor tras %ss", _timeout_entrenamiento())
+        _lanzar_no_disponible("entrenamiento: timeout")
+    except httpx.HTTPError as exc:
+        logger.warning("Entrenamiento: motor inalcanzable: %s", exc)
+        _lanzar_no_disponible("entrenamiento: motor inalcanzable")
+
+    # 409 (ya hay uno en curso) y 400 (dataset invalido) son errores del
+    # CLIENTE, no de disponibilidad: se propagan tal cual para que la UI
+    # muestre el mensaje correcto.
+    if respuesta.status_code in (400, 409):
+        detalle = {}
+        try:
+            detalle = respuesta.json().get("detail") or {}
+        except ValueError:
+            detalle = {"mensaje": respuesta.text[:200]}
+        raise HTTPException(status_code=respuesta.status_code, detail=detalle)
+
+    if respuesta.status_code >= 500:
+        logger.warning("Entrenamiento: motor devolvio %s", respuesta.status_code)
+        _lanzar_no_disponible("entrenamiento: motor no disponible")
+
+    try:
+        return schemas.TrainStatusResponse(**respuesta.json())
+    except (ValueError, TypeError):
+        logger.error("Entrenamiento: respuesta invalida del motor")
+        _lanzar_no_disponible("entrenamiento: respuesta invalida")

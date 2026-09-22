@@ -820,17 +820,13 @@ class POSService:
         raise HTTPException(status_code=500, detail="No se pudo generar un folio único después de 3 intentos")
 
     async def upload_training_images(self, payload: schemas.VisionTrainingUpload):
-        import os
         import base64
         import time
-        from pathlib import Path
-        
-        base_dir = Path("apps/api/static/training")
-        base_dir.mkdir(parents=True, exist_ok=True)
-        
-        safe_sku = "".join(c for c in payload.sku if c.isalnum() or c in ("-", "_")).rstrip()
-        sku_dir = base_dir / safe_sku
-        sku_dir.mkdir(parents=True, exist_ok=True)
+
+        # v7 (Fase 8): usa la MISMA raiz configurable que la anotacion
+        # (VISION_TRAINING_DIR) para que las imagenes subidas y sus labels
+        # vivan en el directorio que el motor de IA monta como /dataset.
+        sku_dir = POSService._training_dir(payload.sku)
         
         saved_files = []
         for i, b64_str in enumerate(payload.images):
@@ -863,6 +859,29 @@ class POSService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _training_base_dir() -> "Path":
+        """Directorio RAIZ del dataset de entrenamiento (imagenes + labels YOLO).
+
+        v7 (Fase 8): la ruta es configurable via `VISION_TRAINING_DIR` para que
+        el mismo directorio fisico pueda montarse en el motor de IA (`ia-local`)
+        como `/dataset`. Si no se define, se usa una ruta ABSOLUTA por defecto
+        (`/app/static/training`) para que NO dependa del CWD del proceso.
+
+        Antes se usaba la ruta relativa `apps/api/static/training`, que dentro
+        del contenedor (WORKDIR `/app`, volumen `./apps/api:/app`) resolvia a
+        `/app/apps/api/static/training` -> host `apps/api/apps/api/static/training`.
+        Ese doble `apps/api` hacia que el volumen del motor apuntara a una
+        carpeta vacia. La ruta absoluta elimina la ambiguedad.
+        """
+        import os
+        from pathlib import Path
+
+        base = os.getenv("VISION_TRAINING_DIR", "/app/static/training")
+        base_dir = Path(base)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir
+
+    @staticmethod
     def _safe_sku(sku: str) -> str:
         """Sanitiza el SKU para usarlo como nombre de carpeta (anti path-traversal)."""
         return "".join(c for c in (sku or "") if c.isalnum() or c in ("-", "_")).rstrip()
@@ -870,11 +889,7 @@ class POSService:
     @staticmethod
     def _training_dir(sku: str) -> "Path":
         """Carpeta del dataset de un SKU. Crea el arbol si no existe."""
-        from pathlib import Path
-
-        base_dir = Path("apps/api/static/training")
-        base_dir.mkdir(parents=True, exist_ok=True)
-        sku_dir = base_dir / POSService._safe_sku(sku)
+        sku_dir = POSService._training_base_dir() / POSService._safe_sku(sku)
         sku_dir.mkdir(parents=True, exist_ok=True)
         return sku_dir
 

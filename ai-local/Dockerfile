@@ -59,12 +59,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --- Codigo del motor ---
 COPY app/ ./app/
 
-# --- Directorio de modelos (volumen) ---
-RUN mkdir -p /models
+# --- Pipeline de fine-tuning (v7 Fase 8) ---
+# Se copia el paquete train/ para que el endpoint /vision/train pueda
+# lanzarlo como subproceso: python -m train.train_bakery
+COPY train/ ./train/
+
+# --- Directorios de trabajo (volumenes) ---
+# /models    : pesos base (yolov8n.pt) persistidos
+# /dataset   : dataset anotado (READ-ONLY, lo monta el compose)
+# /training  : salida del entrenamiento (runs/, data.yaml, best.pt)
+RUN mkdir -p /models /dataset /training
 
 # --- Usuario no-root (seguridad) ---
 RUN useradd --create-home --shell /bin/bash iauser \
-    && chown -R iauser:iauser /app /models
+    && chown -R iauser:iauser /app /models /training
 USER iauser
 
 EXPOSE 9000

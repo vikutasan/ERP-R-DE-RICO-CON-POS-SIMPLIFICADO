@@ -26,9 +26,19 @@ services:
       - ../ERP-R-DE-RICO-DATA/images:/app/static/images
       - ../ERP-R-DE-RICO-DATA/config/terminal_status.json:/app/terminal_status.json
       - ../ERP-R-DE-RICO-DATA/totem_media:/app/media/totem      # V16: imágenes del tótem
+      # v7 (Fase 8): dataset de entrenamiento de vision (imagenes + labels YOLO).
+      # Se monta en una ruta ABSOLUTA y estable (/app/static/training) para que
+      # el MISMO directorio fisico del host pueda montarse en el motor de IA
+      # (ia-local) como /dataset. Antes se usaba la ruta relativa
+      # "apps/api/static/training" que dentro del contenedor resolvia a
+      # /app/apps/api/static/training (doble apps/api) -> carpeta distinta.
+      - ../ERP-R-DE-RICO-DATA/vision_training:/app/static/training
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - PORT=3001
+      # v7 (Fase 8): raiz del dataset de entrenamiento de vision. Debe coincidir
+      # con el bind mount de arriba y con el volumen /dataset de ia-local.
+      - VISION_TRAINING_DIR=/app/static/training
       # ---------------------------------------------------------------------
       # AI Gateway (v7 Fase 5) — Motor de IA Local
       # ---------------------------------------------------------------------

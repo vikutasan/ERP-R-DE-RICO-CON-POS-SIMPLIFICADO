@@ -106,3 +106,40 @@ class VoiceParseIntentResponse(BaseModel):
     cantidad: Optional[float] = Field(None, description="Cantidad mencionada")
     unidad: Optional[str] = Field(None, description="Unidad mencionada (kg, pieza, caja)")
     confianza: float = Field(0.0, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Entrenamiento (v7 Fase 8 — fine-tuning)
+# ---------------------------------------------------------------------------
+class TrainRequest(BaseModel):
+    """Peticion de fine-tuning. Todos los parametros tienen defaults seguros."""
+
+    skus: Optional[List[str]] = Field(
+        None, description="SKUs a entrenar. Si falta, entrena con TODOS."
+    )
+    epochs: int = Field(50, ge=1, le=500, description="Epocas de entrenamiento")
+    imgsz: int = Field(640, ge=160, le=1280, description="Tamano de imagen")
+    batch: int = Field(8, ge=1, le=64, description="Tamano de lote")
+    run_name: str = Field("bakery", description="Nombre del run (carpeta de salida)")
+
+
+class TrainStatusResponse(BaseModel):
+    """Estado del entrenamiento. El ERP lo consulta para mostrar progreso."""
+
+    activo: bool = Field(..., description="True si hay un entrenamiento en curso")
+    iniciado_en: Optional[str] = None
+    terminado_en: Optional[str] = None
+    ok: Optional[bool] = Field(None, description="None si aun no termina")
+    mensaje: str = Field("", description="Mensaje legible para el operador")
+    resumen: Optional[dict] = Field(None, description="Resumen del entrenamiento")
+    error: Optional[str] = None
+    log_tail: List[str] = Field(default_factory=list, description="Ultimas lineas del log")
+
+
+class DatasetSummaryResponse(BaseModel):
+    """Resumen del dataset disponible para entrenar (pre-validacion)."""
+
+    disponible: bool = Field(..., description="True si /dataset es accesible")
+    skus: dict = Field(default_factory=dict, description="{sku: {imagenes, anotadas}}")
+    total_imagenes: int = Field(0, ge=0)
+    total_etiquetas: int = Field(0, ge=0)

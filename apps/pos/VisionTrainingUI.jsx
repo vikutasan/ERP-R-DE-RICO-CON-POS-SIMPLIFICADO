@@ -43,6 +43,12 @@ export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange
     const [savingAnnotation, setSavingAnnotation] = useState(false);
     const [annotationMsg, setAnnotationMsg] = useState('');
 
+    // --- Estado de entrenamiento (v7 Fase 8) ---
+    const [training, setTraining] = useState(false);
+    const [trainMsg, setTrainMsg] = useState('');
+    const [trainError, setTrainError] = useState('');
+    const [epochs, setEpochs] = useState(50);
+
     // ------------------------------------------------------------------
     // Captura
     // ------------------------------------------------------------------
@@ -144,6 +150,40 @@ export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange
             setAnnotationMsg('❌ No se pudo guardar la anotación.');
         } finally {
             setSavingAnnotation(false);
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // Entrenamiento (v7 Fase 8) — fine-tuning de YOLO
+    // ------------------------------------------------------------------
+    const iniciarEntrenamiento = async () => {
+        if (!selectedProduct) return;
+        setTraining(true);
+        setTrainMsg('');
+        setTrainError('');
+        try {
+            // Entrena SOLO con el SKU seleccionado (el operador anota por producto).
+            const res = await posService.trainVision({
+                skus: [selectedProduct.sku],
+                epochs,
+            });
+            if (res.ok) {
+                setTrainMsg(
+                    `✅ Entrenamiento completado (${res.resumen?.imagenes ?? '?'} imágenes). Modelo recargado.`
+                );
+            } else {
+                setTrainError(res.error || res.mensaje || 'El entrenamiento falló.');
+            }
+        } catch (error) {
+            console.error('Error entrenando:', error);
+            // 503 = motor de IA caído; 400/409 = dataset o concurrencia.
+            setTrainError(
+                error.status === 503
+                    ? 'El motor de IA Local no está disponible. Entrena más tarde.'
+                    : error.message || 'No se pudo iniciar el entrenamiento.'
+            );
+        } finally {
+            setTraining(false);
         }
     };
 
@@ -373,6 +413,53 @@ export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange
                                     {annotationMsg && (
                                         <p className="text-[10px] font-black uppercase tracking-widest text-center text-gray-400">
                                             {annotationMsg}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* v7 (Fase 8): fine-tuning de YOLO con el dataset anotado */}
+                            {dataset && dataset.annotated > 0 && (
+                                <div className="space-y-3 pt-4 border-t border-white/5">
+                                    <label className="text-[10px] font-black uppercase text-gray-500 tracking-widest">
+                                        Entrenar el Modelo (Fine-tuning)
+                                    </label>
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">
+                                            Épocas
+                                        </span>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={500}
+                                            value={epochs}
+                                            disabled={training}
+                                            onChange={(e) => setEpochs(Number(e.target.value) || 1)}
+                                            className="w-24 bg-white/5 border border-white/10 p-3 rounded-xl font-black text-sm outline-none focus:border-indigo-500/50 disabled:opacity-40"
+                                        />
+                                    </div>
+                                    <button
+                                        disabled={training}
+                                        onClick={iniciarEntrenamiento}
+                                        className="w-full bg-indigo-600 font-black py-5 rounded-2xl uppercase tracking-widest text-xs shadow-2xl hover:bg-indigo-500 transition-all disabled:opacity-40 active:scale-95"
+                                    >
+                                        {training
+                                            ? '🧠 Entrenando... (puede tardar minutos)'
+                                            : `🧠 Entrenar con ${dataset.annotated} imagen(es)`}
+                                    </button>
+                                    {training && (
+                                        <p className="text-[9px] font-bold italic text-gray-500 text-center">
+                                            El motor sigue operando con el modelo anterior mientras entrena.
+                                        </p>
+                                    )}
+                                    {trainMsg && (
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-center text-green-400">
+                                            {trainMsg}
+                                        </p>
+                                    )}
+                                    {trainError && (
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-center text-red-400">
+                                            {trainError}
                                         </p>
                                     )}
                                 </div>

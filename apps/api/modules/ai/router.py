@@ -34,3 +34,27 @@ async def voice_transcribe(payload: schemas.VoiceTranscribeRequest):
 async def voice_parse_intent(payload: schemas.VoiceParseIntentRequest):
     """NLU texto -> intencion JSON con fallback 503 IA_NO_DISPONIBLE."""
     return await service.interpretar_intencion(payload)
+
+
+# ---------------------------------------------------------------------------
+# v7 (Fase 8) — Entrenamiento (fine-tuning de YOLO)
+# ---------------------------------------------------------------------------
+# Herramientas de MANTENIMIENTO, no del flujo del POS. La pestana Anotacion
+# las consume para entrenar el modelo con el dataset anotado por el operador.
+# ---------------------------------------------------------------------------
+@router.get("/vision/dataset-summary", response_model=schemas.DatasetSummaryResponse)
+async def vision_dataset_summary():
+    """Resumen del dataset anotado (pre-validacion antes de entrenar)."""
+    return await service.resumen_dataset()
+
+
+@router.get("/vision/train/status", response_model=schemas.TrainStatusResponse)
+async def vision_train_status():
+    """Estado del entrenamiento en curso (o del ultimo)."""
+    return await service.estado_entrenamiento()
+
+
+@router.post("/vision/train", response_model=schemas.TrainStatusResponse)
+async def vision_train(payload: schemas.TrainRequest):
+    """Lanza el fine-tuning de YOLO. Timeout largo (1h por defecto)."""
+    return await service.entrenar_vision(payload)

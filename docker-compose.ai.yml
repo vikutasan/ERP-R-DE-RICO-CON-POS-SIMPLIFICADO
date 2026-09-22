@@ -41,11 +41,36 @@ services:
     volumes:
       # Modelos persistidos: no se re-descargan al reiniciar.
       - ../ERP-R-DE-RICO-DATA/ai_models:/models
+      # -----------------------------------------------------------------------
+      # DATASET DE ENTRENAMIENTO (v7 Fase 8 — fine-tuning)
+      # -----------------------------------------------------------------------
+      # El dataset (imagenes + etiquetas YOLO .txt) lo escribe el ERP en
+      # VISION_TRAINING_DIR (ver docker-compose.yml del api), que es un bind
+      # mount a ../ERP-R-DE-RICO-DATA/vision_training.
+      #
+      # IMPORTANTE: se monta EXACTAMENTE el mismo directorio fisico del host
+      # que el contenedor "api" usa como /app/static/training. Antes se montaba
+      # ../ERP-R-DE-RICO/apps/api/static/training, pero el api escribia en
+      # /app/apps/api/static/training (doble apps/api) -> el motor veia /dataset
+      # VACIO. Ahora ambos apuntan a ERP-R-DE-RICO-DATA/vision_training.
+      #
+      # Aqui lo montamos READ-ONLY en /dataset: el motor de IA solo LEE el
+      # dataset para entrenar; NUNCA lo modifica. La anotacion es del operador.
+      - ../ERP-R-DE-RICO-DATA/vision_training:/dataset:ro
+      # -----------------------------------------------------------------------
+      # SALIDA DE ENTRENAMIENTO (v7 Fase 8)
+      # -----------------------------------------------------------------------
+      # Aqui YOLO escribe runs/, data.yaml y best.pt. Persistido para no
+      # perder el modelo entrenado al reiniciar el contenedor.
+      - ../ERP-R-DE-RICO-DATA/ai_training:/training
     environment:
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
       - LLM_MODEL=${LLM_MODEL:-qwen2.5:3b}
       - OLLAMA_URL=http://ollama:11434
+      # Rutas del pipeline de fine-tuning (v7 Fase 8)
+      - DATASET_DIR=/dataset
+      - TRAINING_DIR=/training
     # -----------------------------------------------------------------------
     # LIMITE DE MEMORIA — CRITICO (spec §8)
     # -----------------------------------------------------------------------
