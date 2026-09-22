@@ -1,6 +1,6 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v26.1 — Centro de IA (3 capacidades) + Fine-tuning de Visión (v7 Fase 8)
+> **Versión:** v26.2 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
 > **Última actualización:** 22 Sep 2026
 > **Documentos relacionados:**
@@ -44,6 +44,9 @@
 25. Estado actual y trabajo pendiente
 26. Glosario
 27. Historial de cambios
+
+**PARTE III — OCR DE PEDIDOS (pestaña Programación de Pedidos)**
+28. Lectura de capturas de WhatsApp (OCR + LLM)
 
 ---
 ---
@@ -1192,6 +1195,269 @@ El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP
 |---|---|---|
 | v7 Fase 8 | — | Fine-tuning de YOLO: pipeline, orquestador, hot-reload, smoke test |
 | v26.1 | 22 Sep 2026 | Fusión de la documentación de entrenamiento dentro del Centro de IA |
+| v26.2 | 22 Sep 2026 | Añadida la 4ª capacidad: OCR de pedidos (Parte III, sección 28) |
+
+---
+
+---
+
+# PARTE III — OCR DE PEDIDOS (PESTAÑA PROGRAMACIÓN DE PEDIDOS)
+
+## 28. LECTURA DE CAPTURAS DE WHATSAPP (OCR + LLM)
+
+### 28.1 Problema que resuelve
+
+En el módulo **Reparto Grandeza**, el administrador recibe los pedidos de los clientes por
+**WhatsApp**. Hasta ahora debía **transcribir a mano** cada pedido en la matriz de la pestaña
+«📋 Programación de Pedidos»: buscar el cliente, buscar cada producto y teclear la cantidad.
+Con 20–40 clientes por día, esto es lento y propenso a errores.
+
+La **4ª capacidad del Centro de IA** permite **subir una captura de pantalla del chat** y que la
+IA **proponga** el pedido ya estructurado (cliente + renglones producto/cantidad), listo para que
+el operador lo **revise y confirme**.
+
+> **Contrato human-in-the-loop (inviolable):** la IA **PROPONE**, el humano **CONFIRMA**.
+> Nada se guarda en la base de datos hasta que el operador presiona «Confirmar pedido».
+> El motor de IA **no conoce** el campo `confirmado` — por diseño no puede registrar nada.
+
+### 28.2 Por qué NO se usa YOLO (visión) para esto
+
+Es la confusión más común y conviene dejarla explícita:
+
+| Tecnología | Pregunta que responde | Motor | Endpoint |
+|---|---|---|---|
+| **Visión (YOLO)** | «¿CUÁNTOS panes hay en la foto?» | YOLOv8 | `POST /vision/detect` |
+| **OCR (Tesseract)** | «¿QUÉ DICE el texto de la captura?» | Tesseract + Ollama | `POST /ocr/extract-order` |
+
+YOLO **cuenta objetos**; **no lee texto**. Una captura de WhatsApp es **texto**, no objetos
+contables. Por eso se añadió **Tesseract** (OCR) como tecnología **distinta y complementaria**.
+Ambas conviven: YOLO sigue intacto para contar pan, OCR se suma para leer imágenes con texto.
+
+### 28.3 Arquitectura del pipeline (Ruta A)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  FRONTEND — GrandezaOrderRequestsTab.jsx  (pestaña Programación de Pedidos)   │
+│  Botón «📷 Subir captura» → FileReader → base64 (sin prefijo data:)           │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                │ POST /grandeza/order-requests/ocr-extract
+                                │ { imagen_base64, productos_catalogo[], clientes_catalogo[] }
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  ERP — apps/api/modules/grandeza/router.py                                    │
+│  ocr_extract_order_request()                                                  │
+│    ├─ ai_service.extraer_pedido_ocr()   (Gateway, apps/api/modules/ai/service)│
+│    │     └─ POST {AI_LOCAL_URL}/ocr/extract-order                             │
+│    └─ GrandezaService.resolver_cliente_ocr()  +  resolver_productos_ocr()     │
+│          (match en cascada contra el catálogo REAL del ERP)                   │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                │ POST /ocr/extract-order
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  MOTOR DE IA LOCAL — ai-local/app/main.py  →  extract_order()                 │
+│    1. ocr.extraer_texto(imagen_base64)   → Tesseract (spa) → texto crudo      │
+│    2. nlu.parsear_pedido(texto, ...)     → Ollama → {items, notas, confianza} │
+│    3. Devuelve propuesta SIN resolver IDs (el LLM no decide IDs)              │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                │ respuesta
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  ERP — resuelve cliente y productos contra su catálogo real (cascada)         │
+│    Cliente:  teléfono → nombre exacto → fuzzy (contención) → manual           │
+│    Producto: nombre exacto → fuzzy → requiere_revision = true                 │
+└───────────────────────────────┬──────────────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  FRONTEND — Panel de confirmación (human-in-the-loop)                         │
+│    Vista previa + confianzas + cliente + renglones editables                  │
+│    El operador corrige → «Confirmar pedido» → POST /grandeza/order-requests   │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Regla de oro:** el LLM **nunca** decide un `client_id` ni un `product_id`. Solo extrae
+**texto** (nombre del cliente, nombre del producto, cantidad). El **ERP** es quien resuelve esos
+nombres contra su catálogo real mediante el match en cascada. Así el LLM no puede inventar
+productos que no existen.
+
+### 28.4 Componentes en detalle
+
+#### 28.4.1 Motor OCR — `ai-local/app/engines/ocr.py` (nuevo)
+
+| Aspecto | Detalle |
+|---|---|
+| Motor | **Tesseract OCR** (`pytesseract`) |
+| Idioma | `spa` (español) — requiere `tesseract-ocr-spa` |
+| Entrada | `imagen_base64` (string, sin prefijo `data:`) |
+| Salida | Texto crudo + confianza media de Tesseract |
+| Preprocesado | Escala de grises + umbral adaptativo (mejora capturas de pantalla) |
+| Función | `extraer_texto(imagen_base64) -> (texto, confianza)` |
+
+#### 28.4.2 Parser LLM — `ai-local/app/engines/nlu.py::parsear_pedido()`
+
+| Aspecto | Detalle |
+|---|---|
+| Motor | **Ollama** (LLM local, mismo que la voz) |
+| Entrada | Texto crudo del OCR + catálogos (productos, clientes) como contexto |
+| Salida | `{ items: [{producto, cantidad, confianza}], notas, confianza }` |
+| Prompt | Instruye al LLM a **solo extraer**, nunca inventar ni resolver IDs |
+| Tolerancia | Si el LLM devuelve JSON inválido → se descarta el renglón, no se rompe |
+
+#### 28.4.3 Endpoint del motor — `POST /ocr/extract-order`
+
+Definido en [`ai-local/app/main.py`](../../ai-local/app/main.py:267) y
+[`ai-local/app/schemas.py`](../../ai-local/app/schemas.py:167).
+
+**Request** (`OcrExtractOrderRequest`):
+```json
+{
+  "imagen_base64": "iVBORw0KGgo...",
+  "productos_catalogo": ["Concha", "Bolillo", "Telera"],
+  "clientes_catalogo": ["Abarrotes La Esquina", "Tienda Doña Mary"]
+}
+```
+
+**Response** (`OcrExtractOrderResponse`):
+```json
+{
+  "ok": true,
+  "texto_ocr": "Cliente: Abarrotes La Esquina\n2 conchas\n1 bolillo",
+  "confianza_ocr": 0.87,
+  "confianza_llm": 0.91,
+  "cliente_nombre": "Abarrotes La Esquina",
+  "cliente_telefono": null,
+  "items": [
+    { "producto": "conchas", "cantidad": 2, "confianza": 0.9 },
+    { "producto": "bolillo", "cantidad": 1, "confianza": 0.95 }
+  ],
+  "notas": "El cliente pidió entrega temprano"
+}
+```
+
+#### 28.4.4 Gateway — `apps/api/modules/ai/service.py::extraer_pedido_ocr()`
+
+Sigue **exactamente** el patrón del Gateway (ver `CONTEXTO_SISTEMA_IA.md`):
+
+- `_ia_habilitada()` → si `AI_LOCAL_ENABLED` es falso → **503 `IA_NO_DISPONIBLE`**.
+- `_verificar_configuracion()` → si falta `AI_LOCAL_URL` → **503**.
+- `_llamar_motor()` → timeout configurable; cualquier fallo del motor → **503**, nunca 500.
+- El ERP **degrada con gracia**: si el motor no está, el operador captura a mano.
+
+#### 28.4.5 Endpoint del ERP — `POST /grandeza/order-requests/ocr-extract`
+
+Definido en [`apps/api/modules/grandeza/router.py`](../../apps/api/modules/grandeza/router.py:429).
+
+**Request** (`GrandezaOcrExtractRequest`):
+```json
+{
+  "imagen_base64": "iVBORw0KGgo...",
+  "productos_catalogo": ["Concha", "Bolillo"],
+  "clientes_catalogo": ["Abarrotes La Esquina"]
+}
+```
+
+**Response** (`GrandezaOcrExtractResponse`):
+```json
+{
+  "ok": true,
+  "cliente_id": 42,
+  "cliente_nombre": "Abarrotes La Esquina",
+  "cliente_telefono": "5551234567",
+  "cliente_match": "nombre_exacto",
+  "confianza_ocr": 0.87,
+  "confianza_llm": 0.91,
+  "items": [
+    { "producto_id": 7, "producto": "Concha", "cantidad": 2, "confianza": 0.9, "requiere_revision": false }
+  ],
+  "notas": "El cliente pidió entrega temprano"
+}
+```
+
+### 28.5 Match en cascada (D-6)
+
+El cliente se identifica por **teléfono o nombre** en el encabezado del chat. El ERP intenta
+resolverlo en este orden estricto:
+
+| Paso | Estrategia | `cliente_match` |
+|---|---|---|
+| 1 | **Teléfono** normalizado (10 dígitos) contra `grandeza_clients.phone` | `telefono` |
+| 2 | **Nombre exacto** (normalizado: mayúsculas, sin acentos) | `nombre_exacto` |
+| 3 | **Fuzzy** — contención de subcadenas (el nombre del chat ⊂ nombre del cliente o viceversa) | `fuzzy` |
+| 4 | **Manual** — no se encontró; el operador lo selecciona en el panel | `manual` |
+
+Los productos siguen una cascada análoga (exacto → fuzzy). Si un producto **no** se resuelve,
+el renglón se marca con `requiere_revision: true` y el panel lo resalta en **ámbar** con la
+etiqueta «Revisar», mostrando lo que la IA leyó para que el operador lo corrija.
+
+### 28.6 Panel de confirmación (human-in-the-loop)
+
+El panel se renderiza en [`GrandezaOrderRequestsTab.jsx`](../../apps/pos/GrandezaOrderRequestsTab.jsx:440)
+y tiene **tres columnas**:
+
+1. **Vista previa + metadatos** — la captura subida, la confianza OCR, la confianza LLM, el tipo
+   de match del cliente y las notas de la IA.
+2. **Editor de la propuesta** — selector de cliente (pre-cargado con el match) y lista editable de
+   renglones (producto + cantidad), con botones «+ Agregar renglón» y «✕» por renglón.
+3. **Acciones** — «Cancelar» (descarta todo) y «Confirmar pedido» (guarda vía
+   `POST /grandeza/order-requests` con `source: "OCR"`).
+
+**Nada se persiste** hasta «Confirmar pedido». Si el operador descarta, no queda rastro en la BD.
+
+### 28.7 Resiliencia y degradación
+
+| Escenario | Comportamiento |
+|---|---|
+| IA deshabilitada (`AI_LOCAL_ENABLED=false`) | **503** → el panel muestra «Motor de IA no disponible» y sugiere captura manual |
+| Motor caído / timeout | **503** → mismo mensaje; el ERP sigue funcionando |
+| OCR no encuentra texto legible | `ok: false` + `notas` → el panel lo explica y sugiere captura manual |
+| LLM devuelve JSON inválido | Se descartan los renglones inválidos; el resto se conserva |
+| Producto no resuelto | Renglón con `requiere_revision: true` (ámbar) para corrección manual |
+| Cliente no resuelto | El selector queda vacío; el panel muestra el nombre propuesto por la IA |
+
+**Principio:** el OCR es una **ayuda**, nunca un **requisito**. Si falla, el flujo manual de la
+matriz sigue disponible sin cambios.
+
+### 28.8 Seguridad y límites
+
+- La imagen **no se almacena** en el ERP: se envía al motor, se procesa y se descarta.
+- El motor corre **local** (Ollama + Tesseract), sin llamadas a servicios externos.
+- El LLM **no** recibe credenciales ni acceso a la BD; solo texto y catálogos de nombres.
+- El LLM **no** puede crear clientes ni productos: solo el ERP resuelve contra su catálogo real.
+- El endpoint del ERP **no** persiste nada: solo devuelve una propuesta.
+
+### 28.9 Archivos involucrados
+
+| Archivo | Rol |
+|---|---|
+| [`ai-local/Dockerfile`](../../ai-local/Dockerfile) | Instala `tesseract-ocr` + `tesseract-ocr-spa` |
+| [`ai-local/app/engines/ocr.py`](../../ai-local/app/engines/ocr.py) | Motor OCR (Tesseract) — **nuevo** |
+| [`ai-local/app/engines/nlu.py`](../../ai-local/app/engines/nlu.py) | `parsear_pedido()` — estructura el texto |
+| [`ai-local/app/main.py`](../../ai-local/app/main.py) | Endpoint `POST /ocr/extract-order` |
+| [`ai-local/app/schemas.py`](../../ai-local/app/schemas.py) | Contratos `OcrExtractOrder*` |
+| [`apps/api/modules/ai/service.py`](../../apps/api/modules/ai/service.py) | `extraer_pedido_ocr()` (Gateway) |
+| [`apps/api/modules/ai/router.py`](../../apps/api/modules/ai/router.py) | `POST /ai/ocr/extract-order` |
+| [`apps/api/modules/ai/schemas.py`](../../apps/api/modules/ai/schemas.py) | Contratos del Gateway |
+| [`apps/api/modules/grandeza/router.py`](../../apps/api/modules/grandeza/router.py) | `POST /grandeza/order-requests/ocr-extract` |
+| [`apps/api/modules/grandeza/service.py`](../../apps/api/modules/grandeza/service.py) | `resolver_cliente_ocr()` + `resolver_productos_ocr()` |
+| [`apps/pos/GrandezaOrderRequestsTab.jsx`](../../apps/pos/GrandezaOrderRequestsTab.jsx) | Botón «📷 Subir captura» + panel de confirmación |
+
+### 28.10 Criterios de aceptación
+
+- [x] El botón «📷 Subir captura» aparece en la pestaña Programación de Pedidos.
+- [x] La captura se envía al motor y se recibe una propuesta estructurada.
+- [x] El cliente se resuelve por teléfono → nombre exacto → fuzzy → manual.
+- [x] Los productos se resuelven contra el catálogo real; los dudosos se marcan «Revisar».
+- [x] El panel permite editar cliente y renglones antes de confirmar.
+- [x] **Nada** se guarda hasta presionar «Confirmar pedido».
+- [x] Si la IA no está disponible, el flujo manual sigue funcionando (degradación con gracia).
+- [x] Build verificado (`npm run build` exit 0) y `py_compile` sin errores.
+
+### 28.11 Fuera de alcance
+
+- **Lectura automática de chats en vivo** (WhatsApp Business API) — fuera de alcance; el humano
+  sube la captura manualmente.
+- **Entrenamiento de un modelo OCR propio** — se usa Tesseract preentrenado.
+- **Resolución de IDs por el LLM** — prohibido por diseño; siempre resuelve el ERP.
 
 ---
 

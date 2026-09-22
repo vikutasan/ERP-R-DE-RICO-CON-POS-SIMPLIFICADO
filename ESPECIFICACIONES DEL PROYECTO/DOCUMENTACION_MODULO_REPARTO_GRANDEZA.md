@@ -843,3 +843,156 @@ const buildWaLink = (phone, text) => {
 
 - **Backend:** `docker compose exec -T api python -m py_compile modules/grandeza/models.py modules/grandeza/schemas.py modules/grandeza/service.py modules/grandeza/router.py main.py` → `SYNTAX_OK`.
 - **Frontend:** `npm run build` → exit code 0, 1827 módulos transformados, build en 22.19s.
+
+---
+
+## 18. Programación de Pedidos (v7.6.0 — 22/Septiembre/2026)
+
+Esta sección documenta la **5ª pestaña** del módulo Grandeza: «📋 Programación de Pedidos».
+Permite al administrador **planear la producción** a partir de los pedidos que los clientes
+envían por WhatsApp, con una **capacidad de IA (OCR + LLM)** que lee capturas de pantalla y
+**propone** el pedido para que el humano lo confirme.
+
+> **Documentación de la capacidad de IA:** el detalle técnico del pipeline OCR vive en
+> [`DOCUMENTACION_CENTRO_IA.md`](DOCUMENTACION_CENTRO_IA.md) — Parte III, sección 28.
+> Esta sección 18 documenta la **integración en Grandeza**.
+
+### 18.1 Problema que resuelve
+
+Antes, el administrador recibía los pedidos por WhatsApp y los transcribía a mano en una hoja o
+en la cabeza. No había forma de:
+
+1. **Consolidar** los pedidos de todos los clientes en una sola vista.
+2. **Totalizar** cuánto pan producir por producto.
+3. **Comunicar** esos pedidos al módulo de Producción sin volver a teclear.
+
+La pestaña resuelve los tres: una **matriz clientes × productos**, con **totales por producto**,
+que se **envía a Producción** con un botón.
+
+### 18.2 Configuración de la pestaña
+
+El administrador define, en la parte superior de la pestaña:
+
+| Campo | Descripción |
+|---|---|
+| **Día y hora límite** | Cuándo cierra la recepción de pedidos (ej. «Jueves 18:00») |
+| **Día de entrega** | Para qué día es la producción (ej. «Viernes») |
+| **Selector** | A qué grupo de clientes aplica (TODOS, o un selector de ruta) |
+
+Se persisten en `grandeza_settings` mediante `GET/PUT /grandeza/order-requests/config`.
+
+### 18.3 La matriz clientes × productos
+
+- **Filas** = clientes (resueltos por el selector).
+- **Columnas** = productos habilitados para reparto (`GrandezaProductConfig`).
+- **Celdas** = cantidad pedida (editable).
+- **Última fila** = **totales por producto** (suma de la columna).
+- **Última columna** = total por cliente.
+
+Cada fila se guarda con `POST /grandeza/order-requests` (UPSERT por cliente + fecha de entrega).
+El botón «⟳ Recargar» vuelve a leer la matriz con `GET /grandeza/order-requests/matrix/{fecha}`.
+
+> **D-4 (decisión de negocio):** los clientes que **NO respondieron** no se integran a la tabla.
+> La matriz solo muestra a quienes tienen pedido capturado (o se les captura manualmente).
+
+### 18.4 Lectura de capturas con IA (Ruta A)
+
+El botón **«📷 Subir captura»** abre el selector de archivos. Al elegir una imagen:
+
+1. El frontend la convierte a **base64** (`FileReader`) y la envía a
+   `POST /grandeza/order-requests/ocr-extract` junto con los **catálogos reales** de productos y
+   clientes (para que el ERP haga el match en cascada).
+2. El ERP delega al **AI Gateway** (`ai_service.extraer_pedido_ocr()`), que llama al motor local
+   (`POST /ocr/extract-order`).
+3. El motor usa **Tesseract** (texto) + **Ollama** (estructura) y devuelve una **propuesta**.
+4. El ERP **resuelve** el cliente (teléfono → nombre exacto → fuzzy → manual) y los productos
+   contra su catálogo real.
+5. El frontend muestra un **panel de confirmación** con la vista previa, las confianzas, el
+   cliente y los renglones **editables**.
+
+> **Contrato human-in-the-loop:** la IA **propone**, el humano **confirma**. Nada se guarda hasta
+> presionar «Confirmar pedido». Si el motor de IA no está disponible, el ERP responde **503** y el
+> operador captura a mano — el flujo manual **nunca** se bloquea.
+
+**Detección de cliente (D-6):** por **teléfono o nombre** en el encabezado del chat. Los renglones
+cuyo producto no se resuelve se marcan con `requiere_revision: true` y se resaltan en **ámbar**
+con la etiqueta «Revisar».
+
+### 18.5 Envío a Producción
+
+El botón **«📤 Enviar a Producción»** llama a `POST /grandeza/order-requests/dispatch`. El servicio
+`dispatch_order_requests_to_production()`:
+
+1. Agrupa los pedidos confirmados por **producto** y suma cantidades.
+2. Crea (o actualiza) una **`GrandezaOrder`** con:
+   - `client_id` y `client_name` (snapshot del nombre),
+   - `delivery_date`,
+   - `status = 'TENTATIVO'`,
+   - **`items`** en formato `[{product_id, product_name, qty, unit_price}]`.
+3. Si se reenvía, **refresca** los `items` y el snapshot del cliente (idempotente).
+
+> **Corrección importante (Fase C):** originalmente el dispatch creaba la orden **sin `items`** ni
+> `client_name`, por lo que `PedidosProduccionUI.jsx` mostraba tarjetas vacías. Se corrigió para
+> poblar `items` y `client_name`, cerrando el gap entre Grandeza y Producción.
+
+### 18.6 Integración con Producción (verificación)
+
+`PedidosProduccionUI.jsx` hace polling a `GET /grandeza/orders` cada 30 s, filtra los estados
+`ENTREGADO`/`CANCELADO` y mapea cada orden a un ticket `G-{id}` leyendo `o.items` y `o.client_name`.
+Con la corrección de la Fase C, los pedidos programados aparecen **con sus renglones y su cliente**.
+
+### 18.7 Endpoints añadidos
+
+| Método | Ruta | Propósito |
+|---|---|---|
+| `GET` | `/grandeza/order-requests/config` | Lee la configuración de la pestaña |
+| `PUT` | `/grandeza/order-requests/config` | Guarda la configuración |
+| `GET` | `/grandeza/order-requests/matrix/{delivery_date}` | Matriz clientes × productos + totales |
+| `GET` | `/grandeza/order-requests/{delivery_date}` | Lista los pedidos de una fecha |
+| `POST` | `/grandeza/order-requests` | UPSERT de un pedido (cliente + fecha) |
+| `DELETE` | `/grandeza/order-requests/{request_id}` | Elimina un pedido |
+| `POST` | `/grandeza/order-requests/dispatch` | Materializa los pedidos como órdenes de producción |
+| `POST` | `/grandeza/order-requests/ocr-extract` | Lee una captura y propone un pedido (IA) |
+
+### 18.8 Modelos de base de datos
+
+| Modelo | Tabla | Rol |
+|---|---|---|
+| `GrandezaOrderRequest` | `grandeza_order_requests` | Cabecera del pedido (cliente + fecha de entrega + selector + source) |
+| `GrandezaOrderRequestItem` | `grandeza_order_request_items` | Renglón (producto + cantidad) del pedido |
+
+> **§7.7:** `create_all` **no** altera tablas existentes. Las tablas se crean con
+> `CREATE TABLE IF NOT EXISTS` en el arranque (`apps/api/main.py`).
+
+### 18.9 Archivos involucrados
+
+| Archivo | Tipo de Cambio |
+|---|---|
+| `apps/api/modules/grandeza/models.py` | Nuevos modelos `GrandezaOrderRequest` + `GrandezaOrderRequestItem` |
+| `apps/api/main.py` | `CREATE TABLE IF NOT EXISTS` de las dos tablas nuevas |
+| `apps/api/modules/grandeza/schemas.py` | Schemas de config, pedido, matriz, dispatch y OCR |
+| `apps/api/modules/grandeza/service.py` | CRUD + `get_order_matrix()` + `dispatch_order_requests_to_production()` + `resolver_cliente_ocr()` + `resolver_productos_ocr()` |
+| `apps/api/modules/grandeza/router.py` | 8 endpoints nuevos (incl. `ocr-extract`) |
+| `apps/pos/GrandezaOrderRequestsTab.jsx` | **Nuevo** componente de la pestaña (matriz + OCR + panel) |
+| `apps/pos/GrandezaParamsUI.jsx` | 5ª pestaña «📋 Programación de Pedidos» |
+| `ai-local/app/engines/ocr.py` | **Nuevo** motor OCR (Tesseract) |
+| `ai-local/app/engines/nlu.py` | `parsear_pedido()` (estructura el texto con Ollama) |
+| `ai-local/app/main.py` | Endpoint `POST /ocr/extract-order` |
+| `ai-local/Dockerfile` | `tesseract-ocr` + `tesseract-ocr-spa` |
+| **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+
+### 18.10 Verificación
+
+- **Backend:** `docker compose exec -T api python -m py_compile` sobre los 6 archivos tocados → `PY_COMPILE_OK`.
+- **Frontend:** `npm run build` → exit code 0, 1828 módulos transformados, build en 10.29s.
+- **Commits:** Fase A `e6fcd19`, Fase B `e524c17`, Fase C `3f48e64`.
+
+### 18.11 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — Se respeta la captura del usuario: la IA propone, el humano confirma; nada se
+  sobreescribe en silencio.
+- **§7.6** — Eager loading (`selectinload`) en las consultas de pedidos.
+- **§7.7** — `CREATE TABLE IF NOT EXISTS` en el arranque (no se confía en `create_all`).
+- **§7.9** — Todas las URLs derivan de `CONFIG.API_BASE_URL`.
+- **§7.10** — No se usa `datetime.now()` directo; se usa `_now_mexico()`.
