@@ -29,8 +29,26 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - PORT=3001
+      # ---------------------------------------------------------------------
+      # AI Gateway (v7 Fase 5) — Motor de IA Local
+      # ---------------------------------------------------------------------
+      # El API NUNCA importa torch/whisper/ultralytics: solo hace HTTP al
+      # motor. Si el motor no esta levantado, el API devuelve 503
+      # IA_NO_DISPONIBLE y el POS sigue operando en modo manual.
+      #
+      # Para APAGAR la IA sin desplegar codigo: AI_LOCAL_ENABLED=false
+      # ---------------------------------------------------------------------
+      - AI_LOCAL_ENABLED=${AI_LOCAL_ENABLED:-false}
+      - AI_LOCAL_URL=${AI_LOCAL_URL:-}
+      - AI_LOCAL_TIMEOUT=${AI_LOCAL_TIMEOUT:-30}
     depends_on:
       - db
+    networks:
+      # "default" mantiene la comunicacion con db y pos.
+      # "rderico-ia-net" es la red aislada del motor de IA (compose aparte).
+      # Si el motor no esta levantado, la red existe igual y nada se rompe.
+      - default
+      - rderico-ia-net
 
   pos:
     build:
@@ -50,3 +68,16 @@ services:
     # Fijar una IP aqui rompia el POS en cualquier host distinto -> "sin conexion".
 
 # Los volúmenes ahora son externos (Bind Mounts) para mayor seguridad y facilidad de backup.
+
+networks:
+  # Red aislada del motor de IA. La crea docker-compose.ai.yml.
+  # Se declara aqui como "external" para que el API pueda unirse a ella
+  # SIN que este compose intente crearla ni borrarla.
+  #
+  # Si el motor de IA no esta levantado, la red no existe y `docker compose up`
+  # fallaria. Por eso el arranque normal del ERP debe hacerse con:
+  #   docker compose up -d --no-deps api    (solo recrea el api)
+  # o levantar primero el motor de IA.
+  rderico-ia-net:
+    external: true
+    name: rderico-ia-net
