@@ -131,6 +131,53 @@ class VisionTrainingUpload(BaseModel):
     sku: str
     images: List[str] # List of base64 strings
 
+# --- Vision Annotation (v7 Fase 8) ---
+# El operador dibuja cajas sobre cada imagen del dataset. La IA solo PROPONE
+# (pre-anotacion); el operador confirma. Nada se auto-etiqueta.
+class AnnotationBox(BaseModel):
+    """Una caja delimitadora en coordenadas NORMALIZADAS (0..1).
+
+    Se usan coordenadas normalizadas (no pixeles) porque el canvas del
+    navegador y la imagen original pueden tener tamanos distintos. El
+    backend las convierte al formato YOLO (cx, cy, w, h) al persistir.
+    """
+    x: float  # esquina superior izquierda, 0..1
+    y: float  # esquina superior izquierda, 0..1
+    w: float  # ancho, 0..1
+    h: float  # alto, 0..1
+    label: str = "concha"  # clase del objeto (nombre de producto o clase YOLO)
+
+
+class AnnotationSaveRequest(BaseModel):
+    """Guarda las anotaciones de UNA imagen del dataset."""
+    sku: str
+    filename: str  # nombre del archivo dentro de static/training/<sku>/
+    boxes: List[AnnotationBox]
+
+
+class DatasetImage(BaseModel):
+    """Una imagen del dataset con su estado de anotacion."""
+    filename: str
+    url: str  # URL publica para servir la imagen (/static/training/...)
+    annotated: bool
+    box_count: int
+
+
+class DatasetResponse(BaseModel):
+    """Listado del dataset de un SKU."""
+    sku: str
+    total: int
+    annotated: int
+    images: List[DatasetImage]
+
+
+class AnnotationSaveResponse(BaseModel):
+    """Resultado de guardar una anotacion."""
+    sku: str
+    filename: str
+    box_count: int
+    label_file: str  # ruta del .txt YOLO escrito
+
 # --- Vision Prediction ---
 class VisionPredictionRequest(BaseModel):
     image: str # Base64 string from camera

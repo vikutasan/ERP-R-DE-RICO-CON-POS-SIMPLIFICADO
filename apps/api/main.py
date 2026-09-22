@@ -319,6 +319,11 @@ app.include_router(ai_router, prefix="/api/v1/ai", tags=["AI"])
 # Montar carpetas de archivos estáticos
 app.mount("/static/catalog", StaticFiles(directory="static/catalog"), name="catalog")
 app.mount("/static/images", StaticFiles(directory="static/images"), name="images")
+# v7 (Fase 8): dataset de entrenamiento de vision. Montaje ADITIVO: sirve las
+# imagenes capturadas para que el canvas de anotacion pueda cargarlas.
+# NOTA: la ruta debe coincidir con la que escribe el servicio
+# (POSService._training_dir -> "apps/api/static/training"), NO con "static/".
+app.mount("/static/training", StaticFiles(directory="apps/api/static/training"), name="training")
 # V16 (Fase 16.2): imágenes del Display Tótem de Heladería. Montaje ADITIVO:
 # no altera los montajes existentes que consume el POS de Panadería.
 app.mount("/media/totem", StaticFiles(directory="media/totem"), name="totem")

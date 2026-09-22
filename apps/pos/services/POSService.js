@@ -177,6 +177,23 @@ class POSService {
         return res.json();
     }
 
+    // v7 (Fase 8): herramienta de anotacion del dataset
+    async listTrainingDataset(sku) {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/pos/vision/dataset/${encodeURIComponent(sku)}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error("Error listando el dataset");
+        return res.json();
+    }
+
+    async saveAnnotations(sku, filename, boxes) {
+        const res = await fetch(`${CONFIG.API_BASE_URL}/pos/vision/annotations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sku, filename, boxes })
+        });
+        if (!res.ok) throw new Error("Error guardando la anotación");
+        return res.json();
+    }
+
     async predictVision(image, terminalId = 'T1') {
         const res = await fetch(`${CONFIG.API_BASE_URL}/pos/vision/predict`, {
             method: 'POST',

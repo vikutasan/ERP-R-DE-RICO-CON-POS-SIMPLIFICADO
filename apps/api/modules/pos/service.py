@@ -851,6 +851,148 @@ class POSService:
             
         return {"sku": payload.sku, "count": len(saved_files), "path": str(sku_dir)}
 
+    # ------------------------------------------------------------------
+    # v7 (Fase 8): Herramienta de ANOTACION del dataset
+    # ------------------------------------------------------------------
+    # El operador dibuja cajas sobre cada imagen capturada. La IA solo
+    # PROPONE (pre-anotacion); el operador confirma. Nada se auto-etiqueta.
+    # La salida es el formato YOLO: un .txt por imagen con lineas
+    #   <clase> <cx> <cy> <w> <h>
+    # en coordenadas normalizadas 0..1. Ese .txt es lo que consume el
+    # entrenamiento de ultralytics.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _safe_sku(sku: str) -> str:
+        """Sanitiza el SKU para usarlo como nombre de carpeta (anti path-traversal)."""
+        return "".join(c for c in (sku or "") if c.isalnum() or c in ("-", "_")).rstrip()
+
+    @staticmethod
+    def _training_dir(sku: str) -> "Path":
+        """Carpeta del dataset de un SKU. Crea el arbol si no existe."""
+        from pathlib import Path
+
+        base_dir = Path("apps/api/static/training")
+        base_dir.mkdir(parents=True, exist_ok=True)
+        sku_dir = base_dir / POSService._safe_sku(sku)
+        sku_dir.mkdir(parents=True, exist_ok=True)
+        return sku_dir
+
+    @staticmethod
+    def _label_path(sku_dir: "Path", filename: str) -> "Path":
+        """Ruta del .txt YOLO correspondiente a una imagen (mismo stem)."""
+        from pathlib import Path
+
+        return sku_dir / (Path(filename).stem + ".txt")
+
+    @staticmethod
+    def _leer_cajas_yolo(label_path: "Path") -> int:
+        """Cuenta las cajas anotadas en un .txt YOLO. 0 si no existe."""
+        try:
+            if not label_path.exists():
+                return 0
+            with open(label_path, "r", encoding="utf-8") as f:
+                return sum(1 for linea in f if linea.strip())
+        except Exception:
+            return 0
+
+    async def list_training_dataset(self, sku: str) -> schemas.DatasetResponse:
+        """Lista las imagenes del dataset de un SKU y su estado de anotacion.
+
+        Devuelve la URL publica de cada imagen (servida por el montaje
+        /static/training) para que el canvas de anotacion pueda cargarla.
+        """
+        from pathlib import Path
+
+        sku_dir = self._training_dir(sku)
+        extensiones = {".jpg", ".jpeg", ".png", ".webp"}
+        imagenes = []
+        anotadas = 0
+
+        try:
+            archivos = sorted(
+                (p for p in sku_dir.iterdir() if p.suffix.lower() in extensiones),
+                key=lambda p: p.name,
+            )
+        except Exception:
+            archivos = []
+
+        for archivo in archivos:
+            label_path = self._label_path(sku_dir, archivo.name)
+            cajas = self._leer_cajas_yolo(label_path)
+            if cajas > 0:
+                anotadas += 1
+            imagenes.append(
+                schemas.DatasetImage(
+                    filename=archivo.name,
+                    url=f"/static/training/{self._safe_sku(sku)}/{archivo.name}",
+                    annotated=cajas > 0,
+                    box_count=cajas,
+                )
+            )
+
+        return schemas.DatasetResponse(
+            sku=sku,
+            total=len(imagenes),
+            annotated=anotadas,
+            images=imagenes,
+        )
+
+    async def save_annotations(
+        self, payload: schemas.AnnotationSaveRequest
+    ) -> schemas.AnnotationSaveResponse:
+        """Persiste las cajas de UNA imagen en formato YOLO.
+
+        Convierte de (x, y, w, h) normalizado con origen arriba-izquierda
+        (como lo dibuja el canvas) a (cx, cy, w, h) normalizado con centro
+        (como lo exige YOLO). La clase se resuelve a un indice estable por
+        orden alfabetico de las etiquetas presentes en el payload.
+        """
+        from pathlib import Path
+
+        sku_dir = self._training_dir(payload.sku)
+
+        # Anti path-traversal: el filename debe ser un nombre simple.
+        filename = Path(payload.filename).name
+        if not filename:
+            raise HTTPException(status_code=400, detail="filename invalido")
+
+        # Indice de clases estable dentro de esta imagen (alfabetico).
+        etiquetas = sorted({(b.label or "concha").strip() for b in payload.boxes})
+        indice = {etiqueta: i for i, etiqueta in enumerate(etiquetas)}
+
+        lineas = []
+        for caja in payload.boxes:
+            # Clamp defensivo a 0..1 por si el canvas se sale del borde.
+            x = min(max(caja.x, 0.0), 1.0)
+            y = min(max(caja.y, 0.0), 1.0)
+            w = min(max(caja.w, 0.0), 1.0)
+            h = min(max(caja.h, 0.0), 1.0)
+            if w <= 0 or h <= 0:
+                continue
+            cx = min(max(x + w / 2.0, 0.0), 1.0)
+            cy = min(max(y + h / 2.0, 0.0), 1.0)
+            clase = indice[(caja.label or "concha").strip()]
+            lineas.append(f"{clase} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
+
+        label_path = self._label_path(sku_dir, filename)
+        try:
+            with open(label_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lineas))
+                if lineas:
+                    f.write("\n")
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"No se pudo escribir la anotacion: {e}"
+            )
+
+        return schemas.AnnotationSaveResponse(
+            sku=payload.sku,
+            filename=filename,
+            box_count=len(lineas),
+            label_file=str(label_path),
+        )
+
     async def predict_vision(self, payload: schemas.VisionPredictionRequest):
         import time
         import base64

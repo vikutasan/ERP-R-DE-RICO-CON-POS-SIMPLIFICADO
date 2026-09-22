@@ -500,6 +500,25 @@ async def emergency_save_ticket(payload: dict, db: AsyncSession = Depends(get_db
 async def upload_vision_training(payload: schemas.VisionTrainingUpload):
     return await pos_service.upload_training_images(payload)
 
+# --- v7 (Fase 8): Herramienta de ANOTACION del dataset ---
+@router.get("/vision/dataset/{sku}", response_model=schemas.DatasetResponse)
+async def get_training_dataset(sku: str):
+    """Lista las imagenes capturadas de un SKU y su estado de anotacion.
+
+    El operador usa esto para elegir que imagen anotar. Devuelve la URL
+    publica de cada imagen (montaje /static/training).
+    """
+    return await pos_service.list_training_dataset(sku)
+
+@router.post("/vision/annotations", response_model=schemas.AnnotationSaveResponse)
+async def save_vision_annotations(payload: schemas.AnnotationSaveRequest):
+    """Guarda las cajas dibujadas por el operador en formato YOLO.
+
+    La IA solo PROPONE; el operador confirma. Este endpoint persiste el
+    .txt YOLO que consumira el entrenamiento de ultralytics.
+    """
+    return await pos_service.save_annotations(payload)
+
 @router.post("/vision/predict", response_model=schemas.VisionPredictionResponse)
 async def predict_vision(payload: schemas.VisionPredictionRequest):
     """v7 (Fase 6.2): deteccion por vision reutilizando el motor ORB existente.
