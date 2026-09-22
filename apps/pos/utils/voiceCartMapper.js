@@ -34,6 +34,19 @@ export const POS_VOICE_INTENTS = {
 };
 
 /**
+ * v25 (VOZ-POS v2): Allowlist de intenciones que el POS acepta por voz.
+ *
+ * DECISION DE DISENO (acordada con el negocio): en el POS el dictado por voz
+ * sirve UNICAMENTE para capturar/agregar productos a la cuenta. No se dictan
+ * cobros, cancelaciones ni bajas: esas acciones son destructivas o fiscales y
+ * deben pasar siempre por un toque explicito del operador.
+ *
+ * Cualquier intencion fuera de esta lista se degrada a DESCONOCIDA, de modo
+ * que la UI muestre "no entendido" en lugar de ofrecer una accion peligrosa.
+ */
+export const POS_ALLOWED_INTENTS = new Set([POS_VOICE_INTENTS.AGREGAR_ITEM]);
+
+/**
  * Normaliza un texto para comparar nombres de producto de forma tolerante
  * (minusculas, sin acentos, sin signos).
  * @param {string} texto
@@ -110,7 +123,13 @@ export const mapVoiceIntentToCartProposal = (intent, productos = []) => {
 
     // Normalizar la intencion al vocabulario del POS.
     const intencionCruda = String(data.intencion || '').toUpperCase();
-    const intencion = POS_VOICE_INTENTS[intencionCruda] || POS_VOICE_INTENTS.DESCONOCIDA;
+    const intencionNormalizada = POS_VOICE_INTENTS[intencionCruda] || POS_VOICE_INTENTS.DESCONOCIDA;
+    // v25 (VOZ-POS v2): el POS SOLO acepta AGREGAR_ITEM por voz. Cualquier otra
+    // intencion (cobrar, cancelar, quitar) se degrada a DESCONOCIDA para que la
+    // UI no ofrezca una accion destructiva/fiscal por dictado.
+    const intencion = POS_ALLOWED_INTENTS.has(intencionNormalizada)
+        ? intencionNormalizada
+        : POS_VOICE_INTENTS.DESCONOCIDA;
 
     // Construir la lista de items: usar `items` si viene; si no, el campo plano.
     let itemsCrudos = Array.isArray(data.items) ? data.items : [];
@@ -164,11 +183,18 @@ export const validateVoiceCartProposal = (proposal) => {
         return { ok: false, error: 'No hay dictado que aplicar al carrito' };
     }
     if (proposal.intencion === POS_VOICE_INTENTS.DESCONOCIDA) {
-        return { ok: false, error: 'La IA no entendio el dictado. Intenta de nuevo o captura manualmente.' };
+        return {
+            ok: false,
+            error: 'Por voz solo puedo agregar productos a la cuenta. Intenta de nuevo o captura manualmente.',
+        };
     }
-    // COBRAR y CANCELAR no requieren lineas.
-    if (proposal.intencion === POS_VOICE_INTENTS.COBRAR || proposal.intencion === POS_VOICE_INTENTS.CANCELAR) {
-        return { ok: true, error: null };
+    // v25 (VOZ-POS v2): el POS solo acepta AGREGAR_ITEM. Cualquier otra intencion
+    // ya fue degradada a DESCONOCIDA en el mapper; este guard es defensa en profundidad.
+    if (!POS_ALLOWED_INTENTS.has(proposal.intencion)) {
+        return {
+            ok: false,
+            error: 'Por voz solo puedo agregar productos a la cuenta. Usa los botones para otras acciones.',
+        };
     }
     const lineas = Array.isArray(proposal.lineas) ? proposal.lineas : [];
     if (lineas.length === 0) {

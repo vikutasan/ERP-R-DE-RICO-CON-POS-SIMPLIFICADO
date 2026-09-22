@@ -2,17 +2,31 @@ import React from 'react';
 import { POS_VOICE_INTENTS } from '../utils/voiceCartMapper';
 
 /**
- * VoiceCartPanel — v24 (VOZ-POS)
+ * VoiceCartPanel — v25 (VOZ-POS v2)
  *
  * Panel de dictado por voz para el carrito del POS. Muestra:
- *   1. El boton de microfono (alterna grabacion).
- *   2. El texto transcrito por Whisper.
- *   3. La propuesta editable de la IA (lineas con producto + cantidad).
- *   4. El boton de confirmacion (human-in-the-loop).
+ *   1. El boton de microfono (captura continua: presiona una vez y dicta).
+ *   2. El medidor de nivel de audio en vivo + la fase de captura.
+ *   3. El texto transcrito por Whisper.
+ *   4. La propuesta editable de la IA (lineas con producto + cantidad).
+ *   5. El boton de confirmacion (human-in-the-loop).
+ *
+ * DECISION DE DISENO (v25): en el POS el dictado SOLO sirve para agregar
+ * productos a la cuenta. El mapper degrada cualquier otra intencion a
+ * DESCONOCIDA, por lo que aqui solo existe la ruta de "agregar al carrito".
  *
  * REGLA: Solo presentacion y callbacks. Cero logica de negocio.
  * Toda la logica vive en `useVoiceCart` y `voiceCartMapper`.
  */
+
+// Etiquetas legibles de cada fase de la captura continua.
+const ETIQUETA_FASE = {
+    inactivo: 'Listo para dictar',
+    esperando_voz: 'Escuchando… empieza a dictar',
+    capturando: 'Capturando… (se detiene solo al callar)',
+    procesando: 'Procesando dictado…',
+};
+
 export const VoiceCartPanel = ({
     // Estado (de useVoiceCart)
     grabando,
@@ -21,6 +35,8 @@ export const VoiceCartPanel = ({
     propuesta,
     disponible,
     error,
+    fase = 'inactivo',
+    nivel = 0,
     // Datos
     productos = [],
     // Callbacks
@@ -32,20 +48,13 @@ export const VoiceCartPanel = ({
     onCancel,
 }) => {
     const lineas = propuesta?.lineas || [];
-    const esCobrar = propuesta?.intencion === POS_VOICE_INTENTS.COBRAR;
-    const esCancelar = propuesta?.intencion === POS_VOICE_INTENTS.CANCELAR;
     const esDesconocida = propuesta?.intencion === POS_VOICE_INTENTS.DESCONOCIDA;
-    const esQuitar = propuesta?.intencion === POS_VOICE_INTENTS.QUITAR_ITEM;
+    const esAgregar = propuesta?.intencion === POS_VOICE_INTENTS.AGREGAR_ITEM;
 
-    const etiquetaIntencion = () => {
-        switch (propuesta?.intencion) {
-            case POS_VOICE_INTENTS.AGREGAR_ITEM: return '🛒 Agregar al carrito';
-            case POS_VOICE_INTENTS.QUITAR_ITEM: return '🗑️ Quitar del carrito';
-            case POS_VOICE_INTENTS.COBRAR: return '💵 Cobrar cuenta';
-            case POS_VOICE_INTENTS.CANCELAR: return '❌ Cancelar venta';
-            default: return '❓ No entendido';
-        }
-    };
+    // La captura continua esta activa mientras el hook no este inactivo.
+    const capturaActiva = fase === 'esperando_voz' || fase === 'capturando';
+    // Nivel normalizado 0..1 -> ancho de la barra (minimo 4% para que se vea).
+    const anchoNivel = `${Math.max(4, Math.min(100, Math.round((nivel || 0) * 100)))}%`;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -79,30 +88,48 @@ export const VoiceCartPanel = ({
                         </div>
                     )}
 
-                    {/* Boton de microfono */}
+                    {/* Boton de microfono + medidor de nivel (captura continua) */}
                     {disponible && (
                         <div className="flex flex-col items-center gap-3 py-2">
                             <button
                                 onClick={onToggleRecording}
                                 disabled={transcribiendo}
                                 className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl transition-all shadow-2xl ${
-                                    grabando
+                                    capturaActiva
                                         ? 'bg-red-500 animate-pulse scale-110'
                                         : transcribiendo
                                             ? 'bg-zinc-700 cursor-wait'
                                             : 'bg-[#c1d72e] hover:scale-105'
                                 }`}
-                                title={grabando ? 'Detener' : 'Dictar'}
+                                title={capturaActiva ? 'Detener' : 'Dictar'}
                             >
-                                {transcribiendo ? '⏳' : grabando ? '⏹️' : '🎙️'}
+                                {transcribiendo ? '⏳' : capturaActiva ? '⏹️' : '🎙️'}
                             </button>
-                            <p className="text-[11px] font-black uppercase tracking-widest text-white/60">
-                                {grabando
-                                    ? 'Grabando… presiona para detener'
-                                    : transcribiendo
-                                        ? 'Transcribiendo…'
+
+                            {/* Medidor de nivel de audio en vivo */}
+                            {capturaActiva && (
+                                <div className="w-full max-w-xs">
+                                    <div className="h-2 w-full rounded-full bg-black/50 overflow-hidden">
+                                        <div
+                                            className="h-full rounded-full bg-[#c1d72e] transition-[width] duration-100 ease-out"
+                                            style={{ width: anchoNivel }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            <p className="text-[11px] font-black uppercase tracking-widest text-white/60 text-center">
+                                {transcribiendo
+                                    ? ETIQUETA_FASE.procesando
+                                    : capturaActiva
+                                        ? ETIQUETA_FASE[fase]
                                         : 'Presiona y dicta: "agrega 3 conchas y 12 bolillos"'}
                             </p>
+                            {!capturaActiva && !transcribiendo && (
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-white/30 text-center">
+                                    Se detiene solo al dejar de hablar
+                                </p>
+                            )}
                         </div>
                     )}
 
@@ -132,7 +159,7 @@ export const VoiceCartPanel = ({
                         }`}>
                             <div className="flex items-center justify-between mb-3">
                                 <p className="text-[11px] font-black uppercase tracking-widest text-white">
-                                    {etiquetaIntencion()}
+                                    {esAgregar ? '🛒 Agregar al carrito' : '❓ No entendido'}
                                 </p>
                                 <span className={`text-[10px] font-black uppercase tracking-widest ${
                                     propuesta.revisar ? 'text-amber-400' : 'text-emerald-400'
@@ -141,8 +168,8 @@ export const VoiceCartPanel = ({
                                 </span>
                             </div>
 
-                            {/* Lineas editables */}
-                            {!esCobrar && !esCancelar && !esDesconocida && (
+                            {/* Lineas editables (solo agregar_item) */}
+                            {esAgregar && (
                                 <div className="space-y-2">
                                     {lineas.map((l, i) => (
                                         <div
@@ -195,20 +222,10 @@ export const VoiceCartPanel = ({
                                 </div>
                             )}
 
-                            {/* Mensajes para intenciones sin lineas */}
-                            {esCobrar && (
-                                <p className="text-white text-sm">
-                                    El operador pidió <strong>cobrar la cuenta</strong>. Confirma para abrir el cobro.
-                                </p>
-                            )}
-                            {esCancelar && (
-                                <p className="text-white text-sm">
-                                    El operador pidió <strong>cancelar la venta</strong>. Confirma para vaciar el carrito.
-                                </p>
-                            )}
+                            {/* Mensaje para dictado no entendido */}
                             {esDesconocida && (
                                 <p className="text-white text-sm">
-                                    No se entendió el dictado. Cierra e intenta de nuevo.
+                                    Por voz solo puedo agregar productos a la cuenta. Cierra e intenta de nuevo.
                                 </p>
                             )}
 
@@ -243,13 +260,11 @@ export const VoiceCartPanel = ({
                         disabled={!propuesta || !propuesta.confirmado || esDesconocida}
                         className={`px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${
                             propuesta && propuesta.confirmado && !esDesconocida
-                                ? esQuitar
-                                    ? 'bg-red-500 hover:bg-red-400 text-white'
-                                    : 'bg-[#c1d72e] hover:bg-[#d4e84a] text-black'
+                                ? 'bg-[#c1d72e] hover:bg-[#d4e84a] text-black'
                                 : 'bg-zinc-800 text-white/30 cursor-not-allowed'
                         }`}
                     >
-                        {esQuitar ? 'Quitar del carrito' : esCobrar ? 'Cobrar' : esCancelar ? 'Cancelar venta' : 'Agregar al carrito'}
+                        Agregar al carrito
                     </button>
                 </div>
             </div>

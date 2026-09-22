@@ -594,10 +594,14 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         }
     };
 
-    // --- v24 (VOZ-POS): aplicar la propuesta confirmada al carrito ---
+    // --- v24/v25 (VOZ-POS): aplicar la propuesta confirmada al carrito ---
     // REGLA DE ORO: la IA PROPONE, el operador CONFIRMA. Este handler SOLO se
     // ejecuta cuando el operador pulsa "Aplicar" tras marcar la confirmacion.
     // Nunca se llama automaticamente desde el dictado.
+    //
+    // v25 (VOZ-POS v2): el POS SOLO acepta AGREGAR_ITEM por voz. El mapper ya
+    // degrada cualquier otra intencion a DESCONOCIDA y `validateVoiceCartProposal`
+    // la rechaza, por lo que aqui solo existe la ruta de agregar productos.
     const handleApplyVoiceProposal = async () => {
         const propuesta = voice.propuesta;
         const { ok, error } = validateVoiceCartProposal(propuesta);
@@ -607,45 +611,16 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         }
 
         try {
-            switch (propuesta.intencion) {
-                case POS_VOICE_INTENTS.AGREGAR_ITEM: {
-                    const items = buildCartItemsFromProposal(propuesta);
-                    // Se agrega linea por linea para respetar la cantidad dictada
-                    // y reutilizar la logica de merge/upsert de useTicketActions.
-                    for (const item of items) {
-                        await handleAddToCart(item);
-                    }
-                    setToastMessage({
-                        text: `🎙️ ${items.length} producto(s) agregado(s) al carrito`,
-                        type: 'success',
-                    });
-                    break;
-                }
-                case POS_VOICE_INTENTS.QUITAR_ITEM: {
-                    const items = buildCartItemsFromProposal(propuesta);
-                    for (const item of items) {
-                        await handleRemoveFromCart(item.id);
-                    }
-                    setToastMessage({
-                        text: `🎙️ ${items.length} producto(s) quitado(s) del carrito`,
-                        type: 'success',
-                    });
-                    break;
-                }
-                case POS_VOICE_INTENTS.COBRAR: {
-                    // Delega en el flujo de cobro existente (abre el checkout).
-                    await handleTicketAction('PAID');
-                    break;
-                }
-                case POS_VOICE_INTENTS.CANCELAR: {
-                    clearCart();
-                    setToastMessage({ text: '🎙️ Venta cancelada por dictado', type: 'success' });
-                    break;
-                }
-                default:
-                    setToastMessage({ text: 'La IA no entendio el dictado', type: 'error' });
-                    return;
+            const items = buildCartItemsFromProposal(propuesta);
+            // Se agrega linea por linea para respetar la cantidad dictada
+            // y reutilizar la logica de merge/upsert de useTicketActions.
+            for (const item of items) {
+                await handleAddToCart(item);
             }
+            setToastMessage({
+                text: `🎙️ ${items.length} producto(s) agregado(s) al carrito`,
+                type: 'success',
+            });
             voice.reset();
             setShowVoicePanel(false);
         } catch (e) {
@@ -753,6 +728,8 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
                     propuesta={voice.propuesta}
                     disponible={voice.disponible}
                     error={voice.error}
+                    fase={voice.fase}
+                    nivel={voice.nivel}
                     productos={PRODUCTS}
                     onToggleRecording={voice.alternar}
                     onEditLine={voice.editarLinea}
