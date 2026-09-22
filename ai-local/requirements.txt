@@ -1,0 +1,38 @@
+# =============================================================================
+# Motor de IA Local — Dependencias
+# =============================================================================
+# Estas dependencias viven SOLO en este contenedor.
+# El API del ERP NUNCA las importa (regla de oro, spec §1.2).
+#
+# Si alguna de estas se cuela en apps/api/requirements.txt, es un error grave:
+# cargar torch en el proceso del API es exactamente lo que el spec §6.1 prohibe.
+# =============================================================================
+
+# --- Servidor HTTP ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+
+# --- Cliente HTTP (para hablar con Ollama) ---
+httpx==0.28.1
+
+# --- Voz: transcripcion (Whisper) ---
+# faster-whisper usa CTranslate2: ~4x mas rapido que openai-whisper en CPU.
+# Fallback CPU del spec §8: modelo "base".
+faster-whisper==1.1.1
+
+# --- Vision: deteccion de objetos (conteo de panes) ---
+# YOLOv8-nano: corre en CPU a ~30 FPS (spec §3.3).
+# NOTA: ultralytics arrastra torch. Por eso vive aqui y NO en el API.
+ultralytics==8.3.58
+opencv-python-headless==4.10.0.84
+
+# --- Utilidades ---
+numpy==2.1.3
+pillow==11.0.0
+
+# --- LLM (NLU) ---
+# El LLM NO se carga en este contenedor: corre en Ollama (contenedor aparte).
+# Aqui solo se le habla por HTTP (httpx). Esto mantiene este contenedor ligero.
+# Ver docker-compose.ai.yml -> servicio "ollama".

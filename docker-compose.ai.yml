@@ -1,0 +1,126 @@
+# =============================================================================
+# Motor de IA Local — Compose INDEPENDIENTE
+# =============================================================================
+# Este archivo NO modifica docker-compose.yml. Es un compose aparte.
+#
+# PARA QUE SIRVE:
+#   Levanta el motor de IA (Whisper + YOLO + Ollama) en contenedores aislados,
+#   SIN tocar el ERP en operacion. El ERP sigue corriendo igual.
+#
+# COMO SE USA (cuando el POS este tranquilo):
+#   1. docker compose -f docker-compose.ai.yml up -d
+#   2. Verificar:  curl http://localhost:9000/status
+#   3. Cablear el ERP: agregar AI_LOCAL_ENABLED=true y AI_LOCAL_URL=http://ia-local:9000
+#      al servicio "api" de docker-compose.yml, y recrear SOLO el api:
+#      docker compose up -d --no-deps api
+#
+# MODOS (spec D-2):
+#   M1 - Local por sucursal : correr este archivo en cada sucursal
+#   M2 - Local central      : correr este archivo en la matriz
+#   M3 - Nube               : NO correr este archivo; AI_LOCAL_URL apunta afuera
+#
+# REGLA DE ORO (spec §1.2):
+#   Si este compose no esta levantado, el ERP sigue operando en modo manual.
+#   El ERP NUNCA importa torch/whisper/ultralytics.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Motor de IA (Whisper + YOLO)
+  # ---------------------------------------------------------------------------
+  ia-local:
+    build:
+      context: ./ai-local
+      dockerfile: Dockerfile
+    container_name: rderico-ia-local
+    restart: unless-stopped
+    ports:
+      # Solo expuesto en localhost: el ERP lo alcanza por la red interna.
+      # NO exponer a la LAN: el motor no tiene autenticacion.
+      - "127.0.0.1:9000:9000"
+    volumes:
+      # Modelos persistidos: no se re-descargan al reiniciar.
+      - ../ERP-R-DE-RICO-DATA/ai_models:/models
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - YOLO_MODEL=${YOLO_MODEL:-yolov8n.pt}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:3b}
+      - OLLAMA_URL=http://ollama:11434
+    # -----------------------------------------------------------------------
+    # LIMITE DE MEMORIA — CRITICO (spec §8)
+    # -----------------------------------------------------------------------
+    # Sin este limite, el motor puede consumir toda la RAM del host y tumbar
+    # el POS. Este es el riesgo #1 del spec. NO QUITAR.
+    #
+    # Ajustar segun el hardware:
+    #   - Sucursal con 8 GB  -> mem_limit: 3g
+    #   - Sucursal con 16 GB -> mem_limit: 6g
+    #   - Matriz con 32 GB   -> mem_limit: 12g
+    mem_limit: 6g
+    memswap_limit: 6g
+    depends_on:
+      - ollama
+    networks:
+      - ia-net
+
+  # ---------------------------------------------------------------------------
+  # Ollama (LLM para NLU)
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rderico-ia-ollama
+    restart: unless-stopped
+    volumes:
+      # Modelos de Ollama persistidos.
+      - ../ERP-R-DE-RICO-DATA/ollama_models:/root/.ollama
+    # -----------------------------------------------------------------------
+    # LIMITE DE MEMORIA — CRITICO (spec §8)
+    # -----------------------------------------------------------------------
+    # Ollama es el que MAS RAM consume. Qwen 2.5 3B necesita ~3 GB.
+    # Si se sube a un modelo de 7B, subir este limite a 8g.
+    mem_limit: 4g
+    memswap_limit: 4g
+    networks:
+      - ia-net
+    # NOTA: Ollama NO expone puerto al host. Solo lo alcanza ia-local
+    # por la red interna. Para descargar un modelo, usar:
+    #   docker exec rderico-ia-ollama ollama pull qwen2.5:3b
+
+networks:
+  ia-net:
+    name: rderico-ia-net
+    driver: bridge
+
+# =============================================================================
+# NOTAS DE OPERACION
+# =============================================================================
+#
+# 1. PRIMER ARRANQUE (descarga de modelos):
+#    El primer `up -d` descarga Whisper (~150 MB) y YOLO (~6 MB).
+#    Ollama NO descarga el LLM automaticamente. Hay que hacerlo a mano:
+#      docker exec rderico-ia-ollama ollama pull qwen2.5:3b
+#
+# 2. VERIFICAR QUE EL MOTOR RESPONDE:
+#      curl http://localhost:9000/status
+#    Respuesta esperada: {"disponible":true,"whisper":true,"yolo":true,"ollama":true,...}
+#
+# 3. CABLEAR EL ERP (cuando el POS este tranquilo):
+#    Agregar al servicio "api" de docker-compose.yml:
+#      environment:
+#        - AI_LOCAL_ENABLED=true
+#        - AI_LOCAL_URL=http://ia-local:9000
+#    Y conectar la red: networks: [default, rderico-ia-net]
+#    Luego recrear SOLO el api (no la db, no el pos):
+#      docker compose up -d --no-deps api
+#
+# 4. APAGAR LA IA SIN DESPLEGAR CODIGO:
+#      AI_LOCAL_ENABLED=false  -> el ERP vuelve a modo manual puro.
+#
+# 5. SI EL MOTOR SE CAE:
+#    El ERP devuelve 503 IA_NO_DISPONIBLE y el operador sigue a mano.
+#    El POS NO se ve afectado. Esta es la regla de oro.
+#
+# 6. PARA GPU (opcional):
+#    Descomentar el bloque `deploy.resources.reservations.devices` en ia-local
+#    y cambiar WHISPER_MODEL a "small" o "medium".
+# =============================================================================
