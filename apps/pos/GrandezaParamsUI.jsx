@@ -105,11 +105,11 @@ export const GrandezaParamsUI = ({ onBack }) => {
     });
     const [msgRecipients, setMsgRecipients] = useState([]);
     const [msgRecipientsMeta, setMsgRecipientsMeta] = useState(null); // { total, with_phone, without_phone }
-    const [msgBatchIndex, setMsgBatchIndex] = useState(0);
     const [msgSentIds, setMsgSentIds] = useState([]);   // client_ids ya marcados como enviados
     const [msgBatchId, setMsgBatchId] = useState('');
     const [msgLog, setMsgLog] = useState([]);
     const [msgSaving, setMsgSaving] = useState(false);
+    const [msgSavedOk, setMsgSavedOk] = useState(false); // Confirmación visible "Configuración guardada"
     const [msgLoadingRecipients, setMsgLoadingRecipients] = useState(false);
 
     const DAYS = ['LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO', 'DOMINGO'];
@@ -128,8 +128,6 @@ export const GrandezaParamsUI = ({ onBack }) => {
         { id: 'DOMINGO',             label: 'Clientes de Domingo' },
         { id: 'PROXIMA_EXTEMPORANEA', label: 'Próxima ruta extemporánea' },
     ];
-
-    const MSG_BATCH_SIZE = 5;
 
     useEffect(() => {
         if (activeTab === 'products') fetchProducts();
@@ -1231,6 +1229,7 @@ export const GrandezaParamsUI = ({ onBack }) => {
 
     const saveMsgSchedule = async () => {
         setMsgSaving(true);
+        setMsgSavedOk(false);
         try {
             const res = await fetch(`${API_BASE}/grandeza/message-schedule`, {
                 method: 'PUT',
@@ -1247,7 +1246,9 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     send_time: data.send_time || null,
                     weekly: !!data.weekly,
                 });
-                setStatusModal({ type: 'success', title: 'Guardado', message: 'La programación de mensajes se guardó correctamente.' });
+                // Confirmación visible e inmediata (se auto-oculta a los 4s).
+                setMsgSavedOk(true);
+                setTimeout(() => setMsgSavedOk(false), 4000);
             } else {
                 setStatusModal({ type: 'error', title: 'Error', message: 'No se pudo guardar la programación.' });
             }
@@ -1271,9 +1272,8 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     with_phone: data.with_phone || 0,
                     without_phone: data.without_phone || 0,
                 });
-                setMsgBatchIndex(0);
                 setMsgSentIds([]);
-                setMsgBatchId(`LOTE-${Date.now()}`);
+                setMsgBatchId(`ENVIO-${Date.now()}`);
             } else {
                 setStatusModal({ type: 'error', title: 'Error', message: 'No se pudieron resolver los destinatarios.' });
             }
@@ -1315,22 +1315,8 @@ export const GrandezaParamsUI = ({ onBack }) => {
         }
     };
 
-    const nextMsgBatch = () => {
-        const total = msgRecipients.length;
-        const next = msgBatchIndex + MSG_BATCH_SIZE;
-        if (next < total) setMsgBatchIndex(next);
-    };
-
-    const prevMsgBatch = () => {
-        const prev = msgBatchIndex - MSG_BATCH_SIZE;
-        setMsgBatchIndex(prev < 0 ? 0 : prev);
-    };
-
     const renderMessagesTab = () => {
         const total = msgRecipients.length;
-        const batch = msgRecipients.slice(msgBatchIndex, msgBatchIndex + MSG_BATCH_SIZE);
-        const batchNum = Math.floor(msgBatchIndex / MSG_BATCH_SIZE) + 1;
-        const totalBatches = Math.max(1, Math.ceil(total / MSG_BATCH_SIZE));
         const enviados = msgSentIds.length;
 
         return (
@@ -1424,7 +1410,7 @@ export const GrandezaParamsUI = ({ onBack }) => {
                             </div>
                         </div>
 
-                        <div className="flex flex-wrap gap-3 pt-2">
+                        <div className="flex flex-wrap items-center gap-3 pt-2">
                             <button
                                 onClick={saveMsgSchedule}
                                 disabled={msgSaving}
@@ -1439,6 +1425,11 @@ export const GrandezaParamsUI = ({ onBack }) => {
                             >
                                 {msgLoadingRecipients ? 'Cargando...' : '🔄 Cargar Destinatarios'}
                             </button>
+                            {msgSavedOk && (
+                                <span className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-500/15 border border-green-500/40 text-green-400 text-xs font-black uppercase tracking-widest animate-pulse">
+                                    ✓ Configuración guardada
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1451,7 +1442,7 @@ export const GrandezaParamsUI = ({ onBack }) => {
                                 📤 Envío Asistido
                             </h2>
                             <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">
-                                Lote {batchNum} de {totalBatches} · {enviados}/{total} enviados
+                                {enviados}/{total} enviados
                                 {msgRecipientsMeta && msgRecipientsMeta.without_phone > 0 && (
                                     <span className="text-red-400 ml-2">· {msgRecipientsMeta.without_phone} sin teléfono</span>
                                 )}
@@ -1459,7 +1450,7 @@ export const GrandezaParamsUI = ({ onBack }) => {
                         </div>
 
                         <div className="space-y-3">
-                            {batch.map(r => {
+                            {msgRecipients.map(r => {
                                 const yaEnviado = msgSentIds.includes(r.client_id);
                                 const sinTel = !r.phone;
                                 return (
@@ -1494,22 +1485,9 @@ export const GrandezaParamsUI = ({ onBack }) => {
                             })}
                         </div>
 
-                        <div className="flex flex-wrap gap-3 mt-5">
-                            <button
-                                onClick={prevMsgBatch}
-                                disabled={msgBatchIndex === 0}
-                                className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
-                            >
-                                ← Lote anterior
-                            </button>
-                            <button
-                                onClick={nextMsgBatch}
-                                disabled={msgBatchIndex + MSG_BATCH_SIZE >= total}
-                                className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
-                            >
-                                Lote siguiente →
-                            </button>
-                        </div>
+                        <p className="text-[11px] text-gray-500 mt-5">
+                            Abre WhatsApp con cada cliente y pulsa enviar. La lista es corrida: al marcar un envío se registra en la bitácora.
+                        </p>
                     </div>
                 )}
 
