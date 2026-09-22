@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CONFIG } from './config';
+import { GrandezaOrderRequestsTab } from './GrandezaOrderRequestsTab';
 
 const API_BASE = CONFIG.API_BASE_URL;
 
@@ -1567,7 +1568,8 @@ export const GrandezaParamsUI = ({ onBack }) => {
                         { id: 'products', label: 'Productos Vinculados', icon: '🍞' },
                         { id: 'clients', label: 'Directorio de Clientes', icon: '👥' },
                         { id: 'routes', label: 'Rutas por Día', icon: '🗺️' },
-                        { id: 'messages', label: 'Programación de Mensajes', icon: '💬' }
+                        { id: 'messages', label: 'Programación de Mensajes', icon: '💬' },
+                        { id: 'orderRequests', label: 'Programación de Pedidos', icon: '📋' }
                     ].map(tab => (
                         <button
                             key={tab.id}
@@ -1602,6 +1604,11 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     {activeTab === 'clients' && renderClientsTab()}
                     {activeTab === 'routes' && renderRoutesTab()}
                     {activeTab === 'messages' && renderMessagesTab()}
+                    {activeTab === 'orderRequests' && (
+                        <GrandezaOrderRequestsTab
+                            onStatus={(text, type) => setStatusModal({ text, type: type || 'success' })}
+                        />
+                    )}
                 </div>
             </div>
 

@@ -358,3 +358,64 @@ async def update_grandeza_order(order_id: int, data: schemas.GrandezaOrderUpdate
 async def get_production_estimate(target_date: date, last_n: int = 10, db: AsyncSession = Depends(get_db)):
     """Retorna estimación de piezas a producir basada en historial de ventas por cliente de la ruta."""
     return await grandeza_service.get_production_estimate(db, target_date, last_n)
+
+
+# ─── Programación de Pedidos (5ª pestaña) ─────────────────────────────────────
+#
+# IMPORTANTE (D-4): solo se crean filas para los clientes que RESPONDIERON.
+# Los clientes que no respondieron NO se integran a la tabla de pedidos.
+
+@router.get("/order-requests/config", response_model=schemas.GrandezaOrderRequestConfig)
+async def get_order_request_config(db: AsyncSession = Depends(get_db)):
+    """Lee la configuración de la pestaña (día/hora límite, día entrega, selector)."""
+    return await grandeza_service.get_order_request_config(db)
+
+
+@router.put("/order-requests/config", response_model=schemas.GrandezaOrderRequestConfig)
+async def save_order_request_config(
+    data: schemas.GrandezaOrderRequestConfig,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persiste la configuración de la pestaña."""
+    return await grandeza_service.save_order_request_config(db, data)
+
+
+@router.get("/order-requests/matrix/{delivery_date}", response_model=schemas.GrandezaOrderMatrixResponse)
+async def get_order_matrix(delivery_date: date, db: AsyncSession = Depends(get_db)):
+    """Matriz clientes × productos + fila de totales para una fecha de entrega."""
+    return await grandeza_service.get_order_matrix(db, delivery_date)
+
+
+@router.get("/order-requests/{delivery_date}", response_model=List[schemas.GrandezaOrderRequestResponse])
+async def get_order_requests(delivery_date: date, db: AsyncSession = Depends(get_db)):
+    """Lista los pedidos capturados para una fecha de entrega."""
+    return await grandeza_service.get_order_requests(db, delivery_date)
+
+
+@router.post("/order-requests", response_model=schemas.GrandezaOrderRequestResponse)
+async def upsert_order_request(
+    data: schemas.GrandezaOrderRequestCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Crea o reemplaza el pedido de un cliente para una fecha (UPSERT)."""
+    return await grandeza_service.upsert_order_request(db, data)
+
+
+@router.delete("/order-requests/{request_id}")
+async def delete_order_request(request_id: int, db: AsyncSession = Depends(get_db)):
+    """Elimina un pedido y sus ítems."""
+    ok = await grandeza_service.delete_order_request(db, request_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    return {"ok": True, "deleted_id": request_id}
+
+
+@router.post("/order-requests/dispatch", response_model=schemas.GrandezaOrderDispatchResponse)
+async def dispatch_order_requests(
+    data: schemas.GrandezaOrderDispatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Envía la matriz confirmada al módulo de Producción (Fase C)."""
+    return await grandeza_service.dispatch_order_requests_to_production(
+        db, data.delivery_date, data.dispatched_by, data.notes
+    )

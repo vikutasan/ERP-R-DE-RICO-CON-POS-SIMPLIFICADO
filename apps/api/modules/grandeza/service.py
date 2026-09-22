@@ -26,7 +26,8 @@ from .models import (
     GrandezaExtraordinaryRouteSlot,
     GrandezaJourney, GrandezaInventory, GrandezaVisit, GrandezaVisitItem,
     GrandezaDriverLocation, GrandezaSettings, GrandezaExpense,
-    GrandezaMessageLog
+    GrandezaMessageLog,
+    GrandezaOrderRequest, GrandezaOrderRequestItem,
 )
 from modules.catalog.models import Product
 
@@ -50,6 +51,17 @@ MSG_SELECTORES_VALIDOS = {
     "TODOS", "ACTIVOS", "INACTIVOS",
     "LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO",
     "PROXIMA_EXTEMPORANEA",
+}
+
+
+# ─── Programación de Pedidos (5ª pestaña) ─────────────────────────────────────
+# Claves de configuración persistidas en grandeza_settings.
+ORDER_CONFIG_KEYS = {
+    "enabled":       "order_request_enabled",
+    "deadline_day":  "order_request_deadline_day",
+    "deadline_time": "order_request_deadline_time",
+    "delivery_day":  "order_request_delivery_day",
+    "selector":      "order_request_selector",
 }
 
 
@@ -1140,6 +1152,337 @@ class GrandezaService:
             "client_count": len(clients_data),
             "clients": clients_data,
             "totals": totals
+        }
+
+    # ─── Programación de Pedidos (5ª pestaña) ────────────────────────────────
+    #
+    # IMPORTANTE (D-4): solo se crean filas para los clientes que RESPONDIERON.
+    # Los clientes que no respondieron NO se integran a la tabla de pedidos.
+
+    async def get_order_request_config(self, db: AsyncSession) -> dict:
+        """Lee la configuración de la pestaña desde grandeza_settings."""
+        rows = await db.execute(
+            select(GrandezaSettings).where(
+                GrandezaSettings.key.in_(list(ORDER_CONFIG_KEYS.values()))
+            )
+        )
+        mapa = {r.key: r.value for r in rows.scalars().all()}
+
+        def _bool(key: str, default: bool = False) -> bool:
+            raw = mapa.get(ORDER_CONFIG_KEYS[key])
+            if raw is None:
+                return default
+            return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+        return {
+            "enabled": _bool("enabled", False),
+            "deadline_day": mapa.get(ORDER_CONFIG_KEYS["deadline_day"]) or None,
+            "deadline_time": mapa.get(ORDER_CONFIG_KEYS["deadline_time"]) or None,
+            "delivery_day": mapa.get(ORDER_CONFIG_KEYS["delivery_day"]) or None,
+            "selector": mapa.get(ORDER_CONFIG_KEYS["selector"]) or "TODOS",
+        }
+
+    async def save_order_request_config(self, db: AsyncSession, data) -> dict:
+        """Persiste la configuración de la pestaña (UPSERT por clave)."""
+        valores = {
+            "enabled": "true" if getattr(data, "enabled", False) else "false",
+            "deadline_day": getattr(data, "deadline_day", None) or "",
+            "deadline_time": getattr(data, "deadline_time", None) or "",
+            "delivery_day": getattr(data, "delivery_day", None) or "",
+            "selector": getattr(data, "selector", None) or "TODOS",
+        }
+        for campo, valor in valores.items():
+            await self.upsert_setting(
+                db, ORDER_CONFIG_KEYS[campo], valor,
+                description=f"Programación de Pedidos: {campo}",
+            )
+        await db.commit()
+        return await self.get_order_request_config(db)
+
+    async def _resolver_nombres_producto(self, db: AsyncSession, product_ids: list) -> dict:
+        """Devuelve {product_id: nombre} consultando el catálogo."""
+        if not product_ids:
+            return {}
+        res = await db.execute(select(Product).where(Product.id.in_(product_ids)))
+        return {p.id: p.name for p in res.scalars().all()}
+
+    async def get_order_matrix(self, db: AsyncSession, delivery_date: date) -> dict:
+        """
+        Construye la matriz clientes × productos + fila de totales (D-14).
+
+        Solo incluye clientes que tienen un pedido registrado para esa fecha
+        (D-4: los que no respondieron no aparecen).
+        """
+        cfg = await self.get_order_request_config(db)
+
+        # 1. Pedidos de esa fecha, con cliente e ítems precargados (§7.6).
+        res = await db.execute(
+            select(GrandezaOrderRequest)
+            .options(
+                selectinload(GrandezaOrderRequest.client),
+                selectinload(GrandezaOrderRequest.items),
+            )
+            .where(GrandezaOrderRequest.delivery_date == delivery_date)
+            .order_by(GrandezaOrderRequest.id)
+        )
+        pedidos = res.scalars().all()
+
+        # 2. Productos habilitados en Grandeza (columnas de la tabla).
+        prods_res = await db.execute(
+            select(GrandezaProductConfig)
+            .where(GrandezaProductConfig.is_enabled == True)
+            .order_by(GrandezaProductConfig.product_id)
+        )
+        configs = prods_res.scalars().all()
+        product_ids = [c.product_id for c in configs]
+        nombres = await self._resolver_nombres_producto(db, product_ids)
+
+        products = [
+            {"product_id": pid, "product_name": nombres.get(pid, f"Producto #{pid}")}
+            for pid in product_ids
+        ]
+
+        # 3. Filas (una por cliente que respondió).
+        rows = []
+        totales = {pid: 0.0 for pid in product_ids}
+        total_units = 0.0
+
+        for pedido in pedidos:
+            cliente = pedido.client
+            cantidades = {str(pid): 0.0 for pid in product_ids}
+            for item in pedido.items:
+                clave = str(item.product_id)
+                if clave in cantidades:
+                    cantidades[clave] += float(item.quantity or 0)
+                else:
+                    cantidades[clave] = float(item.quantity or 0)
+                if item.product_id in totales:
+                    totales[item.product_id] += float(item.quantity or 0)
+                total_units += float(item.quantity or 0)
+
+            rows.append({
+                "client_id": pedido.client_id,
+                "client_name": cliente.name if cliente else f"Cliente #{pedido.client_id}",
+                "phone": _normalizar_telefono(cliente.phone) if cliente else None,
+                "request_id": pedido.id,
+                "status": pedido.status,
+                "source": pedido.source,
+                "confidence": pedido.confidence,
+                "quantities": cantidades,
+            })
+
+        totals = [
+            {
+                "product_id": pid,
+                "product_name": nombres.get(pid, f"Producto #{pid}"),
+                "total": totales.get(pid, 0.0),
+            }
+            for pid in product_ids
+        ]
+
+        return {
+            "delivery_date": delivery_date,
+            "deadline_day": cfg.get("deadline_day"),
+            "deadline_time": cfg.get("deadline_time"),
+            "delivery_day": cfg.get("delivery_day"),
+            "selector": cfg.get("selector", "TODOS"),
+            "products": products,
+            "rows": rows,
+            "totals": totals,
+            "total_clients": len(rows),
+            "total_units": total_units,
+        }
+
+    async def upsert_order_request(self, db: AsyncSession, data) -> GrandezaOrderRequest:
+        """
+        Crea o reemplaza el pedido de un cliente para una fecha de entrega.
+
+        UPSERT por (client_id, delivery_date): si ya existe, se borran sus
+        ítems y se reemplazan por los nuevos (idempotente para reintentos).
+        """
+        res = await db.execute(
+            select(GrandezaOrderRequest)
+            .options(selectinload(GrandezaOrderRequest.items))
+            .where(
+                GrandezaOrderRequest.client_id == data.client_id,
+                GrandezaOrderRequest.delivery_date == data.delivery_date,
+            )
+        )
+        pedido = res.scalar_one_or_none()
+
+        if pedido is None:
+            pedido = GrandezaOrderRequest(
+                client_id=data.client_id,
+                delivery_date=data.delivery_date,
+            )
+            db.add(pedido)
+
+        pedido.order_deadline = getattr(data, "order_deadline", None)
+        pedido.selector_used = getattr(data, "selector_used", None) or "TODOS"
+        pedido.source = getattr(data, "source", None) or "MANUAL"
+        pedido.confidence = getattr(data, "confidence", None)
+        pedido.raw_ocr_text = getattr(data, "raw_ocr_text", None)
+        pedido.screenshot_path = getattr(data, "screenshot_path", None)
+        pedido.status = getattr(data, "status", None) or "CONFIRMADO"
+        pedido.confirmed_by = getattr(data, "confirmed_by", None)
+        pedido.confirmed_at = utcnow()
+
+        await db.flush()
+
+        # Reemplazar ítems (idempotencia).
+        await db.execute(
+            delete(GrandezaOrderRequestItem).where(
+                GrandezaOrderRequestItem.request_id == pedido.id
+            )
+        )
+        for item in (getattr(data, "items", None) or []):
+            db.add(GrandezaOrderRequestItem(
+                request_id=pedido.id,
+                product_id=item.product_id,
+                quantity=item.quantity or 0,
+                match_confidence=getattr(item, "match_confidence", None),
+                needs_review=getattr(item, "needs_review", False),
+            ))
+
+        await db.commit()
+
+        res = await db.execute(
+            select(GrandezaOrderRequest)
+            .options(
+                selectinload(GrandezaOrderRequest.client),
+                selectinload(GrandezaOrderRequest.items),
+            )
+            .where(GrandezaOrderRequest.id == pedido.id)
+        )
+        return res.scalar_one()
+
+    async def delete_order_request(self, db: AsyncSession, request_id: int) -> bool:
+        """Elimina un pedido y sus ítems (cascade)."""
+        res = await db.execute(
+            select(GrandezaOrderRequest).where(GrandezaOrderRequest.id == request_id)
+        )
+        pedido = res.scalar_one_or_none()
+        if pedido is None:
+            return False
+        await db.delete(pedido)
+        await db.commit()
+        return True
+
+    async def get_order_requests(self, db: AsyncSession, delivery_date: date) -> list:
+        """Lista los pedidos de una fecha con cliente e ítems precargados."""
+        res = await db.execute(
+            select(GrandezaOrderRequest)
+            .options(
+                selectinload(GrandezaOrderRequest.client),
+                selectinload(GrandezaOrderRequest.items),
+            )
+            .where(GrandezaOrderRequest.delivery_date == delivery_date)
+            .order_by(GrandezaOrderRequest.id)
+        )
+        pedidos = res.scalars().all()
+
+        product_ids = [i.product_id for p in pedidos for i in p.items]
+        nombres = await self._resolver_nombres_producto(db, list(set(product_ids)))
+
+        salida = []
+        for p in pedidos:
+            salida.append({
+                "id": p.id,
+                "client_id": p.client_id,
+                "client_name": p.client.name if p.client else f"Cliente #{p.client_id}",
+                "delivery_date": p.delivery_date,
+                "order_deadline": p.order_deadline,
+                "selector_used": p.selector_used,
+                "source": p.source,
+                "confidence": p.confidence,
+                "raw_ocr_text": p.raw_ocr_text,
+                "screenshot_path": p.screenshot_path,
+                "status": p.status,
+                "created_at": p.created_at,
+                "confirmed_at": p.confirmed_at,
+                "confirmed_by": p.confirmed_by,
+                "items": [
+                    {
+                        "id": i.id,
+                        "product_id": i.product_id,
+                        "product_name": nombres.get(i.product_id, f"Producto #{i.product_id}"),
+                        "quantity": float(i.quantity or 0),
+                        "match_confidence": i.match_confidence,
+                        "needs_review": i.needs_review,
+                    }
+                    for i in p.items
+                ],
+            })
+        return salida
+
+    async def dispatch_order_requests_to_production(
+        self, db: AsyncSession, delivery_date: date, dispatched_by: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> dict:
+        """
+        Materializa la matriz confirmada como órdenes de producción (Fase C).
+
+        Crea/actualiza una `GrandezaOrder` por cliente con sus ítems, y marca
+        los pedidos como ENVIADO. Es idempotente: re-despachar actualiza.
+        """
+        from .models import GrandezaOrder
+
+        matriz = await self.get_order_matrix(db, delivery_date)
+        creadas = 0
+        actualizadas = 0
+        detalle = []
+
+        for fila in matriz["rows"]:
+            cantidades = {
+                int(pid): float(qty)
+                for pid, qty in (fila.get("quantities") or {}).items()
+                if float(qty) > 0
+            }
+            if not cantidades:
+                continue
+
+            res = await db.execute(
+                select(GrandezaOrder).where(
+                    GrandezaOrder.client_id == fila["client_id"],
+                    GrandezaOrder.delivery_date == delivery_date,
+                )
+            )
+            orden = res.scalar_one_or_none()
+            if orden is None:
+                orden = GrandezaOrder(
+                    client_id=fila["client_id"],
+                    delivery_date=delivery_date,
+                    status="PENDIENTE",
+                )
+                db.add(orden)
+                creadas += 1
+            else:
+                actualizadas += 1
+
+            orden.notes = notes or orden.notes
+            detalle.append({
+                "client_id": fila["client_id"],
+                "client_name": fila["client_name"],
+                "products": cantidades,
+            })
+
+        # Marcar los pedidos como ENVIADO.
+        res = await db.execute(
+            select(GrandezaOrderRequest).where(
+                GrandezaOrderRequest.delivery_date == delivery_date
+            )
+        )
+        for pedido in res.scalars().all():
+            pedido.status = "ENVIADO"
+
+        await db.commit()
+
+        return {
+            "delivery_date": delivery_date,
+            "orders_created": creadas,
+            "orders_updated": actualizadas,
+            "total_units": matriz["total_units"],
+            "detail": detalle,
         }
 
 

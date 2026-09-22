@@ -334,3 +334,135 @@ class GrandezaMessageLogResponse(BaseModel):
     batch_id: Optional[str] = None
     client_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── Programación de Pedidos (5ª pestaña) ─────────────────────────────────────
+#
+# IMPORTANTE (D-4): solo se crean filas para los clientes que RESPONDIERON.
+# Los clientes que no respondieron NO se integran a la tabla de pedidos.
+
+class GrandezaOrderRequestConfig(BaseModel):
+    """Configuración persistida de la pestaña 'Programación de Pedidos'.
+
+    - `deadline_day` / `deadline_time`: día y hora límite para recibir pedidos.
+    - `delivery_day`: día en que se entregan los pedidos.
+    - `selector`: a qué subconjunto de clientes se les pidió el pedido
+      (mismos valores que MSG_SELECTORES).
+    """
+    enabled: bool = False
+    deadline_day: Optional[str] = None    # LUNES..DOMINGO
+    deadline_time: Optional[str] = None   # "HH:MM" hora local (intención de negocio)
+    delivery_day: Optional[str] = None    # LUNES..DOMINGO
+    selector: str = "TODOS"
+
+
+class GrandezaOrderRequestItemCreate(BaseModel):
+    """Una celda de la tabla: producto + cantidad pedida por el cliente."""
+    product_id: int
+    quantity: float = 0
+    match_confidence: Optional[float] = None
+    needs_review: bool = False
+
+
+class GrandezaOrderRequestItemResponse(BaseModel):
+    """Ítem de un pedido, con el nombre del producto resuelto para la UI."""
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    quantity: float
+    match_confidence: Optional[float] = None
+    needs_review: bool = False
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GrandezaOrderRequestCreate(BaseModel):
+    """Alta/actualización de un pedido capturado (manual o por OCR).
+
+    El backend hace UPSERT por (client_id, delivery_date): si ya existe un
+    pedido para ese cliente en esa fecha, se reemplazan sus ítems.
+    """
+    client_id: int
+    delivery_date: date
+    order_deadline: Optional[datetime] = None
+    selector_used: str = "TODOS"
+    source: str = "MANUAL"                # MANUAL | OCR
+    confidence: Optional[float] = None
+    raw_ocr_text: Optional[str] = None
+    screenshot_path: Optional[str] = None
+    status: str = "CONFIRMADO"            # CONFIRMADO | BORRADOR | ENVIADO
+    confirmed_by: Optional[str] = None
+    items: List[GrandezaOrderRequestItemCreate] = []
+
+
+class GrandezaOrderRequestResponse(BaseModel):
+    """Un pedido completo (cliente + fecha + ítems)."""
+    id: int
+    client_id: int
+    client_name: Optional[str] = None
+    delivery_date: date
+    order_deadline: Optional[datetime] = None
+    selector_used: str
+    source: str
+    confidence: Optional[float] = None
+    raw_ocr_text: Optional[str] = None
+    screenshot_path: Optional[str] = None
+    status: str
+    created_at: datetime
+    confirmed_at: Optional[datetime] = None
+    confirmed_by: Optional[str] = None
+    items: List[GrandezaOrderRequestItemResponse] = []
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GrandezaOrderMatrixRow(BaseModel):
+    """Una fila de la matriz: un cliente con sus cantidades por producto."""
+    client_id: int
+    client_name: str
+    phone: Optional[str] = None
+    request_id: Optional[int] = None
+    status: Optional[str] = None
+    source: Optional[str] = None
+    confidence: Optional[float] = None
+    # product_id (como string) -> cantidad
+    quantities: dict = {}
+
+
+class GrandezaOrderMatrixTotal(BaseModel):
+    """Una celda de la fila de totales por producto."""
+    product_id: int
+    product_name: str
+    total: float = 0
+
+
+class GrandezaOrderMatrixResponse(BaseModel):
+    """Matriz clientes × productos + fila de totales (D-14).
+
+    Reutiliza la forma de `get_production_estimate()` para que Producción
+    pueda consumirla sin traducción.
+    """
+    delivery_date: date
+    deadline_day: Optional[str] = None
+    deadline_time: Optional[str] = None
+    delivery_day: Optional[str] = None
+    selector: str = "TODOS"
+    products: List[dict] = []             # [{product_id, product_name}]
+    rows: List[GrandezaOrderMatrixRow] = []
+    totals: List[GrandezaOrderMatrixTotal] = []
+    total_clients: int = 0
+    total_units: float = 0
+
+
+class GrandezaOrderDispatchRequest(BaseModel):
+    """Petición para enviar la matriz confirmada al módulo de Producción."""
+    delivery_date: date
+    dispatched_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class GrandezaOrderDispatchResponse(BaseModel):
+    """Resultado del despacho a Producción."""
+    delivery_date: date
+    orders_created: int = 0
+    orders_updated: int = 0
+    total_units: float = 0
+    detail: List[dict] = []

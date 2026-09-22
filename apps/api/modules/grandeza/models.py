@@ -317,3 +317,67 @@ class GrandezaMessageLog(Base):
     batch_id = Column(String(40), nullable=True)      # Agrupa los envíos de un mismo lote
 
     client = relationship("GrandezaClient")
+
+
+class GrandezaOrderRequest(Base):
+    """
+    Pedido capturado en la pestaña 'Programación de Pedidos' (5ª pestaña).
+
+    Representa la respuesta de UN cliente al mensaje de WhatsApp: qué productos
+    y cuántas piezas quiere para el día de entrega.
+
+    IMPORTANTE (D-4): solo se crean filas para los clientes que RESPONDIERON.
+    Los que no respondieron no se integran a la tabla.
+
+    El campo `source` distingue si el pedido se capturó a mano (MANUAL) o si la
+    IA lo propuso a partir de una captura de pantalla (OCR). En ambos casos el
+    humano CONFIRMÓ antes de que la fila existiera (human-in-the-loop).
+
+    `raw_ocr_text` se guarda como snapshot de auditoría: si el pedido se
+    capturó por OCR, queda el texto crudo que Tesseract leyó, para poder
+    reconstruir qué vio la IA si alguien cuestiona el pedido después.
+    """
+    __tablename__ = "grandeza_order_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("grandeza_clients.id"), nullable=False, index=True)
+    delivery_date = Column(Date, nullable=False, index=True)   # Día de entrega
+    order_deadline = Column(DateTime, nullable=True)           # Día/hora límite de entrada (UTC, DT-01)
+    selector_used = Column(String(30), nullable=False)         # Selector que originó la ronda
+    source = Column(String(20), nullable=False, default="MANUAL")  # MANUAL | OCR
+    confidence = Column(Float, nullable=True)                  # Confianza global de la propuesta (0-1)
+    raw_ocr_text = Column(Text, nullable=True)                 # Texto crudo del OCR (auditoría)
+    screenshot_path = Column(String(255), nullable=True)       # Ruta de la captura guardada
+    status = Column(String(20), nullable=False, default="CONFIRMADO", index=True)  # BORRADOR | CONFIRMADO | ENVIADO_PRODUCCION
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    confirmed_by = Column(String(100), nullable=True)
+
+    client = relationship("GrandezaClient")
+    items = relationship(
+        "GrandezaOrderRequestItem",
+        back_populates="request",
+        cascade="all, delete-orphan",
+    )
+
+
+class GrandezaOrderRequestItem(Base):
+    """
+    Detalle de productos de un pedido (`GrandezaOrderRequest`).
+
+    `needs_review` marca los matches dudosos: si la IA no está segura de qué
+    producto corresponde (ej. "pandeoro" -> ¿Pan de oro?), la UI lo resalta en
+    ámbar y obliga al humano a resolverlo antes de confirmar.
+    """
+    __tablename__ = "grandeza_order_request_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, ForeignKey("grandeza_order_requests.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    # DT-02 (Dinero): nunca Float. Numeric(10,2) permite fracciones (ej. 1.5 kg).
+    quantity = Column(Numeric(10, 2), nullable=False, default=0)
+    match_confidence = Column(Float, nullable=True)   # Confianza del match producto (0-1)
+    needs_review = Column(Boolean, nullable=False, default=False)
+
+    request = relationship("GrandezaOrderRequest", back_populates="items")
+    product = relationship("Product")

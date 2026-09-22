@@ -41,7 +41,8 @@ from modules.network.models import NetworkIncident
 from modules.grandeza.models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
     GrandezaJourney, GrandezaInventory, GrandezaVisit, GrandezaVisitItem,
-    GrandezaDriverLocation, GrandezaSettings, GrandezaMessageLog
+    GrandezaDriverLocation, GrandezaSettings, GrandezaMessageLog,
+    GrandezaOrderRequest, GrandezaOrderRequestItem
 )
 from modules.hr.models import (
     HREmployeeExt, HRPosition, HRAttendance, HRRegulation,
@@ -134,6 +135,59 @@ async def auto_seed_on_first_boot():
                 "ON grandeza_message_log(sent_at)"
             ))
         logger.info("Tabla grandeza_message_log verificada/creada.")
+
+        # Paso 1.5: Tablas de Programación de Pedidos (5ª pestaña Grandeza).
+        # create_all NO altera tablas existentes (ver §7.7 — Grandeza docs), por eso
+        # las dos tablas de pedidos se crean aquí de forma explícita.
+        async with engine.begin() as conn:
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grandeza_order_requests (
+                    id SERIAL PRIMARY KEY,
+                    client_id INTEGER NOT NULL REFERENCES grandeza_clients(id),
+                    delivery_date DATE NOT NULL,
+                    order_deadline TIMESTAMP,
+                    selector_used VARCHAR(30) NOT NULL,
+                    source VARCHAR(20) NOT NULL DEFAULT 'MANUAL',
+                    confidence DOUBLE PRECISION,
+                    raw_ocr_text TEXT,
+                    screenshot_path VARCHAR(255),
+                    status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMADO',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    confirmed_at TIMESTAMP,
+                    confirmed_by VARCHAR(100)
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_order_requests_client_id "
+                "ON grandeza_order_requests(client_id)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_order_requests_delivery_date "
+                "ON grandeza_order_requests(delivery_date)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_order_requests_status "
+                "ON grandeza_order_requests(status)"
+            ))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grandeza_order_request_items (
+                    id SERIAL PRIMARY KEY,
+                    request_id INTEGER NOT NULL REFERENCES grandeza_order_requests(id) ON DELETE CASCADE,
+                    product_id INTEGER NOT NULL REFERENCES products(id),
+                    quantity NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    match_confidence DOUBLE PRECISION,
+                    needs_review BOOLEAN NOT NULL DEFAULT FALSE
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_order_request_items_request_id "
+                "ON grandeza_order_request_items(request_id)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_order_request_items_product_id "
+                "ON grandeza_order_request_items(product_id)"
+            ))
+        logger.info("Tablas grandeza_order_requests/items verificadas/creadas.")
 
         # Paso 1.5: Migraciones de columnas nuevas (idempotente)
         # create_all no agrega columnas a tablas existentes (ver Error F — Grandeza docs).
