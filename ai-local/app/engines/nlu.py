@@ -25,6 +25,11 @@ logger = logging.getLogger("rderico.ia.motor.nlu")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:3b")
 
+# Timeout de inferencia. Un LLM de 3B en CPU tarda >30s en la PRIMERA
+# inferencia (carga del modelo en RAM). 30s provocaba ReadTimeout con
+# mensaje vacio. Se sube a 120s y se hace warm-up al arrancar.
+OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
+
 # Prompt del sistema: instruye al LLM a devolver SOLO JSON.
 # El vocabulario de SKUs se inyecta desde system_settings (cero listas hardcodeadas).
 PROMPT_SISTEMA = """Eres un interprete de comandos de un POS de panaderia.
@@ -49,6 +54,35 @@ async def verificar_ollama() -> bool:
         return False
 
 
+async def calentar_modelo() -> bool:
+    """Carga el modelo en RAM con una inferencia trivial.
+
+    Sin esto, la PRIMERA peticion real del operador paga la carga del modelo
+    (>30s en CPU) y suele morir por timeout. El warm-up mueve ese costo al
+    arranque del contenedor, donde nadie esta esperando.
+
+    Devuelve True si el modelo quedo caliente. Nunca lanza: si falla, el
+    motor arranca igual y la primera peticion pagara el costo.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as cliente:
+            resp = await cliente.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": "hola",
+                    "stream": False,
+                    "options": {"num_predict": 1},  # 1 token: solo cargar
+                },
+            )
+            resp.raise_for_status()
+        logger.info("Modelo %s caliente.", LLM_MODEL)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Warm-up de %s fallo: %r", LLM_MODEL, exc)
+        return False
+
+
 async def interpretar(payload: schemas.VoiceParseIntentRequest) -> schemas.VoiceParseIntentResponse:
     """Interpreta texto libre y devuelve una intencion estructurada.
 
@@ -59,19 +93,29 @@ async def interpretar(payload: schemas.VoiceParseIntentRequest) -> schemas.Voice
     if payload.contexto:
         prompt_usuario = f"[contexto: {payload.contexto}] {payload.texto}"
 
-    async with httpx.AsyncClient(timeout=30.0) as cliente:
-        resp = await cliente.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": LLM_MODEL,
-                "prompt": prompt_usuario,
-                "system": PROMPT_SISTEMA,
-                "stream": False,
-                "format": "json",  # fuerza salida JSON valida
-            },
-        )
-        resp.raise_for_status()
-        cuerpo = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as cliente:
+            resp = await cliente.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": prompt_usuario,
+                    "system": PROMPT_SISTEMA,
+                    "stream": False,
+                    "format": "json",  # fuerza salida JSON valida
+                },
+            )
+            resp.raise_for_status()
+            cuerpo = resp.json()
+    except httpx.TimeoutException as exc:
+        # str() de ReadTimeout es vacio: se construye un mensaje util.
+        raise TimeoutError(
+            f"Ollama no respondio en {OLLAMA_TIMEOUT}s (modelo {LLM_MODEL})."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ConnectionError(
+            f"Ollama inalcanzable en {OLLAMA_URL}: {exc!r}"
+        ) from exc
 
     # El LLM devuelve el JSON como string en "response"
     try:

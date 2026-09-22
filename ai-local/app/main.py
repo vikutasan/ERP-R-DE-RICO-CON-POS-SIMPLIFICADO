@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
     try:
         ESTADO["ollama_disponible"] = await nlu.verificar_ollama()
         logger.info("Ollama disponible: %s", ESTADO["ollama_disponible"])
+        if ESTADO["ollama_disponible"]:
+            # Warm-up: carga el modelo en RAM ahora, no en la primera
+            # peticion del operador (que moriria por timeout en CPU).
+            await nlu.calentar_modelo()
     except Exception as exc:  # noqa: BLE001
         ESTADO["errores"].append(f"ollama: {exc}")
         logger.error("Ollama NO responde: %s", exc)
