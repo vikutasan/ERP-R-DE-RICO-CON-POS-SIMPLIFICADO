@@ -20,7 +20,7 @@ import { PurchasingHubUI } from './inventory/PurchasingHubUI';
 import { TableServicePOS } from './pos/TableServicePOS';
 import { useTimezone } from './shared/TimezoneContext';
 import { RetailVisionPOS } from './pos/RetailVisionPOS';
-import { VisionTrainingUI } from './pos/VisionTrainingUI';
+import { AICenterUI } from './ai/AICenterUI';
 import { ProductMasterUI as ProductCatalogUI } from './inventory/ProductCatalogUI';
 import { WarehouseManagerUI } from './inventory/WarehouseManagerUI';
 import { PurchaseManagerUI } from './inventory/PurchaseManagerUI';
@@ -176,7 +176,7 @@ export const ExperimentCenterUI = () => {
         { id: 'pos_retail', name: 'Punto de Venta IA', color: 'bg-orange-600', icon: '🛒', access: ['ADMIN', 'MANAGER'] },
         { id: 'inventory', name: 'Gestión de Productos', color: 'bg-indigo-600', icon: '🥐', access: ['ADMIN', 'MANAGER'] },
         { id: 'warehouse', name: 'Gestión de Almacenes', color: 'bg-slate-700', icon: '🏬', access: ['ADMIN', 'MANAGER'] },
-        { id: 'vision_train', name: 'Entrenamiento IA', color: 'bg-[#c1d72e]', icon: '👁️', access: ['ADMIN', 'MANAGER'] },
+        { id: 'vision_train', name: 'Centro de IA', color: 'bg-[#c1d72e]', icon: '🧠', access: ['ADMIN', 'MANAGER'] },
         { id: 'production', name: 'Gestión de la Producción', color: 'bg-amber-800', icon: '🥣', access: ['ADMIN', 'BAKER'] },
         { id: 'pickup', name: 'Gestión de Pickup', color: 'bg-orange-600', icon: '🏪', access: ['ADMIN', 'MANAGER', 'BAKER'] },
         { id: 'repartos', name: 'Gestión de Repartos', color: 'bg-blue-700', icon: '🚗', access: ['ADMIN', 'MANAGER', 'LOGISTICS'] },
@@ -526,10 +526,10 @@ export const ExperimentCenterUI = () => {
                         )}
                         {activeModule === 'vision_train' && (
                             <div className="h-full">
-                                <VisionTrainingUI 
-                                    products={REAL_PRODUCTS} 
-                                    categories={categories} 
-                                    onCategoriesChange={setCategories} 
+                                <AICenterUI
+                                    products={REAL_PRODUCTS}
+                                    categories={categories}
+                                    onCategoriesChange={setCategories}
                                 />
                             </div>
                         )}

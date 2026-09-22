@@ -4,28 +4,10 @@ import {
     mapVoiceIntentToCartProposal,
     POS_VOICE_INTENTS,
 } from '../utils/voiceCartMapper';
-
-/**
- * v25 (VOZ-POS v2): Parametros de la captura continua con auto-stop por silencio.
- *
- * FLUJO MANOS LIBRES: el operador presiona el boton UNA vez, dicta varios
- * productos ("3 conchas, 12 bolillos, 2 conchas...") y la grabacion se detiene
- * SOLA cuando deja de hablar. No hay que volver a tocar la pantalla.
- */
-const VOZ_CONFIG = {
-    // RMS minimo (0..1) para considerar que hay voz. Por debajo = silencio.
-    UMBRAL_RMS: 0.02,
-    // ms de silencio continuo tras haber hablado -> detener y transcribir.
-    SILENCIO_MS: 1500,
-    // ms maximos esperando a que el operador empiece a hablar antes de abortar.
-    ESPERA_VOZ_MS: 6000,
-    // ms maximos de grabacion total (red de seguridad anti-olvido).
-    MAX_GRABACION_MS: 30000,
-    // ms minimos de voz acumulada para considerar el dictado valido.
-    MIN_VOZ_MS: 300,
-    // Cada cuanto se muestrea el nivel de audio (ms).
-    INTERVALO_MUESTREO_MS: 100,
-};
+// v26 (Centro de IA): VOZ_CONFIG se centraliza en apps/ai/utils/aiCenterConstants.js
+// para que el POS y el panel de diagnostico del Centro de IA compartan la MISMA
+// fuente de verdad. Antes vivia duplicado aqui.
+import { VOZ_CONFIG } from '../../ai/utils/aiCenterConstants';
 
 /**
  * v24/v25 (VOZ-POS): Hook de dictado por voz para el carrito del POS.

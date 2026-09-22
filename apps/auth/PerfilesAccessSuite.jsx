@@ -14,7 +14,7 @@ const SYSTEM_MODULES = [
     { id: 'inventory', name: 'Gestión de Productos', icon: '📦' },
     { id: 'inventory_delete', name: 'Eliminar Productos', icon: '🗑️' },
     { id: 'warehouse', name: 'Gestión de Almacenes', icon: '🏬' },
-    { id: 'vision_train', name: 'Entrenamiento IA', icon: '👁️' },
+    { id: 'vision_train', name: 'Centro de IA', icon: '🧠' },
     { id: 'production', name: 'Maestro Panadero', icon: '🍞' },
     { id: 'financials', name: 'Módulo Financiero', icon: '📈' },
     { id: 'invoicing', name: 'Facturación CFDI', icon: '🧾' },

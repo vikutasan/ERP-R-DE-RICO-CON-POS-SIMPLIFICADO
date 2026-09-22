@@ -24,7 +24,7 @@ const TABS = {
     ANOTACION: 'anotacion',
 };
 
-export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange }) => {
+export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange, activo = true }) => {
     const [tab, setTab] = useState(TABS.CAPTURA);
     const [selectedProduct, setSelectedProduct] = useState(null);
     const [isEditingCategories, setIsEditingCategories] = useState(false);
@@ -116,11 +116,12 @@ export const VisionTrainingUI = ({ products, categories = [], onCategoriesChange
     }, []);
 
     // Al entrar a la pestaña de anotacion con un producto elegido, cargar su dataset.
+    // Solo se dispara cuando el Centro de IA tiene visible esta pestaña (`activo`).
     useEffect(() => {
-        if (tab === TABS.ANOTACION && selectedProduct?.sku) {
+        if (activo && tab === TABS.ANOTACION && selectedProduct?.sku) {
             cargarDataset(selectedProduct.sku);
         }
-    }, [tab, selectedProduct, cargarDataset]);
+    }, [activo, tab, selectedProduct, cargarDataset]);
 
     const seleccionarImagen = (img) => {
         setActiveImage(img);
