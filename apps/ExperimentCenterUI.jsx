@@ -103,7 +103,7 @@ export const ExperimentCenterUI = () => {
     }, []);
 
     // Info del negocio desde system_settings (BD)
-    const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '', business_timezone: 'America/Mexico_City' });
+    const [bizInfo, setBizInfo] = useState({ business_name: 'R de Rico', branch_name: 'Sucursal San Pablo', business_address: '', business_phone: '', business_timezone: 'America/Mexico_City', business_currency: 'MXN', business_currency_symbol: '$' });
     const [showBizModal, setShowBizModal] = useState(false);
     const [tzWarning, setTzWarning] = useState(null); // { oldTz, newTz }
     const [bizForm, setBizForm] = useState({});
@@ -116,7 +116,7 @@ export const ExperimentCenterUI = () => {
                     const data = await res.json();
                     const info = {};
                     for (const s of data) {
-                        if (['business_name','branch_name','business_address','business_phone'].includes(s.key)) {
+                        if (['business_name','branch_name','business_address','business_phone','business_currency','business_currency_symbol'].includes(s.key)) {
                             info[s.key] = s.value;
                         }
                     }
@@ -426,6 +426,19 @@ export const ExperimentCenterUI = () => {
                                             <div>
                                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Telefono</label>
                                                 <input type="text" value={bizForm.business_phone || ''} onChange={e => setBizForm(p => ({...p, business_phone: e.target.value}))} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Moneda del Negocio</label>
+                                                <select value={bizForm.business_currency || 'MXN'} onChange={e => {
+                                                    const code = e.target.value;
+                                                    const symbol = code === 'MXN' ? '$' : code === 'USD' ? 'US$' : code === 'EUR' ? '€' : '$';
+                                                    setBizForm(p => ({...p, business_currency: code, business_currency_symbol: symbol}));
+                                                }} className="w-full mt-1 p-3 bg-gray-800 border border-gray-600 rounded-xl text-white font-bold focus:border-orange-500 outline-none appearance-none cursor-pointer">
+                                                    <option value="MXN">🇲🇽 Peso Mexicano (MXN) — $</option>
+                                                    <option value="USD">🇺🇸 Dólar Estadounidense (USD) — US$</option>
+                                                    <option value="EUR">🇪🇺 Euro (EUR) — €</option>
+                                                </select>
+                                                <p className="text-[10px] text-gray-500 mt-1">Solo declara la moneda para formateo en UI. NO convierte montos existentes.</p>
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Zona Horaria</label>

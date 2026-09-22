@@ -3,7 +3,7 @@ MÓDULO: grandeza/models.py
 MISIÓN: Modelos de base de datos para el sistema de Reparto Pan Grandeza.
 8 tablas que gestionan el ciclo completo: clientes, rutas, jornadas, visitas, inventario y GPS.
 """
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Date, Text, JSON
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Date, Text, JSON, Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from core.database import Base
@@ -20,7 +20,8 @@ class GrandezaProductConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), unique=True, nullable=False)
     is_enabled = Column(Boolean, default=True)
-    b2b_price = Column(Float, nullable=False, default=0.0)  # Precio B2B Grandeza (distinto al precio tienda)
+    # DT-02 (Dinero): nunca Float. Numeric(12,2) = 10 enteros + 2 decimales.
+    b2b_price = Column(Numeric(12, 2), nullable=False, default=0)  # Precio B2B Grandeza (distinto al precio tienda)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -97,12 +98,12 @@ class GrandezaJourney(Base):
     status = Column(String, default="PREPARANDO")  # PREPARANDO | EN_RUTA | CERRADA
     
     # Fondo de caja (variable, puede ser 0)
-    cash_fund = Column(Float, default=0.0)  # Lo que se le entrega al repartidor para dar cambio
+    cash_fund = Column(Numeric(12, 2), default=0)  # Lo que se le entrega al repartidor para dar cambio
     dispatched_at = Column(DateTime, nullable=True) # Hora en la que se despacha la ruta
     
     # Cierre — Sistema vs Recibido
-    cash_expected = Column(Float, nullable=True)  # Calculado por el sistema al cierre
-    cash_received = Column(Float, nullable=True)  # Lo que entrega el repartidor
+    cash_expected = Column(Numeric(12, 2), nullable=True)  # Calculado por el sistema al cierre
+    cash_received = Column(Numeric(12, 2), nullable=True)  # Lo que entrega el repartidor
     exchange_pieces_expected = Column(Integer, nullable=True)  # Piezas de cambio según sistema
     exchange_pieces_received = Column(Integer, nullable=True)  # Piezas de cambio recibidas
     fresh_leftover_expected = Column(Integer, nullable=True)  # Piezas frescas sobrantes según sistema
@@ -161,11 +162,11 @@ class GrandezaVisit(Base):
     completed_at = Column(DateTime, nullable=True)
     
     # Cálculos financieros
-    total_exchange_amount = Column(Float, default=0.0)  # Importe de las piezas de cambio recompradas
-    total_fresh_amount = Column(Float, default=0.0)  # Importe de las piezas frescas vendidas
-    sale_amount = Column(Float, default=0.0)  # Venta neta = fresh - exchange
-    payment_received = Column(Float, default=0.0)  # Dinero recibido del cliente
-    change_given = Column(Float, default=0.0)  # Cambio entregado al cliente
+    total_exchange_amount = Column(Numeric(12, 2), default=0)  # Importe de las piezas de cambio recompradas
+    total_fresh_amount = Column(Numeric(12, 2), default=0)  # Importe de las piezas frescas vendidas
+    sale_amount = Column(Numeric(12, 2), default=0)  # Venta neta = fresh - exchange
+    payment_received = Column(Numeric(12, 2), default=0)  # Dinero recibido del cliente
+    change_given = Column(Numeric(12, 2), default=0)  # Cambio entregado al cliente
     
     # Incidentes y notas
     incident_notes = Column(Text, nullable=True)
@@ -202,7 +203,7 @@ class GrandezaVisitItem(Base):
     missing_qty = Column(Integer, default=0)  # "Nos faltó" — producto que pidió pero no traía
     
     # Precio usado en esta transacción (snapshot del b2b_price al momento)
-    unit_price = Column(Float, nullable=False, default=0.0)
+    unit_price = Column(Numeric(12, 2), nullable=False, default=0)
     
     visit = relationship("GrandezaVisit", back_populates="items")
 
@@ -247,7 +248,7 @@ class GrandezaExpense(Base):
     id = Column(Integer, primary_key=True, index=True)
     journey_id = Column(Integer, ForeignKey("grandeza_journeys.id"), nullable=False)
     description = Column(String, nullable=False)  # Texto libre: "Gasolina", "Caseta Palmillas"
-    amount = Column(Float, nullable=False, default=0.0)
+    amount = Column(Numeric(12, 2), nullable=False, default=0)
     created_at = Column(DateTime, default=utcnow)
 
     journey = relationship("GrandezaJourney")
@@ -271,7 +272,7 @@ class GrandezaOrder(Base):
     items = Column(JSON, nullable=False, default=[])
     
     # Financieros
-    total_amount = Column(Float, default=0.0)
+    total_amount = Column(Numeric(12, 2), default=0)
     payment_method = Column(String, default="EFECTIVO")  # EFECTIVO | TRANSFERENCIA
     payment_status = Column(String, default="PAGADO")    # PAGADO (obligatorio para procesar)
     
@@ -279,7 +280,7 @@ class GrandezaOrder(Base):
     delivery_date = Column(Date, nullable=False)  # Día en que se entregará
     delivery_time = Column(String, nullable=True) # Hora en que se entregará
     
-    advance_payment = Column(Float, default=0.0)  # Anticipo recibido por el repartidor
+    advance_payment = Column(Numeric(12, 2), default=0)  # Anticipo recibido por el repartidor
     
     # Estado de producción
     status = Column(String, default="PAGADO")

@@ -172,6 +172,25 @@ async def seed_settings(db: AsyncSession):
             "description": "Pantallas nombradas del Display de Precios de Heladería (sub-suite multi-pantalla, V8).",
             "category": "heladeria",
             "input_type": "json"
+        },
+        # V23 (Fase 3): DT-06 (Configuración del Negocio). La moneda se DECLARA
+        # una sola vez aquí y se propaga a toda la UI. NO convierte montos: los
+        # montos ya están en Numeric(12,2) y la moneda solo define el símbolo.
+        # Entrada ADITIVA: el bucle de abajo solo inserta si la clave no existe,
+        # por lo que no altera ninguna clave que lea el POS de Panadería.
+        {
+            "key": "business_currency",
+            "value": "MXN",
+            "description": "Código ISO 4217 de la moneda del negocio (ej. MXN, USD). Solo declara; no convierte.",
+            "category": "business",
+            "input_type": "text"
+        },
+        {
+            "key": "business_currency_symbol",
+            "value": "$",
+            "description": "Símbolo de la moneda del negocio para formateo en UI (ej. $, US$).",
+            "category": "business",
+            "input_type": "text"
         }
     ]
     

@@ -11,7 +11,7 @@ Tablas para la base del módulo HR:
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, ForeignKey,
-    JSON, Text, DateTime, Date, Time, Enum as SAEnum
+    JSON, Text, DateTime, Date, Time, Enum as SAEnum, Numeric
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -273,8 +273,9 @@ class HRUniformDeposit(Base):
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
     uniforme_numero = Column(Integer, default=1)  # 1er o 2do juego
     fecha_entrega = Column(Date, nullable=True)
-    fianza_total = Column(Float, default=600.0)
-    pagado = Column(Float, default=0.0)
+    # DT-02 (Dinero): nunca Float. Numeric(12,2) = 10 enteros + 2 decimales.
+    fianza_total = Column(Numeric(12, 2), default=600)
+    pagado = Column(Numeric(12, 2), default=0)
     estado = Column(String, default="pendiente")  # pendiente / cubierto / devuelto
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -288,7 +289,7 @@ class HRUniformMovement(Base):
     deposit_id = Column(Integer, ForeignKey("hr_uniform_deposits.id"), nullable=False)
     fecha = Column(Date, nullable=False)
     concepto = Column(String, nullable=False)  # "Descuento semanal", "Devolución", etc.
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2), nullable=False)
     tipo = Column(String, nullable=False)  # cargo / abono
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -312,8 +313,8 @@ class HRCoverageFund(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
-    monto_requerido = Column(Float, default=600.0)
-    monto_cubierto = Column(Float, default=0.0)
+    monto_requerido = Column(Numeric(12, 2), default=600)
+    monto_cubierto = Column(Numeric(12, 2), default=0)
     estado = Column(String, default="pendiente")  # pendiente / cubierto
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -328,9 +329,9 @@ class HRCoverageMovement(Base):
     fund_id = Column(Integer, ForeignKey("hr_coverage_fund.id"), nullable=False)
     fecha = Column(Date, nullable=False)
     concepto = Column(String, nullable=False)  # "Aportación semanal", "Aplicación por falta", "Reposición 1/3"
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2), nullable=False)
     tipo = Column(String, nullable=False)  # cargo / abono
-    porcentaje_aplicado = Column(Float, nullable=True)  # % aplicado según anticipación
+    porcentaje_aplicado = Column(Float, nullable=True)  # % aplicado según anticipación (NO es dinero)
     dias_anticipacion = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -358,10 +359,10 @@ class HRSalaryTable(Base):
     id = Column(Integer, primary_key=True, index=True)
     position_id = Column(Integer, ForeignKey("hr_positions.id"), nullable=False, index=True)
     semestre = Column(Integer, nullable=False)  # 1-6
-    sueldo_hora = Column(Float, nullable=False)
-    bono_hora = Column(Float, nullable=False)
-    sueldo_dia = Column(Float, nullable=False)  # sueldo_hora * 8
-    bono_dia = Column(Float, nullable=False)    # bono_hora * 8
+    sueldo_hora = Column(Numeric(12, 2), nullable=False)
+    bono_hora = Column(Numeric(12, 2), nullable=False)
+    sueldo_dia = Column(Numeric(12, 2), nullable=False)  # sueldo_hora * 8
+    bono_dia = Column(Numeric(12, 2), nullable=False)    # bono_hora * 8
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -385,16 +386,16 @@ class HRPayroll(Base):
     dias_suspension = Column(Integer, default=0)
     dias_psg = Column(Integer, default=0)
     # Percepciones
-    salario_base = Column(Float, default=0.0)
-    bono_puntualidad = Column(Float, default=0.0)
-    total_percepciones = Column(Float, default=0.0)
+    salario_base = Column(Numeric(12, 2), default=0)
+    bono_puntualidad = Column(Numeric(12, 2), default=0)
+    total_percepciones = Column(Numeric(12, 2), default=0)
     # Deducciones
-    deduccion_uniforme = Column(Float, default=0.0)
-    deduccion_fondo = Column(Float, default=0.0)
-    deduccion_otros = Column(Float, default=0.0)
-    total_deducciones = Column(Float, default=0.0)
+    deduccion_uniforme = Column(Numeric(12, 2), default=0)
+    deduccion_fondo = Column(Numeric(12, 2), default=0)
+    deduccion_otros = Column(Numeric(12, 2), default=0)
+    total_deducciones = Column(Numeric(12, 2), default=0)
     # Neto
-    neto = Column(Float, default=0.0)
+    neto = Column(Numeric(12, 2), default=0)
     # Estado
     aprobado = Column(Boolean, default=False)
     aprobado_por = Column(Integer, ForeignKey("employees.id"), nullable=True)
@@ -410,7 +411,7 @@ class HRPayrollDeduction(Base):
     id = Column(Integer, primary_key=True, index=True)
     payroll_id = Column(Integer, ForeignKey("hr_payroll.id"), nullable=False)
     concepto = Column(String, nullable=False)  # "Merma", "Daño equipo", etc.
-    monto = Column(Float, nullable=False)
+    monto = Column(Numeric(12, 2), nullable=False)
     descripcion = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -442,8 +443,8 @@ class HRPSG(Base):
     aprobado_por = Column(Integer, ForeignKey("employees.id"), nullable=True)
     # Fondo de cobertura (si aplica)
     uso_fondo = Column(Boolean, default=False)
-    porcentaje_fondo = Column(Float, default=0.0)  # % aplicado
-    monto_fondo = Column(Float, default=0.0)
+    porcentaje_fondo = Column(Float, default=0.0)  # % aplicado (NO es dinero)
+    monto_fondo = Column(Numeric(12, 2), default=0)
     # Periodo de contrato
     contrato_periodo = Column(String, nullable=True)
     observaciones = Column(Text, nullable=True)
@@ -474,7 +475,7 @@ class HRVacation(Base):
     fecha_inicio = Column(Date, nullable=False)
     fecha_fin = Column(Date, nullable=False)
     dias = Column(Integer, nullable=False)
-    prima_vacacional = Column(Float, default=0.0)
+    prima_vacacional = Column(Numeric(12, 2), default=0)
     estado = Column(String, default="pendiente")  # pendiente / aprobado / rechazado / completado
     aprobado_por = Column(Integer, ForeignKey("employees.id"), nullable=True)
     observaciones = Column(Text, nullable=True)
@@ -566,7 +567,7 @@ class HRSeverance(Base):
     motivo_salida = Column(String, nullable=False)  # renuncia / baja_disciplinaria / termino_contrato / mutuo_acuerdo
     percepciones_json = Column(JSON, nullable=False, default={})
     deducciones_json = Column(JSON, nullable=False, default={})
-    neto = Column(Float, default=0.0)
+    neto = Column(Numeric(12, 2), default=0)
     aprobado = Column(Boolean, default=False)
     aprobado_por = Column(Integer, ForeignKey("employees.id"), nullable=True)
     firmado = Column(Boolean, default=False)

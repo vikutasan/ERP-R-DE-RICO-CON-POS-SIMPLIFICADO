@@ -22,6 +22,29 @@ async def get_timezone(db: AsyncSession = Depends(get_db)):
         "offset_hours": tz_offset_hours(tz),
     }
 
+# ⚠️ ORDEN CRÍTICO: /currency DEBE ir ANTES de /{key} (misma regla que /timezone).
+# V23 (Fase 3): DT-06 (Configuración del Negocio). Declara la moneda del negocio
+# para que la UI la consuma en un solo lugar. NO convierte montos.
+@router.get("/currency")
+async def get_currency(db: AsyncSession = Depends(get_db)):
+    """Retorna el código ISO y el símbolo de la moneda del negocio."""
+    code = "MXN"
+    symbol = "$"
+    try:
+        code_row = await service.get_setting_by_key(db, "business_currency")
+        code = code_row.value or "MXN"
+    except Exception:
+        pass
+    try:
+        sym_row = await service.get_setting_by_key(db, "business_currency_symbol")
+        symbol = sym_row.value or "$"
+    except Exception:
+        pass
+    return {
+        "currency": code,
+        "symbol": symbol,
+    }
+
 @router.get("/{key}", response_model=schemas.SystemSettingResponse)
 async def get_setting(key: str, db: AsyncSession = Depends(get_db)):
     return await service.get_setting_by_key(db, key)

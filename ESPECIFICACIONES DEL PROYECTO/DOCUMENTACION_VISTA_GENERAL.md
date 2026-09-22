@@ -1,8 +1,8 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.3.0
-> **Ultima actualizacion:** 14 de septiembre de 2026
-> **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py)
+> **Version:** 1.4.0
+> **Ultima actualizacion:** 22 de septiembre de 2026
+> **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py, router.py)
 
 ---
 
@@ -49,13 +49,14 @@ Un boton discreto "Editar" aparece en la esquina superior derecha del encabezado
 
 ### 3.2 Modal de Edicion
 
-Al presionar "Editar" se abre un modal con 5 campos:
+Al presionar "Editar" se abre un modal con 6 campos:
 
 1. **Nombre del Negocio** (clave: `business_name`)
 2. **Nombre de la Sucursal** (clave: `branch_name`)
 3. **Direccion** (clave: `business_address`)
 4. **Telefono** (clave: `business_phone`)
-5. **Zona Horaria** (clave: `business_timezone`) — Selector con 12 zonas horarias de America Latina, EEUU y España
+5. **Moneda del Negocio** (claves: `business_currency` + `business_currency_symbol`) — Selector MXN / USD / EUR. **Solo declara** la moneda para formateo en UI; **NO convierte** montos existentes (DT-02).
+6. **Zona Horaria** (clave: `business_timezone`) — Selector con 12 zonas horarias de America Latina, EEUU y España
 
 ### 3.3 Persistencia
 
@@ -113,7 +114,7 @@ const numSemana = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
 
 ### 5.4 Carga de Datos del Negocio
 
-Al montar el componente, se ejecuta un `useEffect` que hace `GET /api/v1/settings/` y filtra las claves `business_name`, `branch_name`, `business_address` y `business_phone`. Si la API falla, se usan valores por defecto (degradacion elegante).
+Al montar el componente, se ejecuta un `useEffect` que hace `GET /api/v1/settings/` y filtra las claves `business_name`, `branch_name`, `business_address`, `business_phone`, `business_currency` y `business_currency_symbol`. Si la API falla, se usan valores por defecto (degradacion elegante).
 
 ---
 
@@ -126,8 +127,12 @@ INSERT INTO system_settings (key, value, description, category, input_type) VALU
 ('business_name', 'R de Rico', 'Nombre del negocio', 'negocio', 'text'),
 ('branch_name', 'Sucursal San Pablo', 'Nombre de la sucursal', 'negocio', 'text'),
 ('business_address', 'Manuel Buendia Tellez Giron Esq. con Independencia, CP 50294, San Pablo Autopan, Mex.', 'Direccion del negocio', 'negocio', 'text'),
-('business_phone', '7225 41 05 53', 'Telefono del negocio', 'negocio', 'text');
+('business_phone', '7225 41 05 53', 'Telefono del negocio', 'negocio', 'text'),
+('business_currency', 'MXN', 'Codigo ISO 4217 de la moneda del negocio. Solo declara; no convierte.', 'business', 'text'),
+('business_currency_symbol', '$', 'Simbolo de la moneda del negocio para formateo en UI.', 'business', 'text');
 `
+
+> **Nota (V23):** Las claves `business_currency` y `business_currency_symbol` se siembran de forma **aditiva** en `seed_settings()`. El bucle de siembra solo inserta si la clave no existe, por lo que **no altera** ninguna clave que lea el POS de Panaderia.
 
 ---
 
@@ -135,9 +140,11 @@ INSERT INTO system_settings (key, value, description, category, input_type) VALU
 
 | Archivo | Cambio |
 |---|---|
-| `apps/ExperimentCenterUI.jsx` | Seccion overview con reloj, encabezado dinamico, modal de edicion |
+| `apps/ExperimentCenterUI.jsx` | Seccion overview con reloj, encabezado dinamico, modal de edicion (6 campos) |
 | `apps/auth/PerfilesAccessSuite.jsx` | Permiso `editar_info_negocio` agregado a `SYSTEM_MODULES` |
-| `system_settings` (BD) | 4 registros de configuracion del negocio |
+| `apps/api/modules/settings/service.py` | `seed_settings()` siembra `business_currency` + `business_currency_symbol` (aditivo) |
+| `apps/api/modules/settings/router.py` | `GET /api/v1/settings/currency` (declarado ANTES de `/{key}`) |
+| `system_settings` (BD) | 6 registros de configuracion del negocio |
 
 ---
 
@@ -355,5 +362,63 @@ def utcnow() -> datetime:
 
 ---
 
-> **Esta documentacion refleja el estado del sistema al 14 de septiembre de 2026.**
+## 9. SELECTOR DE MONEDA (V23 — Implementado 22 Sep 2026)
+
+### 9.1 Principio: "Declarar, no convertir" (DT-02 + DT-06)
+
+La moneda del negocio se **declara una sola vez** en Vista General y se propaga a toda la UI.
+**No convierte** montos existentes: los montos ya estan guardados en `Numeric(12,2)` y la moneda
+solo define el **simbolo** con el que se presentan. Cambiar la moneda **no reescribe** ningun monto.
+
+### 9.2 El selector
+
+El modal de edicion incluye un campo **Moneda del Negocio** con 3 opciones:
+
+| Codigo ISO | Simbolo | Etiqueta |
+|---|---|---|
+| `MXN` | `$` | Peso Mexicano |
+| `USD` | `US$` | Dolar Estadounidense |
+| `EUR` | `€` | Euro |
+
+Al elegir un codigo, el frontend deriva el simbolo y guarda **ambas** claves
+(`business_currency` + `business_currency_symbol`) en `system_settings`.
+
+### 9.3 El endpoint
+
+`GET /api/v1/settings/currency` retorna el codigo y el simbolo:
+
+`json
+{ "currency": "MXN", "symbol": "$" }
+`
+
+> **⚠️ ORDEN CRITICO:** El endpoint `/currency` esta declarado **ANTES** de `/{key}` en
+> [`apps/api/modules/settings/router.py`](apps/api/modules/settings/router.py:28), por la misma razon
+> que `/timezone`: si estuviera despues, FastAPI lo interpretaria como `GET /settings/{key}` con
+> `key="currency"` y devolveria 404.
+
+### 9.4 La deuda saldada (V23)
+
+Antes de V23, **36 columnas de dinero** en 3 modulos estaban en `Float` (Grandeza 13, RRHH 22,
+Pedidos 1). V23 las migro a `Numeric(12,2)`:
+
+| Modulo | Columnas migradas | Tablas |
+|---|---|---|
+| Pedidos | 1 | `orders.delivery_fee` |
+| Grandeza | 13 | `grandeza_product_config`, `grandeza_journeys`, `grandeza_visits`, `grandeza_visit_items`, `grandeza_expenses`, `grandeza_orders` |
+| RRHH | 22 | `hr_uniform_deposits`, `hr_uniform_movements`, `hr_coverage_fund`, `hr_coverage_movements`, `hr_salary_tables`, `hr_payroll`, `hr_payroll_deductions`, `hr_psg`, `hr_vacations`, `hr_severance` |
+
+**9 columnas NO monetarias** se conservaron en `Float` deliberadamente (no son dinero):
+`grandeza_driver_locations.lat/lng/accuracy` (GPS), `orders.delivery_lat/lng/delivery_distance_km`
+(GPS/distancia), `hr_coverage_movements.porcentaje_aplicado`, `hr_psg.porcentaje_fondo`,
+`hr_kpis.score_total` (porcentajes/puntajes).
+
+> **Respaldo previo:** `database_backups/backup_pre_v23_decimal_20260922.sql` (34.3 MB).
+> **Plan:** `plans/PLAN_V23_DINERO_DECIMAL_Y_SELECTOR_MONEDA.md`.
+> **Alcance V23:** solo el **tipo** de dato. El formateador unico (`formatMoney`) y la eliminacion
+> de `toFixed(2)` en componentes quedan para **V24**.
+
+---
+
+> **Esta documentacion refleja el estado del sistema al 22 de septiembre de 2026.**
 > **V19 (Plan Transversal) — COMPLETO.** Bloques 1-5 cerrados. `grandeza` diferido a V20 Bloque 9.c.
+> **V23 (Dinero Decimal + Selector de Moneda) — COMPLETO.** 36 columnas migradas a `Numeric(12,2)`.

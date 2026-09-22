@@ -3,7 +3,7 @@ MÓDULO: orders/models.py
 MISIÓN: Definir la tabla de Pedidos (Order) vinculada a un Ticket del POS.
 Un pedido es una venta diferida con fecha de entrega compromiso.
 """
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, JSON, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, JSON, Text, Numeric
 from sqlalchemy.orm import relationship
 from core.database import Base
 from core.timestamps import utcnow
@@ -46,7 +46,8 @@ class Order(Base):
     delivery_lat = Column(Float, nullable=True)
     delivery_lng = Column(Float, nullable=True)
     delivery_distance_km = Column(Float, nullable=True)
-    delivery_fee = Column(Float, nullable=True, default=0.0)
+    # DT-02 (Dinero): nunca Float. Numeric(12,2) = 10 enteros + 2 decimales.
+    delivery_fee = Column(Numeric(12, 2), nullable=True, default=0)
 
     # Metadata
     created_at = Column(DateTime, default=utcnow)
