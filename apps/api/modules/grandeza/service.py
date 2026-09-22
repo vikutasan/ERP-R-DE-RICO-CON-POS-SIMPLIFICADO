@@ -25,9 +25,49 @@ from .models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
     GrandezaExtraordinaryRouteSlot,
     GrandezaJourney, GrandezaInventory, GrandezaVisit, GrandezaVisitItem,
-    GrandezaDriverLocation, GrandezaSettings, GrandezaExpense
+    GrandezaDriverLocation, GrandezaSettings, GrandezaExpense,
+    GrandezaMessageLog
 )
 from modules.catalog.models import Product
+
+
+# ─── Programación de Mensajes (WhatsApp asistido) ─────────────────────────────
+# Claves de configuración persistidas en grandeza_settings.
+MSG_SCHEDULE_KEYS = {
+    "enabled":   "msg_schedule_enabled",
+    "text":      "msg_schedule_text",
+    "selector":  "msg_schedule_selector",
+    "send_day":  "msg_schedule_send_day",
+    "send_time": "msg_schedule_send_time",
+    "weekly":    "msg_schedule_weekly",
+}
+
+# Días válidos (sin acentos, como los usa el resto del módulo).
+DIAS_VALIDOS = {"LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO"}
+
+# Selectores soportados por el endpoint de resolución de destinatarios.
+MSG_SELECTORES_VALIDOS = {
+    "TODOS", "ACTIVOS", "INACTIVOS",
+    "LUNES", "MARTES", "MIERCOLES", "JUEVES", "VIERNES", "SABADO", "DOMINGO",
+    "PROXIMA_EXTEMPORANEA",
+}
+
+
+def _normalizar_telefono(raw: Optional[str]) -> Optional[str]:
+    """
+    Normaliza un teléfono a los últimos 10 dígitos (formato nacional MX).
+
+    Regla heredada de sendWhatsApp() en GrandezaDriverUI.jsx:
+    se limpian los no-dígitos y se exige un mínimo de 10. Si hay más
+    (p. ej. prefijo 52), se toman los últimos 10. Si hay menos, se
+    devuelve None para que el frontend lo marque como "sin teléfono".
+    """
+    if not raw:
+        return None
+    digitos = "".join(ch for ch in str(raw) if ch.isdigit())
+    if len(digitos) < 10:
+        return None
+    return digitos[-10:]
 
 
 class GrandezaService:
@@ -421,6 +461,184 @@ class GrandezaService:
             db.add(setting)
         await db.flush()
         return setting
+
+    # ─── Programación de Mensajes (WhatsApp asistido) ─────────────────────
+
+    async def get_message_schedule(self, db: AsyncSession) -> dict:
+        """
+        Lee la configuración de programación de mensajes desde grandeza_settings.
+        Devuelve un dict con defaults seguros si aún no se ha guardado nada.
+        """
+        stmt = select(GrandezaSettings).where(
+            GrandezaSettings.key.in_(list(MSG_SCHEDULE_KEYS.values()))
+        )
+        result = await db.execute(stmt)
+        rows = {s.key: s.value for s in result.scalars().all()}
+
+        def _bool(key: str, default: bool = False) -> bool:
+            raw = rows.get(MSG_SCHEDULE_KEYS[key])
+            if raw is None:
+                return default
+            return str(raw).strip().lower() in ("1", "true", "yes", "si", "sí")
+
+        return {
+            "enabled":   _bool("enabled", False),
+            "text":      rows.get(MSG_SCHEDULE_KEYS["text"]) or "",
+            "selector":  rows.get(MSG_SCHEDULE_KEYS["selector"]) or "TODOS",
+            "send_day":  rows.get(MSG_SCHEDULE_KEYS["send_day"]) or None,
+            "send_time": rows.get(MSG_SCHEDULE_KEYS["send_time"]) or None,
+            "weekly":    _bool("weekly", False),
+        }
+
+    async def save_message_schedule(self, db: AsyncSession, data) -> dict:
+        """
+        Persiste la configuración de programación de mensajes.
+        Respeta la entrada del usuario (§7.4): no normaliza ni sobrescribe el texto.
+        """
+        selector = (data.selector or "TODOS").strip().upper()
+        if selector not in MSG_SELECTORES_VALIDOS:
+            selector = "TODOS"
+
+        send_day = (data.send_day or "").strip().upper() or None
+        if send_day and send_day not in DIAS_VALIDOS:
+            send_day = None
+
+        send_time = (data.send_time or "").strip() or None
+
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["enabled"],   "true" if data.enabled else "false")
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["text"],      data.text or "")
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["selector"],  selector)
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["send_day"],  send_day or "")
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["send_time"], send_time or "")
+        await self.upsert_setting(db, MSG_SCHEDULE_KEYS["weekly"],    "true" if data.weekly else "false")
+        await db.flush()
+
+        return await self.get_message_schedule(db)
+
+    async def resolve_message_recipients(self, db: AsyncSession, selector: str) -> dict:
+        """
+        Resuelve la lista de destinatarios según el selector elegido.
+
+        Selectores soportados (11):
+          TODOS, ACTIVOS, INACTIVOS,
+          LUNES..DOMINGO (clientes con slot de ruta ese día),
+          PROXIMA_EXTEMPORANEA (clientes de la próxima ruta extraordinaria).
+
+        Eager loading obligatorio (§7.6 / Error B): se cargan los route_slots
+        con selectinload para evitar el 500 sin cabeceras CORS.
+        """
+        selector = (selector or "TODOS").strip().upper()
+        if selector not in MSG_SELECTORES_VALIDOS:
+            selector = "TODOS"
+
+        stmt = select(GrandezaClient).options(selectinload(GrandezaClient.route_slots))
+
+        if selector == "ACTIVOS":
+            stmt = stmt.where(GrandezaClient.active == True)  # noqa: E712
+        elif selector == "INACTIVOS":
+            stmt = stmt.where(GrandezaClient.active == False)  # noqa: E712
+        elif selector in DIAS_VALIDOS:
+            stmt = stmt.join(GrandezaRouteSlot).where(
+                GrandezaRouteSlot.day_of_week == selector
+            )
+        elif selector == "PROXIMA_EXTEMPORANEA":
+            # Próxima fecha con ruta extraordinaria (>= hoy, hora local del negocio).
+            hoy = date.fromisoformat(to_local_date_str(utcnow()))
+            sub = (
+                select(GrandezaExtraordinaryRouteSlot.client_id)
+                .where(GrandezaExtraordinaryRouteSlot.route_date >= hoy)
+                .order_by(GrandezaExtraordinaryRouteSlot.route_date)
+            )
+            result_dates = await db.execute(
+                select(GrandezaExtraordinaryRouteSlot.route_date)
+                .where(GrandezaExtraordinaryRouteSlot.route_date >= hoy)
+                .order_by(GrandezaExtraordinaryRouteSlot.route_date)
+                .limit(1)
+            )
+            proxima = result_dates.scalar_one_or_none()
+            if proxima is None:
+                return {"selector": selector, "total": 0, "with_phone": 0,
+                        "without_phone": 0, "recipients": []}
+            stmt = stmt.join(GrandezaExtraordinaryRouteSlot).where(
+                GrandezaExtraordinaryRouteSlot.route_date == proxima
+            )
+
+        stmt = stmt.order_by(GrandezaClient.name)
+        result = await db.execute(stmt)
+        clientes = result.scalars().unique().all()
+
+        recipients = []
+        with_phone = 0
+        for c in clientes:
+            tel = _normalizar_telefono(c.phone)
+            if tel:
+                with_phone += 1
+            # Día de ruta representativo (el primero disponible) para mostrar en UI.
+            dia = None
+            if c.route_slots:
+                dia = c.route_slots[0].day_of_week
+            recipients.append({
+                "client_id": c.id,
+                "name": c.name,
+                "phone": tel,
+                "day_of_week": dia,
+                "is_active": bool(c.active),
+            })
+
+        return {
+            "selector": selector,
+            "total": len(recipients),
+            "with_phone": with_phone,
+            "without_phone": len(recipients) - with_phone,
+            "recipients": recipients,
+        }
+
+    async def log_message_sent(self, db: AsyncSession, data) -> GrandezaMessageLog:
+        """
+        Registra en la bitácora un mensaje efectivamente enviado.
+        El texto se COPIA (snapshot inmutable), no se referencia.
+        """
+        tel = _normalizar_telefono(data.phone_used)
+        entry = GrandezaMessageLog(
+            client_id=data.client_id,
+            phone_used=tel or (data.phone_used or "")[:20],
+            message_text=data.message_text or "",
+            selector_used=(data.selector_used or "TODOS").strip().upper()[:30],
+            sent_at=utcnow(),
+            sent_by=(data.sent_by or None),
+            batch_id=(data.batch_id or None),
+        )
+        db.add(entry)
+        await db.flush()
+        return entry
+
+    async def get_message_log(self, db: AsyncSession, limit: int = 100) -> list:
+        """
+        Devuelve la bitácora de mensajes enviados, más reciente primero.
+        Incluye el nombre del cliente (eager loading del relationship).
+        """
+        stmt = (
+            select(GrandezaMessageLog)
+            .options(selectinload(GrandezaMessageLog.client))
+            .order_by(GrandezaMessageLog.sent_at.desc())
+            .limit(max(1, min(limit, 500)))
+        )
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
+        return [
+            {
+                "id": r.id,
+                "client_id": r.client_id,
+                "phone_used": r.phone_used,
+                "message_text": r.message_text,
+                "selector_used": r.selector_used,
+                "sent_at": r.sent_at,
+                "sent_by": r.sent_by,
+                "batch_id": r.batch_id,
+                "client_name": r.client.name if r.client else None,
+            }
+            for r in rows
+        ]
 
 
 

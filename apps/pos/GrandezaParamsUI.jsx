@@ -98,7 +98,38 @@ export const GrandezaParamsUI = ({ onBack }) => {
     const [extraRouteLabel, setExtraRouteLabel] = useState('');
     const [showDeleteExtraConfirm, setShowDeleteExtraConfirm] = useState(null);
 
+    // Tab: Programación de Mensajes (WhatsApp asistido)
+    const [msgSchedule, setMsgSchedule] = useState({
+        enabled: false, text: '', selector: 'TODOS',
+        send_day: null, send_time: null, weekly: false
+    });
+    const [msgRecipients, setMsgRecipients] = useState([]);
+    const [msgRecipientsMeta, setMsgRecipientsMeta] = useState(null); // { total, with_phone, without_phone }
+    const [msgBatchIndex, setMsgBatchIndex] = useState(0);
+    const [msgSentIds, setMsgSentIds] = useState([]);   // client_ids ya marcados como enviados
+    const [msgBatchId, setMsgBatchId] = useState('');
+    const [msgLog, setMsgLog] = useState([]);
+    const [msgSaving, setMsgSaving] = useState(false);
+    const [msgLoadingRecipients, setMsgLoadingRecipients] = useState(false);
+
     const DAYS = ['LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO', 'DOMINGO'];
+
+    // Selectores de destinatarios (11 opciones) — espejo de MSG_SELECTORES_VALIDOS del backend.
+    const MSG_SELECTORES = [
+        { id: 'TODOS',               label: 'Todos los clientes' },
+        { id: 'ACTIVOS',             label: 'Solo activos' },
+        { id: 'INACTIVOS',           label: 'Solo inactivos' },
+        { id: 'LUNES',               label: 'Clientes de Lunes' },
+        { id: 'MARTES',              label: 'Clientes de Martes' },
+        { id: 'MIERCOLES',           label: 'Clientes de Miércoles' },
+        { id: 'JUEVES',              label: 'Clientes de Jueves' },
+        { id: 'VIERNES',             label: 'Clientes de Viernes' },
+        { id: 'SABADO',              label: 'Clientes de Sábado' },
+        { id: 'DOMINGO',             label: 'Clientes de Domingo' },
+        { id: 'PROXIMA_EXTEMPORANEA', label: 'Próxima ruta extemporánea' },
+    ];
+
+    const MSG_BATCH_SIZE = 5;
 
     useEffect(() => {
         if (activeTab === 'products') fetchProducts();
@@ -107,6 +138,10 @@ export const GrandezaParamsUI = ({ onBack }) => {
             fetchClients();
             fetchRoute(selectedDay);
             fetchExtraordinaryRoutes();
+        }
+        if (activeTab === 'messages') {
+            fetchMsgSchedule();
+            fetchMsgLog();
         }
     }, [activeTab, selectedDay]);
 
@@ -1164,6 +1199,355 @@ export const GrandezaParamsUI = ({ onBack }) => {
         );
     };
 
+    // ─── Programación de Mensajes (WhatsApp asistido) ─────────────────────────
+
+    const fetchMsgSchedule = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/grandeza/message-schedule`);
+            if (res.ok) {
+                const data = await res.json();
+                setMsgSchedule({
+                    enabled: !!data.enabled,
+                    text: data.text || '',
+                    selector: data.selector || 'TODOS',
+                    send_day: data.send_day || null,
+                    send_time: data.send_time || null,
+                    weekly: !!data.weekly,
+                });
+            }
+        } catch (e) {
+            console.error('Error al cargar programación de mensajes:', e);
+        }
+    };
+
+    const fetchMsgLog = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/grandeza/message-log?limit=100`);
+            if (res.ok) setMsgLog(await res.json());
+        } catch (e) {
+            console.error('Error al cargar bitácora de mensajes:', e);
+        }
+    };
+
+    const saveMsgSchedule = async () => {
+        setMsgSaving(true);
+        try {
+            const res = await fetch(`${API_BASE}/grandeza/message-schedule`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(msgSchedule),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setMsgSchedule({
+                    enabled: !!data.enabled,
+                    text: data.text || '',
+                    selector: data.selector || 'TODOS',
+                    send_day: data.send_day || null,
+                    send_time: data.send_time || null,
+                    weekly: !!data.weekly,
+                });
+                setStatusModal({ type: 'success', title: 'Guardado', message: 'La programación de mensajes se guardó correctamente.' });
+            } else {
+                setStatusModal({ type: 'error', title: 'Error', message: 'No se pudo guardar la programación.' });
+            }
+        } catch (e) {
+            console.error('Error al guardar programación:', e);
+            setStatusModal({ type: 'error', title: 'Error de red', message: 'No se pudo conectar con el servidor.' });
+        } finally {
+            setMsgSaving(false);
+        }
+    };
+
+    const loadMsgRecipients = async () => {
+        setMsgLoadingRecipients(true);
+        try {
+            const res = await fetch(`${API_BASE}/grandeza/message-recipients?selector=${encodeURIComponent(msgSchedule.selector)}`);
+            if (res.ok) {
+                const data = await res.json();
+                setMsgRecipients(data.recipients || []);
+                setMsgRecipientsMeta({
+                    total: data.total || 0,
+                    with_phone: data.with_phone || 0,
+                    without_phone: data.without_phone || 0,
+                });
+                setMsgBatchIndex(0);
+                setMsgSentIds([]);
+                setMsgBatchId(`LOTE-${Date.now()}`);
+            } else {
+                setStatusModal({ type: 'error', title: 'Error', message: 'No se pudieron resolver los destinatarios.' });
+            }
+        } catch (e) {
+            console.error('Error al resolver destinatarios:', e);
+            setStatusModal({ type: 'error', title: 'Error de red', message: 'No se pudo conectar con el servidor.' });
+        } finally {
+            setMsgLoadingRecipients(false);
+        }
+    };
+
+    // Construye el deep link wa.me con el texto ya codificado.
+    const buildWaLink = (phone, text) => {
+        const limpio = String(phone || '').replace(/\D/g, '');
+        const destino = limpio.length >= 10 ? limpio.slice(-10) : limpio;
+        return `https://wa.me/52${destino}?text=${encodeURIComponent(text || '')}`;
+    };
+
+    const markMsgSent = async (recipient) => {
+        // Abre WhatsApp (deep link) y registra el envío en la bitácora.
+        window.open(buildWaLink(recipient.phone, msgSchedule.text), '_blank');
+        try {
+            await fetch(`${API_BASE}/grandeza/message-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: recipient.client_id,
+                    phone_used: recipient.phone,
+                    message_text: msgSchedule.text,
+                    selector_used: msgSchedule.selector,
+                    sent_by: null,
+                    batch_id: msgBatchId,
+                }),
+            });
+            setMsgSentIds(prev => prev.includes(recipient.client_id) ? prev : [...prev, recipient.client_id]);
+            fetchMsgLog();
+        } catch (e) {
+            console.error('Error al registrar el envío:', e);
+        }
+    };
+
+    const nextMsgBatch = () => {
+        const total = msgRecipients.length;
+        const next = msgBatchIndex + MSG_BATCH_SIZE;
+        if (next < total) setMsgBatchIndex(next);
+    };
+
+    const prevMsgBatch = () => {
+        const prev = msgBatchIndex - MSG_BATCH_SIZE;
+        setMsgBatchIndex(prev < 0 ? 0 : prev);
+    };
+
+    const renderMessagesTab = () => {
+        const total = msgRecipients.length;
+        const batch = msgRecipients.slice(msgBatchIndex, msgBatchIndex + MSG_BATCH_SIZE);
+        const batchNum = Math.floor(msgBatchIndex / MSG_BATCH_SIZE) + 1;
+        const totalBatches = Math.max(1, Math.ceil(total / MSG_BATCH_SIZE));
+        const enviados = msgSentIds.length;
+
+        return (
+            <div className="space-y-6">
+                {/* Bloque 1: Configuración */}
+                <div className="bg-black/60 border border-amber-500/30 rounded-2xl p-5 md:p-6">
+                    <h2 className="text-lg md:text-xl font-black uppercase tracking-widest text-amber-400 mb-4">
+                        ⚙️ Configuración del Mensaje
+                    </h2>
+
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                                Texto del mensaje (editable)
+                            </label>
+                            <textarea
+                                value={msgSchedule.text}
+                                onChange={(e) => setMsgSchedule(prev => ({ ...prev, text: e.target.value }))}
+                                rows={6}
+                                placeholder="Escribe aquí el mensaje que se enviará por WhatsApp..."
+                                className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white placeholder-gray-600 focus:border-amber-500/50 focus:outline-none resize-y"
+                            />
+                            <p className="text-[11px] text-gray-500 mt-1">
+                                El mismo texto se usa para todos los destinatarios. Se guarda como snapshot en la bitácora.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                                    Destinatarios
+                                </label>
+                                <select
+                                    value={msgSchedule.selector}
+                                    onChange={(e) => setMsgSchedule(prev => ({ ...prev, selector: e.target.value }))}
+                                    className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-amber-500/50 focus:outline-none"
+                                >
+                                    {MSG_SELECTORES.map(s => (
+                                        <option key={s.id} value={s.id}>{s.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                                    Día de envío
+                                </label>
+                                <select
+                                    value={msgSchedule.send_day || ''}
+                                    onChange={(e) => setMsgSchedule(prev => ({ ...prev, send_day: e.target.value || null }))}
+                                    className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-amber-500/50 focus:outline-none"
+                                >
+                                    <option value="">— Sin día fijo —</option>
+                                    {DAYS.map(d => (
+                                        <option key={d} value={d}>{d}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                                    Hora de envío
+                                </label>
+                                <input
+                                    type="time"
+                                    value={msgSchedule.send_time || ''}
+                                    onChange={(e) => setMsgSchedule(prev => ({ ...prev, send_time: e.target.value || null }))}
+                                    className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-amber-500/50 focus:outline-none"
+                                />
+                            </div>
+
+                            <div className="flex flex-col justify-end gap-3">
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={msgSchedule.weekly}
+                                        onChange={(e) => setMsgSchedule(prev => ({ ...prev, weekly: e.target.checked }))}
+                                        className="w-5 h-5 accent-amber-500"
+                                    />
+                                    <span className="text-sm font-bold text-gray-300">Repetir cada semana</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={msgSchedule.enabled}
+                                        onChange={(e) => setMsgSchedule(prev => ({ ...prev, enabled: e.target.checked }))}
+                                        className="w-5 h-5 accent-amber-500"
+                                    />
+                                    <span className="text-sm font-bold text-gray-300">Programación activa</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-3 pt-2">
+                            <button
+                                onClick={saveMsgSchedule}
+                                disabled={msgSaving}
+                                className="px-6 py-3 bg-amber-500 text-black rounded-xl text-sm font-black uppercase tracking-widest hover:bg-amber-400 transition-all disabled:opacity-50"
+                            >
+                                {msgSaving ? 'Guardando...' : '💾 Guardar Configuración'}
+                            </button>
+                            <button
+                                onClick={loadMsgRecipients}
+                                disabled={msgLoadingRecipients}
+                                className="px-6 py-3 bg-white/5 border border-white/10 rounded-xl text-sm font-black uppercase tracking-widest text-gray-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-50"
+                            >
+                                {msgLoadingRecipients ? 'Cargando...' : '🔄 Cargar Destinatarios'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Bloque 2: Panel de envío asistido */}
+                {total > 0 && (
+                    <div className="bg-black/60 border border-green-500/30 rounded-2xl p-5 md:p-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                            <h2 className="text-lg md:text-xl font-black uppercase tracking-widest text-green-400">
+                                📤 Envío Asistido
+                            </h2>
+                            <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                                Lote {batchNum} de {totalBatches} · {enviados}/{total} enviados
+                                {msgRecipientsMeta && msgRecipientsMeta.without_phone > 0 && (
+                                    <span className="text-red-400 ml-2">· {msgRecipientsMeta.without_phone} sin teléfono</span>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="space-y-3">
+                            {batch.map(r => {
+                                const yaEnviado = msgSentIds.includes(r.client_id);
+                                const sinTel = !r.phone;
+                                return (
+                                    <div
+                                        key={r.client_id}
+                                        className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 rounded-xl border ${
+                                            yaEnviado ? 'bg-green-500/10 border-green-500/40' : 'bg-white/5 border-white/10'
+                                        }`}
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="font-bold text-white truncate">{r.name}</div>
+                                            <div className="text-xs text-gray-400 mt-1">
+                                                {r.phone ? `📱 ${r.phone}` : '⚠️ Sin teléfono válido'}
+                                                {r.day_of_week && <span className="ml-3 text-gray-500">Ruta: {r.day_of_week}</span>}
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => markMsgSent(r)}
+                                            disabled={sinTel}
+                                            className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all shrink-0 ${
+                                                sinTel
+                                                    ? 'bg-white/5 text-gray-600 cursor-not-allowed'
+                                                    : yaEnviado
+                                                        ? 'bg-green-500/20 text-green-400 border border-green-500/40'
+                                                        : 'bg-green-500 text-black hover:bg-green-400'
+                                            }`}
+                                        >
+                                            {yaEnviado ? '✓ Enviado' : 'Enviar WhatsApp'}
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="flex flex-wrap gap-3 mt-5">
+                            <button
+                                onClick={prevMsgBatch}
+                                disabled={msgBatchIndex === 0}
+                                className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
+                            >
+                                ← Lote anterior
+                            </button>
+                            <button
+                                onClick={nextMsgBatch}
+                                disabled={msgBatchIndex + MSG_BATCH_SIZE >= total}
+                                className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-300 hover:text-white hover:bg-white/10 transition-all disabled:opacity-30"
+                            >
+                                Lote siguiente →
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Bloque 3: Bitácora */}
+                <div className="bg-black/60 border border-white/10 rounded-2xl p-5 md:p-6">
+                    <h2 className="text-lg md:text-xl font-black uppercase tracking-widest text-gray-300 mb-4">
+                        🧾 Bitácora de Envíos
+                    </h2>
+                    {msgLog.length === 0 ? (
+                        <p className="text-sm text-gray-500">Aún no se ha registrado ningún envío.</p>
+                    ) : (
+                        <div className="space-y-2 max-h-96 overflow-y-auto custom-scrollbar">
+                            {msgLog.map(entry => (
+                                <div key={entry.id} className="p-3 rounded-xl bg-white/5 border border-white/10">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                                        <div className="font-bold text-white text-sm">
+                                            {entry.client_name || `Cliente #${entry.client_id}`}
+                                        </div>
+                                        <div className="text-[11px] text-gray-500 font-mono">
+                                            {entry.sent_at ? new Date(entry.sent_at).toLocaleString('es-MX') : ''}
+                                        </div>
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">
+                                        📱 {entry.phone_used} · Selector: {entry.selector_used}
+                                        {entry.batch_id && <span className="ml-2 text-gray-600">· {entry.batch_id}</span>}
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-2 line-clamp-2 italic">
+                                        "{entry.message_text}"
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="h-full flex flex-col text-white overflow-hidden relative" style={{ backgroundColor: '#3a2e1e' }}>
             {/* Fondo de madera */}
@@ -1204,7 +1588,8 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     {[
                         { id: 'products', label: 'Productos Vinculados', icon: '🍞' },
                         { id: 'clients', label: 'Directorio de Clientes', icon: '👥' },
-                        { id: 'routes', label: 'Rutas por Día', icon: '🗺️' }
+                        { id: 'routes', label: 'Rutas por Día', icon: '🗺️' },
+                        { id: 'messages', label: 'Programación de Mensajes', icon: '💬' }
                     ].map(tab => (
                         <button
                             key={tab.id}
@@ -1238,6 +1623,7 @@ export const GrandezaParamsUI = ({ onBack }) => {
                     {activeTab === 'products' && renderProductsTab()}
                     {activeTab === 'clients' && renderClientsTab()}
                     {activeTab === 'routes' && renderRoutesTab()}
+                    {activeTab === 'messages' && renderMessagesTab()}
                 </div>
             </div>
 

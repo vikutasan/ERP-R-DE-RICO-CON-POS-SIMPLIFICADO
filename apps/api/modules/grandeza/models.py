@@ -292,3 +292,53 @@ class GrandezaOrder(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class GrandezaMessageLog(Base):
+    """
+    Bitácora inmutable de mensajes de WhatsApp enviados desde la Herramienta
+    Administrador Grandeza (pestaña 'Programación de Mensajes').
+
+    El ERP NO envía el mensaje: prepara el texto y el destinatario, el humano
+    pulsa 'Enviar' (deep link wa.me) y el ERP registra el hecho. Por eso
+    `message_text` se COPIA aquí (snapshot), no se referencia: si mañana el
+    administrador cambia la plantilla, el historial sigue mostrando lo que
+    realmente se envió ese día.
+    """
+    __tablename__ = "grandeza_message_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("grandeza_clients.id"), nullable=False, index=True)
+    phone_used = Column(String(20), nullable=False)   # Teléfono normalizado a 10 dígitos
+    message_text = Column(Text, nullable=False)       # Snapshot del texto enviado
+    selector_used = Column(String(30), nullable=False)  # Selector que originó el lote
+    sent_at = Column(DateTime, default=utcnow, nullable=False, index=True)  # UTC (DT-01)
+    sent_by = Column(String(100), nullable=True)      # Quién lo envió (usuario)
+    batch_id = Column(String(40), nullable=True)      # Agrupa los envíos de un mismo lote
+
+    client = relationship("GrandezaClient")
+
+
+class GrandezaMessageLog(Base):
+    """
+    Bitácora inmutable de mensajes de WhatsApp enviados desde la Herramienta
+    Administrador Grandeza (pestaña 'Programación de Mensajes').
+
+    El ERP NO envía el mensaje: prepara el texto y el destinatario, el humano
+    pulsa 'Enviar' (deep link wa.me) y el ERP registra el hecho. Por eso
+    `message_text` se COPIA aquí (snapshot), no se referencia: si mañana el
+    administrador cambia la plantilla, el historial sigue mostrando lo que
+    realmente se envió ese día.
+    """
+    __tablename__ = "grandeza_message_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("grandeza_clients.id"), nullable=False, index=True)
+    phone_used = Column(String(20), nullable=False)   # Teléfono normalizado a 10 dígitos
+    message_text = Column(Text, nullable=False)       # Snapshot del texto enviado
+    selector_used = Column(String(30), nullable=False)  # Selector que originó el lote
+    sent_at = Column(DateTime, default=utcnow, nullable=False, index=True)  # UTC (DT-01)
+    sent_by = Column(String(100), nullable=True)      # Quién lo envió (usuario)
+    batch_id = Column(String(40), nullable=True)      # Agrupa los envíos de un mismo lote
+
+    client = relationship("GrandezaClient")

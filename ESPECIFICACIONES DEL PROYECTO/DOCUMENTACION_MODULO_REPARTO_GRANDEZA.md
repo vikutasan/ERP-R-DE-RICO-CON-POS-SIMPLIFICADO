@@ -650,3 +650,196 @@ Hover: fondo amber-500, texto negro, flecha oscura.
 | `apps/production/ProductionManagementUI.jsx` | Botón 🍞 Producción Grandeza |
 | `apps/production/GrandezaProductionUI.jsx` | **NUEVO** — Suite de estimación de producción |
 | **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+
+---
+
+## 17. Programación de Mensajes WhatsApp (v7.5.0 — 22/Septiembre/2026)
+
+### 17.1 Visión General
+
+Se agregó una **4ta pestaña** llamada **"Programación de Mensajes"** (💬) a la suite de administración `GrandezaParamsUI.jsx`. Permite al administrador:
+
+1. **Definir el mensaje de WhatsApp a voluntad** (texto libre, sin plantillas fijas).
+2. **Elegir los destinatarios** mediante un selector con 11 opciones.
+3. **Programar día y hora** del envío.
+4. **Marcar la repetición semanal** (acción cíclica).
+
+**Decisión de diseño fundamental (D-2):** El ERP **NO envía** el mensaje. El ERP **prepara** el texto y el destinatario, el humano pulsa "Enviar WhatsApp" (deep link `wa.me`) y el ERP **registra el hecho** en una bitácora. Esto elimina la necesidad de la API de WhatsApp Business (aprobación de Meta, costos, tokens) y mantiene al humano en control del envío.
+
+**Contexto operativo:**
+- El administrador accede desde su **celular** (la pestaña es responsive).
+- El mensaje es **el mismo para todos** los destinatarios (D-3) — no hay personalización por cliente.
+- Los envíos se agrupan en **lotes de 5** (D-4) para ergonomía en pantalla móvil.
+- **Sin funciones de IA** (D-5) — fue una decisión explícita del usuario.
+
+### 17.2 Base de Datos
+
+**Tabla nueva:** `grandeza_message_log` (bitácora inmutable de envíos).
+
+| Columna | Tipo | Descripción |
+|---------|------|-------------|
+| `id` | SERIAL PK | Identificador |
+| `client_id` | INTEGER FK → `grandeza_clients.id` | Cliente destinatario |
+| `phone_used` | VARCHAR(20) | Teléfono normalizado a 10 dígitos |
+| `message_text` | TEXT | **Snapshot** del texto enviado |
+| `selector_used` | VARCHAR(30) | Selector que originó el lote |
+| `sent_at` | TIMESTAMP | UTC (ver DT-01) |
+| `sent_by` | VARCHAR(100) | Quién lo envió (nullable) |
+| `batch_id` | VARCHAR(40) | Agrupa los envíos de un mismo lote |
+
+**Índices:** `ix_grandeza_message_log_client_id`, `ix_grandeza_message_log_sent_at`.
+
+**Ledger inmutable:** `message_text` se **COPIA** en cada registro (no se referencia). Si mañana el administrador cambia la plantilla, el historial sigue mostrando lo que realmente se envió ese día.
+
+**Creación explícita de la tabla:** Como `create_all` **NO altera tablas existentes** (ver §7.7), la tabla se crea de forma idempotente en `apps/api/main.py` (Paso 1.4) con `CREATE TABLE IF NOT EXISTS` + 2 `CREATE INDEX IF NOT EXISTS`.
+
+**Configuración persistida:** Los 6 parámetros de la programación se guardan como filas en la tabla existente `grandeza_settings` (no se creó tabla nueva para esto):
+
+| Clave en `grandeza_settings` | Contenido |
+|------------------------------|-----------|
+| `msg_schedule_enabled` | `"1"` / `"0"` |
+| `msg_schedule_text` | Texto libre del mensaje |
+| `msg_schedule_selector` | Selector activo (ej. `JUEVES`) |
+| `msg_schedule_send_day` | Día de envío (`LUNES`..`DOMINGO`) |
+| `msg_schedule_send_time` | `"HH:MM"` hora local (intención de negocio) |
+| `msg_schedule_weekly` | `"1"` / `"0"` |
+
+### 17.3 Los 11 Selectores de Destinatarios
+
+| Selector | Significado |
+|----------|-------------|
+| `TODOS` | Todos los clientes registrados |
+| `ACTIVOS` | Solo clientes con `active = true` |
+| `INACTIVOS` | Solo clientes con `active = false` |
+| `LUNES` | Clientes con ruta asignada el lunes |
+| `MARTES` | Clientes con ruta asignada el martes |
+| `MIERCOLES` | Clientes con ruta asignada el miércoles |
+| `JUEVES` | Clientes con ruta asignada el jueves |
+| `VIERNES` | Clientes con ruta asignada el viernes |
+| `SABADO` | Clientes con ruta asignada el sábado |
+| `DOMINGO` | Clientes con ruta asignada el domingo |
+| `PROXIMA_EXTEMPORANEA` | Clientes de la **próxima ruta extraordinaria** (la más cercana con `route_date >= hoy`) |
+
+**Ejemplo de uso (D-1, Modelo 2):** *"martes 9:00 AM → clientes del jueves"*. El administrador elige el selector `JUEVES` y programa el envío para el día `MARTES` a las `09:00`. El sistema le presenta los clientes del jueves para que les avise con antelación.
+
+### 17.4 API — Endpoints Nuevos
+
+```
+GET  /api/v1/grandeza/message-schedule
+PUT  /api/v1/grandeza/message-schedule
+GET  /api/v1/grandeza/message-recipients?selector={SELECTOR}
+POST /api/v1/grandeza/message-log
+GET  /api/v1/grandeza/message-log?limit=100
+```
+
+| Endpoint | Propósito |
+|----------|-----------|
+| `GET /message-schedule` | Lee la configuración (texto, selector, día, hora, weekly, enabled) |
+| `PUT /message-schedule` | Guarda la configuración (valida selector y día) |
+| `GET /message-recipients` | Resuelve los destinatarios según el selector elegido |
+| `POST /message-log` | Registra un mensaje efectivamente enviado por el humano |
+| `GET /message-log` | Devuelve la bitácora, más reciente primero (limit 1–500) |
+
+**Respuesta de `/message-recipients`:**
+```json
+{
+    "selector": "JUEVES",
+    "total": 12,
+    "with_phone": 10,
+    "without_phone": 2,
+    "recipients": [
+        {
+            "client_id": 5,
+            "name": "Tienda Doña Mary",
+            "phone": "7221234567",
+            "day_of_week": "JUEVES",
+            "is_active": true
+        }
+    ]
+}
+```
+
+### 17.5 Backend — Servicio
+
+**Helpers nuevos en `apps/api/modules/grandeza/service.py`:**
+
+- `MSG_SCHEDULE_KEYS`: mapa de las 6 claves de configuración.
+- `DIAS_VALIDOS`: `{LUNES, MARTES, MIERCOLES, JUEVES, VIERNES, SABADO, DOMINGO}`.
+- `MSG_SELECTORES_VALIDOS`: los 11 selectores soportados.
+- `_normalizar_telefono(raw)`: limpia no-dígitos, exige mínimo 10, devuelve los **últimos 10** (formato nacional MX). Si hay menos, devuelve `None` para que el frontend lo marque como "sin teléfono". Regla heredada de `sendWhatsApp()` en `GrandezaDriverUI.jsx`.
+
+**Métodos nuevos:**
+
+| Método | Descripción |
+|--------|-------------|
+| `get_message_schedule(db)` | Lee las 6 claves de `grandeza_settings` con defaults seguros |
+| `save_message_schedule(db, data)` | Valida selector/día y persiste las 6 claves vía `upsert_setting` |
+| `resolve_message_recipients(db, selector)` | Resuelve destinatarios según el selector |
+| `log_message_sent(db, data)` | Normaliza el teléfono y crea el registro en la bitácora |
+| `get_message_log(db, limit)` | Bitácora con `selectinload(client)`, orden `sent_at DESC` |
+
+**Nota crítica (§7.6 / Error B):** `resolve_message_recipients` usa **obligatoriamente** `selectinload(GrandezaClient.route_slots)`. Sin eager loading, SQLAlchemy Async lanza un 500 al que FastAPI no adjunta cabeceras CORS, y el navegador lo disfraza como "Failed to fetch".
+
+**Nota crítica (§7.10 / Error H):** `sent_at` se guarda con `utcnow()` (UTC). `send_time` es una **intención de negocio** (hora local del reloj), no un instante — por eso se almacena como string `"HH:MM"` y no como timestamp.
+
+**Respeto al input del usuario (§7.4):** `save_message_schedule` nunca sobrescribe silenciosamente; valida y persiste exactamente lo que el usuario capturó.
+
+### 17.6 Frontend — Suite Administrador (`GrandezaParamsUI.jsx`)
+
+**Pestaña nueva:** `{ id: 'messages', label: 'Programación de Mensajes', icon: '💬' }` (4ta pestaña, después de "Rutas por Día").
+
+**Estado nuevo:**
+```jsx
+const [msgSchedule, setMsgSchedule] = useState({
+    enabled: false, text: '', selector: 'TODOS',
+    send_day: null, send_time: null, weekly: false
+});
+const [msgRecipients, setMsgRecipients] = useState([]);
+const [msgRecipientsMeta, setMsgRecipientsMeta] = useState(null);
+const [msgBatchIndex, setMsgBatchIndex] = useState(0);
+const [msgSentIds, setMsgSentIds] = useState([]);
+const [msgBatchId, setMsgBatchId] = useState('');
+const [msgLog, setMsgLog] = useState([]);
+const [msgSaving, setMsgSaving] = useState(false);
+const [msgLoadingRecipients, setMsgLoadingRecipients] = useState(false);
+```
+
+**Constantes:** `MSG_SELECTORES` (11 opciones con etiqueta legible) y `MSG_BATCH_SIZE = 5`.
+
+**Handlers:** `fetchMsgSchedule`, `fetchMsgLog`, `saveMsgSchedule`, `loadMsgRecipients`, `buildWaLink`, `markMsgSent`, `nextMsgBatch`, `prevMsgBatch`.
+
+**`renderMessagesTab()` — 3 bloques:**
+
+1. **Configuración:** textarea del mensaje, dropdown de selector, dropdown de día de envío, input de hora, checkboxes de "repetir semanalmente" y "habilitado", botones Guardar/Cargar.
+2. **Envío Asistido:** lote de 5 destinatarios con botón "Enviar WhatsApp" por cada uno, navegación entre lotes (anterior/siguiente), contador de enviados.
+3. **Bitácora:** lista de los últimos envíos registrados (cliente, teléfono, fecha/hora, selector).
+
+**Deep link de WhatsApp:**
+```jsx
+const buildWaLink = (phone, text) => {
+    const limpio = String(phone || '').replace(/\D/g, '');
+    const destino = limpio.length >= 10 ? limpio.slice(-10) : limpio;
+    return `https://wa.me/52${destino}?text=${encodeURIComponent(text || '')}`;
+};
+```
+
+**Flujo de envío (`markMsgSent`):** abre WhatsApp en pestaña nueva (`window.open`), luego hace `POST /message-log` para registrar el envío, marca el `client_id` en `msgSentIds` y refresca la bitácora.
+
+**Todas las URLs derivan de `CONFIG.API_BASE_URL`** (§7.9).
+
+### 17.7 Archivos Modificados (Resumen)
+
+| Archivo | Tipo de Cambio |
+|---------|---------------|
+| `apps/api/modules/grandeza/models.py` | Nuevo modelo `GrandezaMessageLog` |
+| `apps/api/main.py` | Import del modelo + `CREATE TABLE IF NOT EXISTS grandeza_message_log` (Paso 1.4) |
+| `apps/api/modules/grandeza/schemas.py` | 5 schemas: `GrandezaMessageSchedule`, `GrandezaMessageRecipient`, `GrandezaMessageRecipientsResponse`, `GrandezaMessageLogCreate`, `GrandezaMessageLogResponse` |
+| `apps/api/modules/grandeza/service.py` | Helpers (`MSG_SCHEDULE_KEYS`, `DIAS_VALIDOS`, `MSG_SELECTORES_VALIDOS`, `_normalizar_telefono`) + 5 métodos |
+| `apps/api/modules/grandeza/router.py` | 5 endpoints (`/message-schedule`, `/message-recipients`, `/message-log`) |
+| `apps/pos/GrandezaParamsUI.jsx` | 4ta pestaña + estado + 8 handlers + `renderMessagesTab()` |
+| **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+
+### 17.8 Verificación
+
+- **Backend:** `docker compose exec -T api python -m py_compile modules/grandeza/models.py modules/grandeza/schemas.py modules/grandeza/service.py modules/grandeza/router.py main.py` → `SYNTAX_OK`.
+- **Frontend:** `npm run build` → exit code 0, 1827 módulos transformados, build en 22.19s.

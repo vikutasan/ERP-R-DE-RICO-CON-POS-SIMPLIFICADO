@@ -41,7 +41,7 @@ from modules.network.models import NetworkIncident
 from modules.grandeza.models import (
     GrandezaProductConfig, GrandezaClient, GrandezaRouteSlot,
     GrandezaJourney, GrandezaInventory, GrandezaVisit, GrandezaVisitItem,
-    GrandezaDriverLocation, GrandezaSettings
+    GrandezaDriverLocation, GrandezaSettings, GrandezaMessageLog
 )
 from modules.hr.models import (
     HREmployeeExt, HRPosition, HRAttendance, HRRegulation,
@@ -108,6 +108,32 @@ async def auto_seed_on_first_boot():
             await conn.execute(text('DROP TABLE IF EXISTS warehouses CASCADE'))
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Tablas verificadas/creadas.")
+
+        # Paso 1.4: Tablas nuevas del módulo Grandeza (idempotente).
+        # create_all NO altera tablas existentes (ver §7.7 — Grandeza docs), por eso
+        # la tabla de bitácora de mensajes se crea aquí de forma explícita.
+        async with engine.begin() as conn:
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS grandeza_message_log (
+                    id SERIAL PRIMARY KEY,
+                    client_id INTEGER NOT NULL REFERENCES grandeza_clients(id),
+                    phone_used VARCHAR(20) NOT NULL,
+                    message_text TEXT NOT NULL,
+                    selector_used VARCHAR(30) NOT NULL,
+                    sent_at TIMESTAMP NOT NULL,
+                    sent_by VARCHAR(100),
+                    batch_id VARCHAR(40)
+                )
+            """))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_message_log_client_id "
+                "ON grandeza_message_log(client_id)"
+            ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_grandeza_message_log_sent_at "
+                "ON grandeza_message_log(sent_at)"
+            ))
+        logger.info("Tabla grandeza_message_log verificada/creada.")
 
         # Paso 1.5: Migraciones de columnas nuevas (idempotente)
         # create_all no agrega columnas a tablas existentes (ver Error F — Grandeza docs).

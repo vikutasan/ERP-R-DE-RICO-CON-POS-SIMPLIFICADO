@@ -233,6 +233,48 @@ async def update_setting(key: str, data: schemas.GrandezaSettingUpdate, db: Asyn
     return {"message": f"Setting '{key}' actualizado", "value": setting.value}
 
 
+# ─── Programación de Mensajes (WhatsApp asistido) ─────────────────────────────
+
+@router.get("/message-schedule", response_model=schemas.GrandezaMessageSchedule)
+async def get_message_schedule(db: AsyncSession = Depends(get_db)):
+    """Lee la configuración de programación de mensajes (texto, selector, día, hora)."""
+    return await grandeza_service.get_message_schedule(db)
+
+@router.put("/message-schedule", response_model=schemas.GrandezaMessageSchedule)
+async def save_message_schedule(data: schemas.GrandezaMessageSchedule, db: AsyncSession = Depends(get_db)):
+    """Guarda la configuración de programación de mensajes."""
+    return await grandeza_service.save_message_schedule(db, data)
+
+@router.get("/message-recipients", response_model=schemas.GrandezaMessageRecipientsResponse)
+async def get_message_recipients(selector: str = "TODOS", db: AsyncSession = Depends(get_db)):
+    """
+    Resuelve los destinatarios según el selector elegido.
+    Selectores: TODOS, ACTIVOS, INACTIVOS, LUNES..DOMINGO, PROXIMA_EXTEMPORANEA.
+    """
+    return await grandeza_service.resolve_message_recipients(db, selector)
+
+@router.post("/message-log", response_model=schemas.GrandezaMessageLogResponse)
+async def log_message_sent(data: schemas.GrandezaMessageLogCreate, db: AsyncSession = Depends(get_db)):
+    """Registra en la bitácora un mensaje efectivamente enviado por el humano."""
+    entry = await grandeza_service.log_message_sent(db, data)
+    return {
+        "id": entry.id,
+        "client_id": entry.client_id,
+        "phone_used": entry.phone_used,
+        "message_text": entry.message_text,
+        "selector_used": entry.selector_used,
+        "sent_at": entry.sent_at,
+        "sent_by": entry.sent_by,
+        "batch_id": entry.batch_id,
+        "client_name": None,
+    }
+
+@router.get("/message-log", response_model=List[schemas.GrandezaMessageLogResponse])
+async def get_message_log(limit: int = 100, db: AsyncSession = Depends(get_db)):
+    """Devuelve la bitácora de mensajes enviados, más reciente primero."""
+    return await grandeza_service.get_message_log(db, limit)
+
+
 # ─── Visitas ──────────────────────────────────────────────────────────────────
 
 @router.get("/journeys/{journey_id}/visits")

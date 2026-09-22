@@ -280,3 +280,57 @@ class GrandezaOrderResponse(BaseModel):
     notes: Optional[str] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── Programación de Mensajes (WhatsApp asistido) ─────────────────────────────
+
+class GrandezaMessageSchedule(BaseModel):
+    """Configuración persistida de la programación de mensajes."""
+    enabled: bool = False
+    text: str = ""
+    selector: str = "TODOS"
+    send_day: Optional[str] = None      # LUNES..DOMINGO (día en que se envía)
+    send_time: Optional[str] = None     # "HH:MM" hora local (intención de negocio)
+    weekly: bool = False
+
+
+class GrandezaMessageRecipient(BaseModel):
+    """Un destinatario resuelto por el backend a partir de un selector."""
+    client_id: int
+    name: str
+    phone: Optional[str] = None         # Normalizado a 10 dígitos, o None si inválido
+    day_of_week: Optional[str] = None   # Día de ruta del cliente (si aplica)
+    is_active: bool = True
+
+
+class GrandezaMessageRecipientsResponse(BaseModel):
+    """Respuesta del endpoint de resolución de destinatarios."""
+    selector: str
+    total: int
+    with_phone: int
+    without_phone: int
+    recipients: List[GrandezaMessageRecipient] = []
+
+
+class GrandezaMessageLogCreate(BaseModel):
+    """Registro de un mensaje efectivamente enviado (llamado por el frontend)."""
+    client_id: int
+    phone_used: str
+    message_text: str
+    selector_used: str
+    sent_by: Optional[str] = None
+    batch_id: Optional[str] = None
+
+
+class GrandezaMessageLogResponse(BaseModel):
+    """Fila de la bitácora de mensajes enviados."""
+    id: int
+    client_id: int
+    phone_used: str
+    message_text: str
+    selector_used: str
+    sent_at: datetime
+    sent_by: Optional[str] = None
+    batch_id: Optional[str] = None
+    client_name: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
