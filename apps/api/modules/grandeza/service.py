@@ -1422,12 +1422,15 @@ class GrandezaService:
         """
         Materializa la matriz confirmada como órdenes de producción (Fase C).
 
-        Crea/actualiza una `GrandezaOrder` por cliente con sus ítems, y marca
-        los pedidos como ENVIADO. Es idempotente: re-despachar actualiza.
+        Crea/actualiza una `GrandezaOrder` por cliente CON sus ítems reales
+        (product_id, product_name, qty) para que `PedidosProduccionUI.jsx` los
+        vea completos. Marca los pedidos como ENVIADO. Es idempotente:
+        re-despachar actualiza la orden existente sin duplicarla.
         """
         from .models import GrandezaOrder
 
         matriz = await self.get_order_matrix(db, delivery_date)
+        nombres = {p["product_id"]: p["product_name"] for p in matriz["products"]}
         creadas = 0
         actualizadas = 0
         detalle = []
@@ -1441,6 +1444,18 @@ class GrandezaService:
             if not cantidades:
                 continue
 
+            # Ítems en el formato que consume Producción:
+            # [{product_id, product_name, qty, unit_price}]
+            items = [
+                {
+                    "product_id": pid,
+                    "product_name": nombres.get(pid, f"Producto #{pid}"),
+                    "qty": qty,
+                    "unit_price": 0.0,
+                }
+                for pid, qty in cantidades.items()
+            ]
+
             res = await db.execute(
                 select(GrandezaOrder).where(
                     GrandezaOrder.client_id == fila["client_id"],
@@ -1451,12 +1466,19 @@ class GrandezaService:
             if orden is None:
                 orden = GrandezaOrder(
                     client_id=fila["client_id"],
+                    client_name=fila["client_name"],
+                    client_phone=fila.get("phone"),
+                    items=items,
                     delivery_date=delivery_date,
                     status="PENDIENTE",
                 )
                 db.add(orden)
                 creadas += 1
             else:
+                # Re-despacho: se refrescan ítems y snapshot del cliente.
+                orden.client_name = fila["client_name"]
+                orden.client_phone = fila.get("phone")
+                orden.items = items
                 actualizadas += 1
 
             orden.notes = notes or orden.notes
