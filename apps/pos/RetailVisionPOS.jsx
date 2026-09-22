@@ -9,6 +9,7 @@ import { useBarcodeScanner } from './hooks/useBarcodeScanner';
 import { useNetworkHealth } from './hooks/useNetworkHealth';
 import { usePOSSession } from './hooks/usePOSSession';
 import { useTicketActions } from './hooks/useTicketActions';
+import { useVoiceCart } from './hooks/useVoiceCart';
 import { buildResetPatch } from './state/sessionReset';
 import { CONFIG } from './config';
 
@@ -22,10 +23,16 @@ import { TerminalSelector } from './components/TerminalSelector';
 import { ProgramacionPedidoModal } from './components/ProgramacionPedidoModal';
 import { ForceLogoutModal, ToastNotification } from './components/POSOverlays';
 import { POSHeader } from './components/POSHeader';
+import { VoiceCartPanel } from './components/VoiceCartPanel';
 import { cashService } from './services/cashService';
 
 import { generateTicketHTML } from './utils/ticketGenerator';
 import { withRetries } from './utils/withRetries';
+import {
+    validateVoiceCartProposal,
+    buildCartItemsFromProposal,
+    POS_VOICE_INTENTS,
+} from './utils/voiceCartMapper';
 
 export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }) => {
     // --- Estado ---
@@ -90,6 +97,12 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
     const { cart, setCart, total, addToCart, updateQuantity, removeFromCart, clearCart } = useCart(PRODUCTS, selectedTerminal);
     clearCartRef.current = clearCart;
     const { isScanning, setIsScanning } = useVision();
+
+    // --- v24 (VOZ-POS): dictado por voz al carrito ---
+    // La IA PROPONE (propuesta editable); el operador CONFIRMA. Este hook
+    // nunca toca el carrito: solo produce la propuesta que el panel muestra.
+    const [showVoicePanel, setShowVoicePanel] = useState(false);
+    const voice = useVoiceCart(PRODUCTS);
 
     // --- Mantener refs sincronizadas con state (anti-stale-closure) ---
     React.useEffect(() => { cartRef.current = cart; }, [cart]);
@@ -581,6 +594,66 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
         }
     };
 
+    // --- v24 (VOZ-POS): aplicar la propuesta confirmada al carrito ---
+    // REGLA DE ORO: la IA PROPONE, el operador CONFIRMA. Este handler SOLO se
+    // ejecuta cuando el operador pulsa "Aplicar" tras marcar la confirmacion.
+    // Nunca se llama automaticamente desde el dictado.
+    const handleApplyVoiceProposal = async () => {
+        const propuesta = voice.propuesta;
+        const { ok, error } = validateVoiceCartProposal(propuesta);
+        if (!ok) {
+            setToastMessage({ text: error, type: 'error' });
+            return;
+        }
+
+        try {
+            switch (propuesta.intencion) {
+                case POS_VOICE_INTENTS.AGREGAR_ITEM: {
+                    const items = buildCartItemsFromProposal(propuesta);
+                    // Se agrega linea por linea para respetar la cantidad dictada
+                    // y reutilizar la logica de merge/upsert de useTicketActions.
+                    for (const item of items) {
+                        await handleAddToCart(item);
+                    }
+                    setToastMessage({
+                        text: `🎙️ ${items.length} producto(s) agregado(s) al carrito`,
+                        type: 'success',
+                    });
+                    break;
+                }
+                case POS_VOICE_INTENTS.QUITAR_ITEM: {
+                    const items = buildCartItemsFromProposal(propuesta);
+                    for (const item of items) {
+                        await handleRemoveFromCart(item.id);
+                    }
+                    setToastMessage({
+                        text: `🎙️ ${items.length} producto(s) quitado(s) del carrito`,
+                        type: 'success',
+                    });
+                    break;
+                }
+                case POS_VOICE_INTENTS.COBRAR: {
+                    // Delega en el flujo de cobro existente (abre el checkout).
+                    await handleTicketAction('PAID');
+                    break;
+                }
+                case POS_VOICE_INTENTS.CANCELAR: {
+                    clearCart();
+                    setToastMessage({ text: '🎙️ Venta cancelada por dictado', type: 'success' });
+                    break;
+                }
+                default:
+                    setToastMessage({ text: 'La IA no entendio el dictado', type: 'error' });
+                    return;
+            }
+            voice.reset();
+            setShowVoicePanel(false);
+        } catch (e) {
+            console.error('Error aplicando propuesta de voz:', e);
+            setToastMessage({ text: 'No se pudo aplicar el dictado al carrito', type: 'error' });
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-transparent text-white overflow-hidden">
             <POSHeader
@@ -609,6 +682,8 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
                 onCategoryChange={setActiveCategory}
                 onViewModeChange={setViewMode}
                 onPageChange={setCurrentPage}
+                onOpenVoice={() => setShowVoicePanel(true)}
+                voiceAvailable={voice.disponible}
             />
 
             {/* Main Content */}
@@ -667,6 +742,27 @@ export const RetailVisionPOS = ({ currentUser, onForceLogout, assignedTerminal }
                     openAccounts={visibleAccounts}
                     onSelectAccount={handleRecoverAccount}
                     onClose={() => setShowCorkboard(false)}
+                />
+            )}
+
+            {showVoicePanel && (
+                <VoiceCartPanel
+                    grabando={voice.grabando}
+                    transcribiendo={voice.transcribiendo}
+                    texto={voice.texto}
+                    propuesta={voice.propuesta}
+                    disponible={voice.disponible}
+                    error={voice.error}
+                    productos={PRODUCTS}
+                    onToggleRecording={voice.alternar}
+                    onEditLine={voice.editarLinea}
+                    onRemoveLine={voice.quitarLinea}
+                    onToggleConfirm={voice.alternarConfirmacion}
+                    onApply={handleApplyVoiceProposal}
+                    onCancel={() => {
+                        voice.reset();
+                        setShowVoicePanel(false);
+                    }}
                 />
             )}
 

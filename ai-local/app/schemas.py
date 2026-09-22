@@ -92,6 +92,18 @@ class VoiceParseIntentRequest(BaseModel):
     )
 
 
+class VoiceIntentItem(BaseModel):
+    """Un item individual detectado en una frase dictada.
+
+    v24 (VOZ-POS): una sola frase puede contener varios productos
+    ("agrega 3 conchas y 12 bolillos"), por eso el NLU devuelve una lista.
+    """
+
+    sku: Optional[str] = Field(None, description="SKU o nombre mencionado")
+    cantidad: Optional[float] = Field(None, description="Cantidad mencionada")
+    unidad: Optional[str] = Field(None, description="Unidad mencionada (kg, pieza, caja)")
+
+
 class VoiceParseIntentResponse(BaseModel):
     """Intencion estructurada.
 
@@ -99,6 +111,10 @@ class VoiceParseIntentResponse(BaseModel):
     """
 
     intencion: str = Field(..., description="Ej. 'registrar_entrada', 'contar_stock'")
+    items: List[VoiceIntentItem] = Field(
+        default_factory=list,
+        description="v24: lista de items detectados (1..N). Vacio si no aplica.",
+    )
     sku: Optional[str] = Field(None, description="SKU mencionado, si se pudo resolver")
     sku_resuelto: bool = Field(
         False, description="False si el SKU no existe -> selector manual obligatorio"

@@ -260,7 +260,10 @@ async def interpretar_intencion(payload: schemas.VoiceParseIntentRequest) -> sch
     _verificar_configuracion("nlu")
 
     # Traduccion Gateway -> Motor: el motor recibe un `contexto` libre.
+    # v24 (VOZ-POS): el contexto puede ser 'almacen' (default) o 'pos'.
     contexto_partes = []
+    if payload.contexto:
+        contexto_partes.append(f"contexto={payload.contexto}")
     if payload.almacen_id:
         contexto_partes.append(f"almacen={payload.almacen_id}")
     if payload.skus_disponibles:
@@ -271,8 +274,24 @@ async def interpretar_intencion(payload: schemas.VoiceParseIntentRequest) -> sch
     }
     datos = await _llamar_motor("/voice/parse-intent", cuerpo_motor, "nlu")
 
+    # v24: normalizacion del arreglo "items" que devuelve el motor.
+    items_crudos = datos.get("items")
+    items = []
+    if isinstance(items_crudos, list):
+        for it in items_crudos:
+            if not isinstance(it, dict):
+                continue
+            items.append(
+                schemas.VoiceIntentItem(
+                    sku=it.get("sku"),
+                    cantidad=it.get("cantidad"),
+                    unidad=it.get("unidad"),
+                )
+            )
+
     return schemas.VoiceParseIntentResponse(
         intencion=datos.get("intencion"),
+        items=items,
         sku=datos.get("sku"),
         cantidad=datos.get("cantidad"),
         unidad=datos.get("unidad"),

@@ -32,15 +32,40 @@ OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 # Prompt del sistema: instruye al LLM a devolver SOLO JSON.
 # El vocabulario de SKUs se inyecta desde system_settings (cero listas hardcodeadas).
+#
+# v24 (VOZ-POS): el mismo motor atiende DOS contextos:
+#   - "almacen" -> movimientos de inventario (registrar_entrada, contar_stock...)
+#   - "pos"     -> venta al publico (agregar_item, quitar_item, cobrar, cancelar)
+# El contexto llega en `payload.contexto` y se inyecta en el prompt del usuario.
+# El LLM NUNCA ejecuta: solo propone. El operador confirma (human-in-the-loop).
 PROMPT_SISTEMA = """Eres un interprete de comandos de un POS de panaderia.
-Devuelve UNICAMENTE un objeto JSON con esta forma exacta:
+Recibes una frase dictada por un cajero y devuelves UNICAMENTE un objeto JSON.
+
+FORMATO EXACTO (siempre estas 6 llaves, sin texto fuera del JSON):
 {
-  "intencion": "registrar_entrada" | "contar_stock" | "consultar" | "desconocida",
+  "intencion": "agregar_item" | "quitar_item" | "cobrar" | "cancelar" | "registrar_entrada" | "contar_stock" | "consultar" | "desconocida",
+  "items": [
+    { "sku": "string o null", "cantidad": numero o null, "unidad": "kg" | "pieza" | "caja" | null }
+  ],
   "sku": "string o null",
   "cantidad": numero o null,
   "unidad": "kg" | "pieza" | "caja" | null,
   "confianza": numero entre 0 y 1
 }
+
+REGLAS DE INTERPRETACION:
+1. Si la frase menciona VARIOS productos ("agrega 3 conchas y 12 bolillos"), devuelve
+   TODOS en el arreglo "items". Si menciona uno solo, "items" lleva un unico elemento.
+2. Para compatibilidad, "sku"/"cantidad"/"unidad" repiten el PRIMER elemento de "items".
+3. "agregar_item"  -> el cajero quiere sumar productos a la cuenta (venta).
+4. "quitar_item"   -> el cajero quiere quitar productos de la cuenta.
+5. "cobrar"        -> el cajero pide cerrar/cobrar la cuenta.
+6. "cancelar"      -> el cajero pide cancelar la venta.
+7. "registrar_entrada" / "contar_stock" / "consultar" -> contexto de ALMACEN.
+8. Si no entiendes la frase, usa "desconocida" y confianza baja.
+9. "confianza" refleja que tan seguro estas (0 = nada, 1 = totalmente seguro).
+10. NUNCA inventes SKUs que no aparezcan en la lista de candidatos del contexto.
+
 No expliques nada. No agregues texto fuera del JSON. No ejecutes acciones."""
 
 
@@ -123,9 +148,41 @@ async def interpretar(payload: schemas.VoiceParseIntentRequest) -> schemas.Voice
     except json.JSONDecodeError as exc:
         raise ValueError(f"El LLM devolvio JSON invalido: {exc}") from exc
 
+    # v24 (VOZ-POS): normalizacion del arreglo "items".
+    # El LLM puede devolver 1..N items. Se filtran los que no tengan SKU ni
+    # cantidad para no propagar ruido a la UI. Si el LLM no devolvio "items"
+    # (contrato viejo de almacen), se sintetiza uno a partir de los campos
+    # planos para mantener compatibilidad hacia atras.
+    items_crudos = datos.get("items")
+    items_normalizados: list[dict] = []
+    if isinstance(items_crudos, list):
+        for it in items_crudos:
+            if not isinstance(it, dict):
+                continue
+            sku_it = it.get("sku")
+            cant_it = it.get("cantidad")
+            if sku_it in (None, "") and cant_it in (None, ""):
+                continue
+            items_normalizados.append(
+                {
+                    "sku": sku_it,
+                    "cantidad": cant_it,
+                    "unidad": it.get("unidad"),
+                }
+            )
+    if not items_normalizados and datos.get("sku"):
+        items_normalizados.append(
+            {
+                "sku": datos.get("sku"),
+                "cantidad": datos.get("cantidad"),
+                "unidad": datos.get("unidad"),
+            }
+        )
+
     # Validacion con Pydantic: si el LLM alucina campos, aqui se detecta.
     return schemas.VoiceParseIntentResponse(
         intencion=datos.get("intencion", "desconocida"),
+        items=items_normalizados,
         sku=datos.get("sku"),
         # sku_resuelto lo decide el ERP contra su catalogo real, no el LLM.
         # Aqui solo se marca True si el LLM devolvio un SKU no vacio.

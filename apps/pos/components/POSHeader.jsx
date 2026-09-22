@@ -40,6 +40,8 @@ export const POSHeader = ({
     onCategoryChange,
     onViewModeChange,
     onPageChange,
+    onOpenVoice,
+    voiceAvailable = true,
 }) => {
     const canSwitch = !assignedTerminal || currentUser?.role === 'ADMIN' || currentUser?.permissions?.access_any_terminal === 'full';
 
@@ -132,8 +134,28 @@ export const POSHeader = ({
                     )}
                 </div>
 
-                {/* DERECHA: Caja + Pizarron */}
+                {/* DERECHA: Voz + Caja + Pizarron */}
                 <div className="flex-shrink-0 flex gap-2">
+                    {/* v24 (VOZ-POS): dictado por voz al carrito */}
+                    <button
+                        id="btn-dictado-voz"
+                        onClick={onOpenVoice}
+                        disabled={!voiceAvailable}
+                        className={`px-5 py-2 rounded-xl flex items-center transition-all shadow-xl border ${
+                            voiceAvailable
+                                ? 'bg-black/60 border-[#c1d72e]/40 hover:bg-[#c1d72e]/20 hover:border-[#c1d72e]'
+                                : 'bg-black/40 border-white/5 cursor-not-allowed opacity-40'
+                        }`}
+                        title={voiceAvailable ? 'Dictar productos por voz' : 'Dictado por voz no disponible'}
+                    >
+                        <div className="text-left">
+                            <p className="text-[18px] font-black uppercase text-white tracking-widest leading-none mb-1">Voz</p>
+                            <p className="text-[14px] font-black text-[#c1d72e] uppercase tracking-tighter leading-none">
+                                🎙️ Dictar
+                            </p>
+                        </div>
+                    </button>
+
                     <button
                         onClick={onOpenGestorCaja}
                         className="bg-black/60 border border-[#c1d72e]/40 px-6 py-2 rounded-xl flex items-center hover:bg-[#c1d72e]/20 hover:border-[#c1d72e] transition-all shadow-xl"

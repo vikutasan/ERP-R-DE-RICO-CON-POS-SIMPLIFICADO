@@ -70,6 +70,22 @@ class VoiceParseIntentRequest(BaseModel):
         None,
         description="SKUs candidatos para que el NLU resuelva el mas probable.",
     )
+    contexto: Optional[str] = Field(
+        None,
+        description="v24: 'almacen' (default) o 'pos' para venta al publico.",
+    )
+
+
+class VoiceIntentItem(BaseModel):
+    """v24: un item individual detectado en una frase dictada.
+
+    Una sola frase puede contener varios productos
+    ("agrega 3 conchas y 12 bolillos"), por eso el NLU devuelve una lista.
+    """
+
+    sku: Optional[str] = None
+    cantidad: Optional[float] = None
+    unidad: Optional[str] = None
 
 
 class VoiceParseIntentResponse(BaseModel):
@@ -80,7 +96,11 @@ class VoiceParseIntentResponse(BaseModel):
 
     intencion: Optional[str] = Field(
         None,
-        description="Tipo de operacion detectada: ENTRADA, MERMA o CONTEO.",
+        description="Tipo de operacion detectada: ENTRADA, MERMA, CONTEO o (POS) AGREGAR_ITEM, QUITAR_ITEM, COBRAR, CANCELAR.",
+    )
+    items: List[VoiceIntentItem] = Field(
+        default_factory=list,
+        description="v24: lista de items detectados (1..N). Vacio si no aplica.",
     )
     sku: Optional[str] = None
     cantidad: Optional[float] = None
