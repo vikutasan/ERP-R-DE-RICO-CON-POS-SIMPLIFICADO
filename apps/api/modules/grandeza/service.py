@@ -1485,5 +1485,116 @@ class GrandezaService:
             "detail": detalle,
         }
 
+    # ─── Fase B (Ruta A): match OCR → catálogo real ───────────────────────────
+    #
+    # El LLM PROPONE nombres; el ERP los resuelve contra su catálogo real.
+    # El LLM NUNCA decide un client_id ni un product_id (spec §5.2).
+
+    @staticmethod
+    def _normalizar_texto(valor: Optional[str]) -> str:
+        """Minúsculas, sin acentos ni signos, para comparar nombres."""
+        if not valor:
+            return ""
+        import unicodedata
+
+        base = unicodedata.normalize("NFKD", str(valor))
+        base = "".join(ch for ch in base if not unicodedata.combining(ch))
+        base = base.lower()
+        limpio = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in base)
+        return " ".join(limpio.split())
+
+    async def resolver_cliente_ocr(
+        self, db: AsyncSession, telefono: Optional[str] = None,
+        nombre: Optional[str] = None,
+    ) -> dict:
+        """
+        Cascada de resolución de cliente (D-6): teléfono → nombre exacto →
+        fuzzy → manual.
+
+        Devuelve {client_id, client_name, match}. Si nada coincide,
+        client_id=None y match="manual" (el operador elige en la UI).
+        """
+        res = await db.execute(select(GrandezaClient))
+        clientes = res.scalars().all()
+
+        # 1. Teléfono (la señal más fuerte: viene del encabezado del chat).
+        tel_norm = _normalizar_telefono(telefono)
+        if tel_norm:
+            for c in clientes:
+                if _normalizar_telefono(c.phone) == tel_norm:
+                    return {"client_id": c.id, "client_name": c.name, "match": "telefono"}
+
+        # 2. Nombre exacto (normalizado).
+        nombre_norm = self._normalizar_texto(nombre)
+        if nombre_norm:
+            for c in clientes:
+                if self._normalizar_texto(c.name) == nombre_norm:
+                    return {"client_id": c.id, "client_name": c.name, "match": "nombre"}
+
+            # 3. Fuzzy: contención en cualquiera de los dos sentidos.
+            for c in clientes:
+                c_norm = self._normalizar_texto(c.name)
+                if not c_norm:
+                    continue
+                if nombre_norm in c_norm or c_norm in nombre_norm:
+                    return {"client_id": c.id, "client_name": c.name, "match": "fuzzy"}
+
+        return {"client_id": None, "client_name": nombre or None, "match": "manual"}
+
+    async def resolver_productos_ocr(
+        self, db: AsyncSession, nombres: list,
+    ) -> list:
+        """
+        Resuelve nombres propuestos por el LLM contra el catálogo Grandeza.
+
+        Devuelve [{producto, producto_id, cantidad, confianza, requiere_revision}].
+        Si un nombre no matchea, producto_id=None y requiere_revision=True:
+        la UI obliga al operador a elegirlo (nunca se descarta en silencio).
+        """
+        prods_res = await db.execute(
+            select(GrandezaProductConfig).where(GrandezaProductConfig.is_enabled == True)
+        )
+        configs = prods_res.scalars().all()
+        ids = [c.product_id for c in configs]
+        nombres_catalogo = await self._resolver_nombres_producto(db, ids)
+
+        indice = [
+            (pid, self._normalizar_texto(nombre))
+            for pid, nombre in nombres_catalogo.items()
+        ]
+
+        resueltos = []
+        for entrada in nombres or []:
+            propuesto = (entrada.get("producto") or "").strip()
+            cantidad = float(entrada.get("cantidad") or 0)
+            confianza = float(entrada.get("confianza") or 0.0)
+            objetivo = self._normalizar_texto(propuesto)
+
+            pid_match = None
+            if objetivo:
+                # 1. Exacto.
+                for pid, nombre_norm in indice:
+                    if nombre_norm == objetivo:
+                        pid_match = pid
+                        break
+                # 2. Contención (fuzzy).
+                if pid_match is None:
+                    for pid, nombre_norm in indice:
+                        if nombre_norm and (
+                            objetivo in nombre_norm or nombre_norm in objetivo
+                        ):
+                            pid_match = pid
+                            break
+
+            resueltos.append({
+                "producto": propuesto,
+                "producto_id": pid_match,
+                "cantidad": cantidad,
+                "confianza": confianza,
+                "requiere_revision": pid_match is None,
+            })
+
+        return resueltos
+
 
 grandeza_service = GrandezaService()

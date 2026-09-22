@@ -38,15 +38,19 @@ ENV PYTHONUNBUFFERED=1 \
     YOLO_MODEL=yolov8n.pt
 
 # --- Dependencias del sistema ---
-# ffmpeg      : requerido por Whisper para decodificar audio
-# libgl1      : requerido por OpenCV (vision)
-# libglib2.0-0: requerido por OpenCV
-# curl        : healthcheck
+# ffmpeg              : requerido por Whisper para decodificar audio
+# libgl1              : requerido por OpenCV (vision)
+# libglib2.0-0        : requerido por OpenCV
+# curl                : healthcheck
+# tesseract-ocr       : OCR de capturas de WhatsApp (Fase B, Ruta A)
+# tesseract-ocr-spa   : paquete de idioma español para el OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libgl1 \
         libglib2.0-0 \
         curl \
+        tesseract-ocr \
+        tesseract-ocr-spa \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

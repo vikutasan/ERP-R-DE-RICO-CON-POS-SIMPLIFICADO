@@ -385,3 +385,57 @@ async def entrenar_vision(payload: schemas.TrainRequest) -> schemas.TrainStatusR
     except (ValueError, TypeError):
         logger.error("Entrenamiento: respuesta invalida del motor")
         _lanzar_no_disponible("entrenamiento: respuesta invalida")
+
+
+# ---------------------------------------------------------------------------
+# Fase B (Ruta A) — OCR de capturas de WhatsApp
+# ---------------------------------------------------------------------------
+# El motor hace OCR (Tesseract) + LLM (Ollama) y devuelve una PROPUESTA.
+# El Gateway NO confia en el LLM para el match: el ERP resuelve el cliente y
+# los productos contra su catalogo real (match en cascada, ver grandeza).
+# ---------------------------------------------------------------------------
+async def extraer_pedido_ocr(
+    payload: schemas.OcrExtractOrderRequest,
+) -> schemas.OcrExtractOrderResponse:
+    """Lee una captura de WhatsApp y propone un pedido estructurado.
+
+    Traduce el contrato del motor al del Gateway. Si el motor no esta
+    disponible, lanza 503 IA_NO_DISPONIBLE y el operador captura a mano.
+    """
+    _verificar_configuracion("ocr")
+
+    cuerpo_motor = {
+        "imagen_base64": payload.imagen_base64,
+        "productos_catalogo": payload.productos_catalogo or [],
+        "clientes_catalogo": payload.clientes_catalogo or [],
+    }
+    datos = await _llamar_motor("/ocr/extract-order", cuerpo_motor, "ocr")
+
+    items_crudos = datos.get("items")
+    items = []
+    if isinstance(items_crudos, list):
+        for it in items_crudos:
+            if not isinstance(it, dict):
+                continue
+            items.append(
+                schemas.OcrOrderItem(
+                    producto=(it.get("producto") or "").strip(),
+                    cantidad=float(it.get("cantidad") or 0),
+                    confianza=float(it.get("confianza") or 0.0),
+                )
+            )
+
+    return schemas.OcrExtractOrderResponse(
+        ok=bool(datos.get("ok")),
+        texto_crudo=datos.get("texto_crudo") or "",
+        lineas=datos.get("lineas") or [],
+        confianza_ocr=float(datos.get("confianza_ocr") or 0.0),
+        cliente_nombre=datos.get("cliente_nombre"),
+        cliente_telefono=datos.get("cliente_telefono"),
+        items=items,
+        confianza_llm=float(datos.get("confianza_llm") or 0.0),
+        notas=datos.get("notas"),
+        motor_ocr=datos.get("motor_ocr"),
+        motor_llm=datos.get("motor_llm"),
+        requiere_confirmacion=True,
+    )

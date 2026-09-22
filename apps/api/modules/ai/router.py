@@ -58,3 +58,19 @@ async def vision_train_status():
 async def vision_train(payload: schemas.TrainRequest):
     """Lanza el fine-tuning de YOLO. Timeout largo (1h por defecto)."""
     return await service.entrenar_vision(payload)
+
+
+# ---------------------------------------------------------------------------
+# Fase B (Ruta A) — OCR de capturas de WhatsApp
+# ---------------------------------------------------------------------------
+# El operador sube una captura del chat; la IA propone cliente + renglones.
+# El ERP hace el match contra su catalogo real (nunca el LLM).
+# ---------------------------------------------------------------------------
+@router.post("/ocr/extract-order", response_model=schemas.OcrExtractOrderResponse)
+async def ocr_extract_order(payload: schemas.OcrExtractOrderRequest):
+    """Lee una captura de WhatsApp y propone un pedido (OCR + LLM).
+
+    Con fallback 503 IA_NO_DISPONIBLE: si el motor no esta, el operador
+    captura el pedido a mano en la pestana Programacion de Pedidos.
+    """
+    return await service.extraer_pedido_ocr(payload)

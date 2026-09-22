@@ -191,3 +191,129 @@ async def interpretar(payload: schemas.VoiceParseIntentRequest) -> schemas.Voice
         unidad=datos.get("unidad"),
         confianza=float(datos.get("confianza", 0.0)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Fase B (Ruta A) — estructura de un pedido leido por OCR
+# ---------------------------------------------------------------------------
+# Prompt del sistema para el parser de pedidos. Es DISTINTO al de voz: aqui
+# la entrada es texto OCR (sucio, con ruido) y la salida es una lista de
+# renglones producto+cantidad. El LLM NUNCA inventa productos: si un renglon
+# no se parece a nada del catalogo, lo deja con el texto tal cual y confianza
+# baja, para que el operador lo corrija en la UI.
+PROMPT_PEDIDO = """Eres un asistente que lee capturas de pantalla de WhatsApp
+de una panaderia. Recibes el TEXTO CRUDO extraido por OCR de una conversacion
+donde un cliente escribe su pedido. Devuelves UNICAMENTE un objeto JSON.
+
+FORMATO EXACTO (sin texto fuera del JSON):
+{
+  "items": [
+    { "producto": "string", "cantidad": numero, "confianza": numero entre 0 y 1 }
+  ],
+  "notas": "string o null",
+  "confianza": numero entre 0 y 1
+}
+
+REGLAS DE INTERPRETACION:
+1. Extrae SOLO los productos que el CLIENTE pide. Ignora saludos, "gracias",
+   confirmaciones del vendedor y mensajes del sistema ("en linea", horas).
+2. Si el cliente escribe "20 bolillos y 15 conchas", devuelve DOS renglones.
+3. Si un renglon no trae cantidad explicita, usa 1.
+4. Si el texto menciona un producto que NO esta en la lista de candidatos,
+   devuelvelo igual con el texto tal cual y confianza baja (<= 0.4). El
+   operador lo corregira. NUNCA lo omitas en silencio.
+5. Si no encuentras ningun producto, devuelve "items": [] y confianza baja.
+6. "confianza" global refleja que tan seguro estas de la lectura completa.
+7. NUNCA inventes productos que no aparezcan en el texto.
+8. NUNCA sumes ni agrupes renglones distintos.
+
+No expliques nada. No agregues texto fuera del JSON. No ejecutes acciones."""
+
+
+async def parsear_pedido(
+    texto_ocr: str,
+    productos_catalogo: list[str] | None = None,
+) -> dict:
+    """Estructura el texto OCR de una captura en renglones producto+cantidad.
+
+    Devuelve un dict con {items, notas, confianza}. NO valida contra el
+    catalogo real del ERP: eso lo hace el Gateway (match en cascada). Aqui
+    solo se traduce texto sucio a JSON limpio.
+
+    Si Ollama no responde o devuelve JSON invalido, se lanza excepcion y
+    main.py la convierte en 503 (el ERP degrada a captura manual).
+    """
+    catalogo = productos_catalogo or []
+    lista_candidatos = ", ".join(catalogo[:80]) if catalogo else "(sin catalogo)"
+
+    prompt_usuario = (
+        f"[catalogo de productos: {lista_candidatos}]\n\n"
+        f"TEXTO OCR DE LA CAPTURA:\n{texto_ocr}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as cliente:
+            resp = await cliente.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": LLM_MODEL,
+                    "prompt": prompt_usuario,
+                    "system": PROMPT_PEDIDO,
+                    "stream": False,
+                    "format": "json",
+                },
+            )
+            resp.raise_for_status()
+            cuerpo = resp.json()
+    except httpx.TimeoutException as exc:
+        raise TimeoutError(
+            f"Ollama no respondio en {OLLAMA_TIMEOUT}s (modelo {LLM_MODEL})."
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ConnectionError(
+            f"Ollama inalcanzable en {OLLAMA_URL}: {exc!r}"
+        ) from exc
+
+    try:
+        datos = json.loads(cuerpo.get("response", "{}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"El LLM devolvio JSON invalido: {exc}") from exc
+
+    # Normalizacion: se descartan renglones sin nombre de producto.
+    items_crudos = datos.get("items")
+    items: list[dict] = []
+    if isinstance(items_crudos, list):
+        for it in items_crudos:
+            if not isinstance(it, dict):
+                continue
+            nombre = (it.get("producto") or "").strip()
+            if not nombre:
+                continue
+            try:
+                cantidad = float(it.get("cantidad") or 0)
+            except (TypeError, ValueError):
+                cantidad = 0.0
+            try:
+                conf = float(it.get("confianza") or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            items.append(
+                {
+                    "producto": nombre,
+                    "cantidad": max(cantidad, 0.0),
+                    "confianza": min(max(conf, 0.0), 1.0),
+                }
+            )
+
+    try:
+        confianza = float(datos.get("confianza") or 0.0)
+    except (TypeError, ValueError):
+        confianza = 0.0
+
+    logger.info("Parser de pedido: %d renglones, confianza %.2f", len(items), confianza)
+
+    return {
+        "items": items,
+        "notas": datos.get("notas"),
+        "confianza": min(max(confianza, 0.0), 1.0),
+    }

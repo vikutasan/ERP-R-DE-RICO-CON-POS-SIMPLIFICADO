@@ -159,3 +159,58 @@ class DatasetSummaryResponse(BaseModel):
     skus: dict = Field(default_factory=dict, description="{sku: {imagenes, anotadas}}")
     total_imagenes: int = Field(0, ge=0)
     total_etiquetas: int = Field(0, ge=0)
+
+
+# ---------------------------------------------------------------------------
+# OCR — lectura de capturas de WhatsApp (Fase B, Ruta A)
+# ---------------------------------------------------------------------------
+class OcrExtractOrderRequest(BaseModel):
+    """Peticion de lectura de una captura de pantalla de WhatsApp.
+
+    La imagen llega en base64. El motor hace OCR (Tesseract) y luego pide al
+    LLM que estructure el pedido. NUNCA registra nada: solo PROPONE.
+    """
+
+    imagen_base64: str = Field(..., description="Captura de pantalla en base64")
+    productos_catalogo: List[str] = Field(
+        default_factory=list,
+        description="Nombres de producto del catalogo Grandeza (para el match)",
+    )
+    clientes_catalogo: List[str] = Field(
+        default_factory=list,
+        description="Nombres de cliente del directorio Grandeza (para el match)",
+    )
+
+
+class OcrOrderItem(BaseModel):
+    """Un renglon propuesto del pedido (producto + cantidad)."""
+
+    producto: str = Field(..., description="Nombre de producto tal como se leyo")
+    cantidad: float = Field(0.0, ge=0.0, description="Cantidad propuesta")
+    confianza: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class OcrExtractOrderResponse(BaseModel):
+    """Propuesta de pedido extraida de una captura.
+
+    REGLA (spec §5.2): este contrato NO tiene campo `confirmado`.
+    El operador confirma en la UI del ERP antes de guardar.
+    """
+
+    ok: bool = Field(..., description="True si el OCR produjo texto util")
+    texto_crudo: str = Field("", description="Texto completo leido por el OCR")
+    lineas: List[str] = Field(default_factory=list, description="Lineas no vacias")
+    confianza_ocr: float = Field(0.0, ge=0.0, le=1.0)
+    cliente_nombre: Optional[str] = Field(
+        None, description="Nombre de cliente PROPUESTO (del encabezado del chat)"
+    )
+    cliente_telefono: Optional[str] = Field(
+        None, description="Telefono PROPUESTO (10 digitos, sin lada)"
+    )
+    items: List[OcrOrderItem] = Field(
+        default_factory=list, description="Renglones de pedido propuestos"
+    )
+    confianza_llm: float = Field(0.0, ge=0.0, le=1.0)
+    notas: Optional[str] = Field(None, description="Observaciones del parser")
+    motor_ocr: str = Field("tesseract", description="Motor de OCR usado")
+    motor_llm: str = Field("ollama", description="Motor de LLM usado")

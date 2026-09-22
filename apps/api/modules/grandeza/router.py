@@ -419,3 +419,75 @@ async def dispatch_order_requests(
     return await grandeza_service.dispatch_order_requests_to_production(
         db, data.delivery_date, data.dispatched_by, data.notes
     )
+
+
+# ─── Fase B (Ruta A): OCR de capturas de WhatsApp ─────────────────────────────
+# El operador sube una captura; el Gateway (OCR + LLM) PROPONE cliente y
+# renglones; este endpoint resuelve ambos contra el catálogo REAL de Grandeza.
+# Si la IA no está disponible, se propaga el 503 IA_NO_DISPONIBLE y la UI
+# permite capturar el pedido a mano (degradación, spec §1.2).
+@router.post("/order-requests/ocr-extract", response_model=schemas.GrandezaOcrExtractResponse)
+async def ocr_extract_order_request(
+    data: schemas.GrandezaOcrExtractRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Lee una captura de WhatsApp y propone un pedido con match al catálogo."""
+    from modules.ai import service as ai_service
+    from modules.ai import schemas as ai_schemas
+
+    # 1. Catálogos reales que se envían al motor como pistas de match.
+    productos = await grandeza_service.get_grandeza_products(db)
+    clientes = await grandeza_service.get_clients(db, active_only=False)
+    nombres_producto = [
+        (p.get("name") or p.get("product_name") or "")
+        for p in productos
+    ]
+    nombres_cliente = [c.name for c in clientes if getattr(c, "name", None)]
+
+    # 2. Llamada al Gateway (puede lanzar 503 IA_NO_DISPONIBLE).
+    propuesta = await ai_service.extraer_pedido_ocr(
+        ai_schemas.OcrExtractOrderRequest(
+            imagen_base64=data.imagen_base64,
+            productos_catalogo=[n for n in nombres_producto if n],
+            clientes_catalogo=nombres_cliente,
+        )
+    )
+
+    # 3. Match de cliente en cascada (teléfono → nombre → fuzzy → manual).
+    cliente = await grandeza_service.resolver_cliente_ocr(
+        db, telefono=propuesta.cliente_telefono, nombre=propuesta.cliente_nombre
+    )
+
+    # 4. Match de productos contra el catálogo Grandeza.
+    items = await grandeza_service.resolver_productos_ocr(
+        db,
+        [
+            {"producto": it.producto, "cantidad": it.cantidad, "confianza": it.confianza}
+            for it in propuesta.items
+        ],
+    )
+
+    return schemas.GrandezaOcrExtractResponse(
+        ok=propuesta.ok,
+        texto_crudo=propuesta.texto_crudo,
+        lineas=propuesta.lineas,
+        confianza_ocr=propuesta.confianza_ocr,
+        cliente_id=cliente.get("client_id"),
+        cliente_nombre=cliente.get("client_name") or propuesta.cliente_nombre,
+        cliente_telefono=propuesta.cliente_telefono,
+        cliente_match=cliente.get("match"),
+        items=[
+            schemas.GrandezaOcrOrderItem(
+                producto=it["producto"],
+                producto_id=it["producto_id"],
+                cantidad=it["cantidad"],
+                confianza=it["confianza"],
+                requiere_revision=it["requiere_revision"],
+            )
+            for it in items
+        ],
+        confianza_llm=propuesta.confianza_llm,
+        notas=propuesta.notas,
+        motor_ocr=propuesta.motor_ocr,
+        motor_llm=propuesta.motor_llm,
+    )

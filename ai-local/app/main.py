@@ -1,12 +1,17 @@
 """Motor de IA Local — ERP R de Rico.
 
 Este servicio es el MOTOR REAL que el AI Gateway del ERP proxya.
-Vive en un contenedor separado (spec §6.1) y expone 4 endpoints:
+Vive en un contenedor separado (spec §6.1) y expone estos endpoints:
 
     GET  /status              -> diagnostico (el ERP lo consulta)
-    POST /vision/detect       -> conteo/identificacion de producto
+    POST /vision/detect       -> conteo/identificacion de producto (YOLO)
     POST /voice/transcribe    -> audio -> texto (Whisper)
     POST /voice/parse-intent  -> texto -> intencion JSON (LLM via Ollama)
+    POST /ocr/extract-order   -> captura WhatsApp -> pedido JSON (OCR + LLM)
+
+NOTA (Fase B, Ruta A): /ocr/extract-order es DISTINTO de /vision/detect.
+    /vision/detect      (YOLO)      -> "¿CUANTOS panes hay?"
+    /ocr/extract-order  (Tesseract) -> "¿QUE DICE el texto de la captura?"
 
 CONTRATO CRITICO (spec §5.2 — human-in-the-loop):
     Este motor PROPONE. Nunca registra stock. El campo `confirmado` NO existe
@@ -24,7 +29,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from . import schemas
-from .engines import vision, voice, nlu, training
+from .engines import vision, voice, nlu, training, ocr
 
 logger = logging.getLogger("rderico.ia.motor")
 logging.basicConfig(level=logging.INFO)
@@ -254,3 +259,100 @@ async def train(payload: schemas.TrainRequest) -> schemas.TrainStatusResponse:
         ) from exc
 
     return schemas.TrainStatusResponse(**resultado)
+
+
+# ---------------------------------------------------------------------------
+# Fase B (Ruta A) — OCR de capturas de WhatsApp -> pedido estructurado
+# ---------------------------------------------------------------------------
+@app.post("/ocr/extract-order", response_model=schemas.OcrExtractOrderResponse)
+async def extract_order(payload: schemas.OcrExtractOrderRequest) -> schemas.OcrExtractOrderResponse:
+    """Lee una captura de WhatsApp y PROPONE un pedido estructurado.
+
+    Pipeline: Tesseract (texto crudo) -> Ollama (renglones producto+cantidad).
+
+    CONTRATO (spec §5.2): este endpoint PROPONE. Nunca registra pedidos.
+    El operador confirma y edita en la UI del ERP antes de guardar.
+
+    Si el OCR no encuentra texto util -> 200 con ok=False (no es un error).
+    Si el LLM no responde -> 503 (el ERP degrada a captura manual).
+    """
+    # --- Paso 1: OCR (Tesseract) ---
+    try:
+        resultado_ocr = ocr.extraer_texto(payload.imagen_base64)
+    except RuntimeError as exc:
+        # pytesseract no instalado: es un problema de despliegue, no del cliente.
+        logger.error("OCR no disponible: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "OCR_NO_DISPONIBLE", "mensaje": str(exc)},
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error en OCR: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "MOTOR_OCR_ERROR", "mensaje": str(exc)},
+        ) from exc
+
+    texto = resultado_ocr.get("texto", "")
+    lineas = resultado_ocr.get("lineas", [])
+    confianza_ocr = float(resultado_ocr.get("confianza", 0.0))
+
+    # Sin texto util no tiene sentido llamar al LLM: se responde ok=False.
+    if not lineas:
+        return schemas.OcrExtractOrderResponse(
+            ok=False,
+            texto_crudo=texto,
+            lineas=[],
+            confianza_ocr=confianza_ocr,
+            notas="El OCR no encontro texto legible en la captura.",
+            motor_ocr=resultado_ocr.get("motor", "tesseract"),
+        )
+
+    # --- Paso 2: propuesta de cliente (del encabezado del chat) ---
+    candidato = ocr.extraer_candidato_cliente(lineas)
+
+    # --- Paso 3: LLM estructura los renglones del pedido ---
+    try:
+        parseado = await nlu.parsear_pedido(
+            texto_ocr=texto,
+            productos_catalogo=payload.productos_catalogo,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "MOTOR_NLU_TIMEOUT", "mensaje": str(exc)},
+        ) from exc
+    except (ConnectionError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "MOTOR_NLU_ERROR", "mensaje": str(exc)},
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error en parser de pedido: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"codigo": "MOTOR_NLU_ERROR", "mensaje": str(exc)},
+        ) from exc
+
+    items = [
+        schemas.OcrOrderItem(
+            producto=it["producto"],
+            cantidad=it["cantidad"],
+            confianza=it["confianza"],
+        )
+        for it in parseado.get("items", [])
+    ]
+
+    return schemas.OcrExtractOrderResponse(
+        ok=True,
+        texto_crudo=texto,
+        lineas=lineas,
+        confianza_ocr=confianza_ocr,
+        cliente_nombre=candidato.get("nombre"),
+        cliente_telefono=candidato.get("telefono"),
+        items=items,
+        confianza_llm=float(parseado.get("confianza", 0.0)),
+        notas=parseado.get("notas"),
+        motor_ocr=resultado_ocr.get("motor", "tesseract"),
+        motor_llm="ollama",
+    )

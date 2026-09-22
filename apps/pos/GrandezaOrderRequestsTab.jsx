@@ -55,6 +55,16 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
     const [dispatching, setDispatching] = useState(false);
     const [dispatchResult, setDispatchResult] = useState(null);
 
+    // ── OCR (Fase B, Ruta A) ──────────────────────────────────────────────
+    // La IA PROPONE; el operador CONFIRMA. Nunca se guarda sin revisión.
+    const [ocrLoading, setOcrLoading] = useState(false);
+    const [ocrPropuesta, setOcrPropuesta] = useState(null);   // respuesta del backend
+    const [ocrError, setOcrError] = useState(null);
+    const [ocrPreview, setOcrPreview] = useState(null);       // dataURL de la captura
+    const [ocrEdit, setOcrEdit] = useState(null);             // { cliente_id, items: [{producto_id, cantidad}] }
+    const [ocrSaving, setOcrSaving] = useState(false);
+    const fileInputRef = React.useRef(null);
+
     const notify = (text, type = 'success') => {
         if (onStatus) onStatus(text, type);
     };
@@ -245,6 +255,185 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
         }
     };
 
+    // ─── OCR: subir captura de WhatsApp (Fase B, Ruta A) ──────────────────────
+
+    /**
+     * Convierte un File a base64 (sin el prefijo `data:...;base64,`).
+     * El backend espera la imagen "pelada".
+     */
+    const fileABase64 = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const raw = String(reader.result || '');
+            const coma = raw.indexOf(',');
+            resolve(coma >= 0 ? raw.slice(coma + 1) : raw);
+        };
+        reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+        reader.readAsDataURL(file);
+    });
+
+    const handleOcrUpload = async (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        // Vista previa local (no se sube a ningún lado más que al motor).
+        const previewUrl = URL.createObjectURL(file);
+        setOcrPreview(previewUrl);
+        setOcrError(null);
+        setOcrPropuesta(null);
+        setOcrEdit(null);
+        setOcrLoading(true);
+
+        try {
+            const imagen_base64 = await fileABase64(file);
+
+            // Catálogos reales para que el ERP haga el match en cascada.
+            const productos_catalogo = (matrix?.products || []).map(p => p.product_name);
+            const clientes_catalogo = (matrix?.rows || []).map(r => r.client_name);
+
+            const res = await fetch(`${API_BASE}/grandeza/order-requests/ocr-extract`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    imagen_base64,
+                    productos_catalogo,
+                    clientes_catalogo,
+                }),
+            });
+
+            if (res.status === 503) {
+                const detalle = await res.json().catch(() => ({}));
+                setOcrError(
+                    detalle?.detail?.mensaje
+                    || 'El motor de IA no está disponible. Captura el pedido a mano.'
+                );
+                notify('Motor de IA no disponible (captura manual)', 'error');
+                return;
+            }
+
+            if (!res.ok) {
+                setOcrError('No se pudo leer la captura.');
+                notify('Error al procesar la captura', 'error');
+                return;
+            }
+
+            const data = await res.json();
+            setOcrPropuesta(data);
+
+            if (!data.ok) {
+                setOcrError(data.notas || 'El OCR no encontró texto legible en la captura.');
+                return;
+            }
+
+            // Pre-carga el editor con la propuesta (el operador la corrige).
+            setOcrEdit({
+                cliente_id: data.cliente_id || '',
+                items: (data.items || []).map(it => ({
+                    producto_id: it.producto_id || '',
+                    producto: it.producto,
+                    cantidad: Number(it.cantidad || 0),
+                    confianza: it.confianza,
+                    requiere_revision: !!it.requiere_revision,
+                })),
+            });
+
+            notify(
+                `Captura leída: ${(data.items || []).length} renglón(es) propuestos. Revisa y confirma.`
+            );
+        } catch (e) {
+            console.error(e);
+            setOcrError('Error de red al procesar la captura.');
+            notify('Error de red al procesar la captura', 'error');
+        } finally {
+            setOcrLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    const cancelarOcr = () => {
+        setOcrPropuesta(null);
+        setOcrEdit(null);
+        setOcrError(null);
+        if (ocrPreview) URL.revokeObjectURL(ocrPreview);
+        setOcrPreview(null);
+    };
+
+    const setOcrItemField = (index, field, value) => {
+        setOcrEdit(prev => {
+            if (!prev) return prev;
+            const items = prev.items.map((it, i) => (
+                i === index ? { ...it, [field]: value } : it
+            ));
+            return { ...prev, items };
+        });
+    };
+
+    const quitarOcrItem = (index) => {
+        setOcrEdit(prev => {
+            if (!prev) return prev;
+            return { ...prev, items: prev.items.filter((_, i) => i !== index) };
+        });
+    };
+
+    const agregarOcrItem = () => {
+        setOcrEdit(prev => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                items: [...prev.items, { producto_id: '', producto: '', cantidad: 0, confianza: 0, requiere_revision: true }],
+            };
+        });
+    };
+
+    /**
+     * Confirma la propuesta OCR y la guarda como pedido real (UPSERT).
+     * Aquí es donde el humano cierra el ciclo: nada se guardó antes.
+     */
+    const confirmarOcr = async () => {
+        if (!ocrEdit || !matrix) return;
+        if (!ocrEdit.cliente_id) {
+            notify('Selecciona el cliente antes de confirmar', 'error');
+            return;
+        }
+        const items = (ocrEdit.items || [])
+            .filter(it => it.producto_id && Number(it.cantidad) > 0)
+            .map(it => ({ product_id: Number(it.producto_id), quantity: Number(it.cantidad) }));
+
+        if (items.length === 0) {
+            notify('Agrega al menos un producto con cantidad', 'error');
+            return;
+        }
+
+        setOcrSaving(true);
+        try {
+            const payload = {
+                client_id: Number(ocrEdit.cliente_id),
+                delivery_date: matrix.delivery_date,
+                selector_used: matrix.selector || 'TODOS',
+                source: 'OCR',
+                status: 'CONFIRMADO',
+                items,
+            };
+            const res = await fetch(`${API_BASE}/grandeza/order-requests`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (res.ok) {
+                notify('Pedido OCR confirmado y guardado');
+                cancelarOcr();
+                await fetchMatrix(deliveryDate);
+            } else {
+                notify('No se pudo guardar el pedido OCR', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            notify('Error de red al guardar el pedido OCR', 'error');
+        } finally {
+            setOcrSaving(false);
+        }
+    };
+
     // ─── Render ───────────────────────────────────────────────────────────────
 
     return (
@@ -359,6 +548,21 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
                         >
                             ⟳ Recargar
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleOcrUpload}
+                            className="hidden"
+                        />
+                        <button
+                            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                            disabled={ocrLoading}
+                            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                            title="Sube una captura del chat de WhatsApp y la IA propondrá el pedido"
+                        >
+                            {ocrLoading ? '🔍 Leyendo…' : '📷 Subir captura'}
                         </button>
                         <button
                             onClick={dispatchToProduction}
@@ -496,6 +700,200 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     </div>
                 )}
             </div>
+
+            {/* ── Panel de confirmación OCR (Fase B, Ruta A) ── */}
+            {(ocrLoading || ocrError || ocrPropuesta) && (
+                <div className="bg-purple-950/30 border border-purple-500/30 rounded-3xl p-6 backdrop-blur-sm">
+                    <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+                        <h2 className="text-lg font-black uppercase tracking-widest text-purple-300">
+                            📷 Lectura de Captura (IA)
+                        </h2>
+                        <button
+                            onClick={cancelarOcr}
+                            className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                        >
+                            ✕ Descartar
+                        </button>
+                    </div>
+
+                    <p className="text-[11px] text-purple-300/80 mb-4 leading-relaxed">
+                        La IA <strong>propone</strong>; tú <strong>confirmas</strong>. Revisa el cliente y las
+                        cantidades antes de guardar. Nada se registra hasta que presiones
+                        «Confirmar pedido».
+                    </p>
+
+                    {ocrLoading && (
+                        <div className="text-center py-10 text-purple-300 text-sm font-bold uppercase tracking-widest animate-pulse">
+                            🔍 Leyendo la captura con OCR + IA…
+                        </div>
+                    )}
+
+                    {!ocrLoading && ocrError && (
+                        <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30">
+                            <p className="text-xs font-black uppercase tracking-widest text-red-300 mb-1">
+                                No se pudo interpretar
+                            </p>
+                            <p className="text-sm text-gray-300">{ocrError}</p>
+                            <p className="text-xs text-gray-500 mt-2">
+                                Puedes capturar el pedido a mano en la matriz de arriba.
+                            </p>
+                        </div>
+                    )}
+
+                    {!ocrLoading && ocrPropuesta && ocrEdit && (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Vista previa + metadatos */}
+                            <div className="lg:col-span-1 space-y-4">
+                                {ocrPreview && (
+                                    <img
+                                        src={ocrPreview}
+                                        alt="Captura subida"
+                                        className="w-full rounded-2xl border border-white/10 max-h-72 object-contain bg-black/40"
+                                    />
+                                )}
+                                <div className="grid grid-cols-2 gap-2 text-[10px] font-black uppercase tracking-widest">
+                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10">
+                                        <div className="text-gray-500">Confianza OCR</div>
+                                        <div className="text-purple-300 text-sm">
+                                            {Math.round((ocrPropuesta.confianza_ocr || 0) * 100)}%
+                                        </div>
+                                    </div>
+                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10">
+                                        <div className="text-gray-500">Confianza IA</div>
+                                        <div className="text-purple-300 text-sm">
+                                            {Math.round((ocrPropuesta.confianza_llm || 0) * 100)}%
+                                        </div>
+                                    </div>
+                                </div>
+                                {ocrPropuesta.cliente_match && (
+                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest">
+                                        <div className="text-gray-500">Match de cliente</div>
+                                        <div className="text-purple-300">{ocrPropuesta.cliente_match}</div>
+                                    </div>
+                                )}
+                                {ocrPropuesta.notas && (
+                                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-1">
+                                            Notas de la IA
+                                        </div>
+                                        <p className="text-xs text-gray-300">{ocrPropuesta.notas}</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Editor de la propuesta */}
+                            <div className="lg:col-span-2 space-y-4">
+                                <div>
+                                    <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                                        Cliente
+                                    </label>
+                                    <select
+                                        value={ocrEdit.cliente_id || ''}
+                                        onChange={(e) => setOcrEdit({ ...ocrEdit, cliente_id: e.target.value })}
+                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-purple-400 outline-none"
+                                    >
+                                        <option value="" className="bg-gray-900">— Selecciona un cliente —</option>
+                                        {(matrix?.rows || []).map(r => (
+                                            <option key={r.client_id} value={r.client_id} className="bg-gray-900">
+                                                {r.client_name}{r.phone ? ` · ${r.phone}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {ocrPropuesta.cliente_nombre && !ocrEdit.cliente_id && (
+                                        <p className="text-[11px] text-amber-400 mt-1">
+                                            La IA propuso: «{ocrPropuesta.cliente_nombre}»
+                                            {ocrPropuesta.cliente_telefono ? ` (${ocrPropuesta.cliente_telefono})` : ''}
+                                            {' '}— no se encontró en el directorio. Selecciónalo manualmente.
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                                            Renglones propuestos
+                                        </label>
+                                        <button
+                                            onClick={agregarOcrItem}
+                                            className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                                        >
+                                            + Agregar renglón
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {ocrEdit.items.length === 0 && (
+                                            <p className="text-xs text-gray-500 py-3 text-center border border-dashed border-white/10 rounded-xl">
+                                                Sin renglones. Agrega uno manualmente.
+                                            </p>
+                                        )}
+                                        {ocrEdit.items.map((it, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={`flex items-center gap-2 p-2 rounded-xl border ${
+                                                    it.requiere_revision
+                                                        ? 'bg-amber-500/10 border-amber-500/40'
+                                                        : 'bg-white/5 border-white/10'
+                                                }`}
+                                            >
+                                                <select
+                                                    value={it.producto_id || ''}
+                                                    onChange={(e) => setOcrItemField(idx, 'producto_id', e.target.value)}
+                                                    className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white focus:border-purple-400 outline-none"
+                                                >
+                                                    <option value="" className="bg-gray-900">— Producto —</option>
+                                                    {(matrix?.products || []).map(p => (
+                                                        <option key={p.product_id} value={p.product_id} className="bg-gray-900">
+                                                            {p.product_name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={it.cantidad}
+                                                    onChange={(e) => setOcrItemField(idx, 'cantidad', e.target.value)}
+                                                    className="w-20 bg-black/30 border border-white/10 rounded-lg px-2 py-2 text-center text-xs font-bold text-white focus:border-purple-400 outline-none"
+                                                />
+                                                {it.requiere_revision && (
+                                                    <span
+                                                        className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-black uppercase"
+                                                        title={`Leído como: ${it.producto || '(vacío)'}`}
+                                                    >
+                                                        Revisar
+                                                    </span>
+                                                )}
+                                                <button
+                                                    onClick={() => quitarOcrItem(idx)}
+                                                    className="px-2.5 py-2 bg-red-600/70 hover:bg-red-500 text-white rounded-lg text-[10px] font-black transition-all"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <button
+                                        onClick={cancelarOcr}
+                                        className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={confirmarOcr}
+                                        disabled={ocrSaving}
+                                        className="px-6 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                                    >
+                                        {ocrSaving ? 'Guardando…' : '✓ Confirmar pedido'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

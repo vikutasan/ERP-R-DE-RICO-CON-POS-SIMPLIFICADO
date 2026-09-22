@@ -32,6 +32,11 @@ opencv-python-headless==4.10.0.84
 numpy==2.1.3
 pillow==11.0.0
 
+# --- OCR: lectura de texto en capturas (Fase B, Ruta A) ---
+# pytesseract es un wrapper del binario tesseract-ocr (instalado en el Dockerfile).
+# Se usa para leer el encabezado (nombre/telefono) y el cuerpo del pedido.
+pytesseract==0.3.13
+
 # --- LLM (NLU) ---
 # El LLM NO se carga en este contenedor: corre en Ollama (contenedor aparte).
 # Aqui solo se le habla por HTTP (httpx). Esto mantiene este contenedor ligero.

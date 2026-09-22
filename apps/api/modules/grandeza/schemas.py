@@ -466,3 +466,38 @@ class GrandezaOrderDispatchResponse(BaseModel):
     orders_updated: int = 0
     total_units: float = 0
     detail: List[dict] = []
+
+
+# ─── Fase B (Ruta A): OCR de capturas de WhatsApp ─────────────────────────────
+# El operador sube una captura del chat; la IA PROPONE cliente y renglones;
+# el ERP los resuelve contra su catálogo real. Nada se guarda sin confirmar.
+
+class GrandezaOcrExtractRequest(BaseModel):
+    """Captura de pantalla de WhatsApp a interpretar (base64)."""
+    imagen_base64: str
+
+
+class GrandezaOcrOrderItem(BaseModel):
+    """Un renglón propuesto, ya resuelto contra el catálogo Grandeza."""
+    producto: str = ""
+    producto_id: Optional[int] = None
+    cantidad: float = 0
+    confianza: float = 0.0
+    requiere_revision: bool = False
+
+
+class GrandezaOcrExtractResponse(BaseModel):
+    """Propuesta de pedido leída de una captura (human-in-the-loop)."""
+    ok: bool = False
+    texto_crudo: str = ""
+    lineas: List[str] = []
+    confianza_ocr: float = 0.0
+    cliente_id: Optional[int] = None
+    cliente_nombre: Optional[str] = None
+    cliente_telefono: Optional[str] = None
+    cliente_match: Optional[str] = None   # telefono | nombre | fuzzy | manual
+    items: List[GrandezaOcrOrderItem] = []
+    confianza_llm: float = 0.0
+    notas: Optional[str] = None
+    motor_ocr: Optional[str] = None
+    motor_llm: Optional[str] = None

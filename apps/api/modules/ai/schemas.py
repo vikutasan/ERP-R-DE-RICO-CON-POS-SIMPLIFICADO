@@ -148,3 +148,63 @@ class DatasetSummaryResponse(BaseModel):
     skus: dict = Field(default_factory=dict)
     total_imagenes: int = 0
     total_etiquetas: int = 0
+
+
+# ---------------------------------------------------------------------------
+# OCR — lectura de capturas de WhatsApp (Fase B, Ruta A)
+# ---------------------------------------------------------------------------
+# NOTA: esto es DISTINTO de VisionDetectRequest. Vision (YOLO) CUENTA objetos;
+# OCR (Tesseract) LEE texto. Aqui el operador sube una captura del chat de
+# WhatsApp y la IA propone el cliente + los renglones del pedido.
+# ---------------------------------------------------------------------------
+class OcrExtractOrderRequest(BaseModel):
+    """Captura de WhatsApp a interpretar. La imagen llega en base64."""
+
+    imagen_base64: str = Field(..., description="Captura de pantalla en base64 (sin prefijo data:).")
+    productos_catalogo: Optional[List[str]] = Field(
+        None, description="Nombres de producto del catalogo Grandeza (para el match)."
+    )
+    clientes_catalogo: Optional[List[str]] = Field(
+        None, description="Nombres de cliente del directorio Grandeza (para el match)."
+    )
+
+
+class OcrOrderItem(BaseModel):
+    """Un renglon propuesto del pedido. NUNCA se registra sin confirmacion."""
+
+    producto: str = ""
+    producto_id: Optional[int] = Field(
+        None, description="ID de producto resuelto por el ERP (None si no hubo match)."
+    )
+    cantidad: float = 0
+    confianza: float = Field(0.0, ge=0.0, le=1.0)
+    requiere_revision: bool = Field(
+        False, description="True si el match fue debil (UI resalta en ambar)."
+    )
+
+
+class OcrExtractOrderResponse(BaseModel):
+    """Propuesta de pedido extraida de una captura.
+
+    `items` y `cliente_*` son PROPUESTAS, no verdades. El operador confirma
+    y edita en la UI antes de guardar (human-in-the-loop).
+    """
+
+    ok: bool = False
+    texto_crudo: str = ""
+    lineas: List[str] = Field(default_factory=list)
+    confianza_ocr: float = Field(0.0, ge=0.0, le=1.0)
+    cliente_id: Optional[int] = Field(
+        None, description="ID de cliente resuelto por el ERP (None si no hubo match)."
+    )
+    cliente_nombre: Optional[str] = None
+    cliente_telefono: Optional[str] = None
+    cliente_match: Optional[str] = Field(
+        None, description="Como se resolvio el cliente: telefono | nombre | fuzzy | manual."
+    )
+    items: List[OcrOrderItem] = Field(default_factory=list)
+    confianza_llm: float = Field(0.0, ge=0.0, le=1.0)
+    notas: Optional[str] = None
+    motor_ocr: Optional[str] = None
+    motor_llm: Optional[str] = None
+    requiere_confirmacion: bool = True
