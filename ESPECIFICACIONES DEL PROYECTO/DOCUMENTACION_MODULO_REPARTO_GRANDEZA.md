@@ -1258,3 +1258,85 @@ Salida verificada:
 - **§7.7** — Migración con `ADD COLUMN IF NOT EXISTS` (no se confió en `create_all`).
 - **§7.9** — El nuevo endpoint deriva de `CONFIG.API_BASE_URL` como el resto.
 - **Sin cambios de lógica de negocio:** solo se añadió un criterio de orden.
+
+---
+
+## 22. CORRECCIÓN Y ERGONOMÍA DE LA MATRIZ (v7.6.6)
+
+### 22.1 Bug corregido: `TypeError` al abrir «Pedido Manual»
+
+**Síntoma reportado por el usuario:**
+
+```
+TypeError: Cannot read properties of null (reading 'cliente_nombre')
+    at GrandezaOrderRequestsTab
+```
+
+**Causa raíz.** En [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:907)
+el bloque del editor se renderiza en **ambos** modos (OCR y Manual), pero la línea
+accedía a `ocrPropuesta.cliente_nombre` **sin comprobar que `ocrPropuesta` no fuera
+`null`**. El modo Manual ([`abrirManual()`](apps/pos/GrandezaOrderRequestsTab.jsx:394))
+hace `setOcrPropuesta(null)` a propósito (no hay propuesta de IA), por lo que al
+renderizar el editor se intentaba leer `.cliente_nombre` de `null`.
+
+El resto de accesos a `ocrPropuesta.*` (líneas 819–878) sí estaban dentro de un
+bloque guardado con `{ocrPropuesta && (...)}`; solo esa línea quedaba fuera.
+
+**Corrección** (una línea, sin alterar lógica):
+
+```jsx
+{ocrPropuesta && ocrPropuesta.cliente_nombre && !ocrEdit.cliente_id && (
+```
+
+**Commit:** `8a41cae` — `fix(grandeza): evitar TypeError al abrir Pedido Manual (ocrPropuesta null)`.
+
+### 22.2 Motivo de la mejora ergonómica
+
+El usuario planteó dos enfoques para no perder la referencia de **qué producto**
+suma cada columna de la fila de totales:
+
+1. Repetir el nombre del producto sobre su total en la fila de totales.
+2. **Fijar la fila de etiquetas de producto** y disponer de **barra de
+   desplazamiento lateral** para saber qué producto se edita.
+
+El usuario indicó que **prefiere la segunda opción**. Se implementó la segunda y,
+además, se incorporó la primera como refuerzo (coste mínimo, beneficio alto).
+
+### 22.3 Cambios aplicados
+
+| Archivo | Cambio |
+|---|---|
+| [`index.css`](index.css:12) | `.custom-scrollbar` ahora define `height: 10px` (barra **horizontal** visible), track oscuro y thumb ámbar más contrastado; se añade `scrollbar-width: thin` + `scrollbar-color` para Firefox |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:648) | Contenedor de la matriz pasa a `overflow-auto custom-scrollbar max-h-[70vh]` (scroll vertical **y** horizontal, con altura acotada para que la barra horizontal quede siempre alcanzable) |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:651) | `<thead>` con `sticky top-0 z-20` y fondo sólido `bg-[#1a1410]` en cada celda → **el nombre del producto permanece visible** al desplazar la lista de clientes |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:730) | `<tfoot>` con `sticky bottom-0 z-20` → **la fila de totales permanece visible** al fondo |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:735) | Cada celda de total muestra el **nombre del producto** (pequeño, ámbar tenue) **sobre** la cantidad total |
+| Columna «Cliente» | Se mantiene `sticky left-0` con `z-30` (por encima del encabezado y del pie) |
+
+### 22.4 Detalle técnico del apilado de capas (`z-index`)
+
+Para que las tres zonas fijas convivan sin solaparse mal:
+
+- **Columna «Cliente»** → `sticky left-0` + `z-30` (la más alta: siempre visible).
+- **Encabezado de productos** → `sticky top-0` + `z-20`.
+- **Fila de totales** → `sticky bottom-0` + `z-20`.
+- Todas las celdas fijas usan **fondo sólido** `bg-[#1a1410]` (no translúcido) para
+  que el contenido que pasa por debajo no se transparente.
+
+### 22.5 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **21.93 s**.
+- **Backend:** **sin cambios** — `matrix.totals` ya incluía `product_name`
+  ([`service.py`](apps/api/modules/grandeza/service.py:1315)) y el esquema ya lo
+  declaraba ([`schemas.py`](apps/api/modules/grandeza/schemas.py:440)).
+- **Commit:** `bd1bc30` — `feat(grandeza): ergonomia matriz - encabezado y totales fijos, scrollbar horizontal visible y nombre de producto sobre el total (v7.6.6)`.
+- **Diff:** 2 archivos, 42 inserciones, 17 eliminaciones.
+
+### 22.6 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
+- **§7.9** — No se modificaron URLs ni endpoints.
+- **Sin cambios de lógica de negocio ni de backend:** el diff es exclusivamente de
+  presentación (CSS + clases de layout) y una guarda de nulidad en el render.
