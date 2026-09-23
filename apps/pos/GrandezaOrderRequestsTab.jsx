@@ -646,20 +646,22 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 )}
 
                 {!loading && matrix && matrix.rows.length > 0 && (
-                    /* v7.6.7 (Ergonomía): SOLO el encabezado queda fijo.
+                    /* v7.6.8 (Ergonomía): SOLO la parte de ARRIBA queda fija.
                        - El contenedor tiene scroll VERTICAL (barra a la derecha)
                          y HORIZONTAL (barra abajo), con altura acotada
                          (`max-h-[70vh]`) para que ambas barras sean alcanzables.
                        - El `<thead>` es `sticky top-0`: la fila Cliente / NUEZ /
                          HIGO / PASAS / ESPOLVOREADO / MINIS / Total / Acciones
                          NUNCA se pierde de vista al desplazar los clientes.
-                       - El `<tfoot>` (totales) ya NO es fijo: se desplaza con el
-                         cuerpo, tal como pidió el usuario. */
+                       - La columna «Cliente» YA NO es fija (`sticky left-0`
+                         retirado): se desplaza con el resto de columnas.
+                       - El `<tfoot>` (totales) tampoco es fijo: se desplaza con
+                         el cuerpo. */
                     <div className="overflow-auto custom-scrollbar max-h-[70vh] rounded-2xl border border-amber-500/20">
                         <table className="w-full text-sm border-collapse">
                             <thead className="sticky top-0 z-20">
                                 <tr className="border-b-2 border-amber-500/40 bg-[#1a1410]">
-                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-300 sticky left-0 bg-[#1a1410] z-30">
+                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-300 bg-[#1a1410]">
                                         Cliente
                                     </th>
                                     {matrix.products.map(p => (
@@ -678,7 +680,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             <tbody>
                                 {matrix.rows.map(row => (
                                     <tr key={row.client_id} className="border-b border-white/10 hover:bg-amber-500/10">
-                                        <td className="px-3 py-2 sticky left-0 bg-[#1a1410] z-10">
+                                        <td className="px-3 py-2">
                                             <div className="font-bold text-white text-xs">{row.client_name}</div>
                                             <div className="flex items-center gap-2 mt-0.5">
                                                 {row.phone && <span className="text-[10px] text-gray-300">{row.phone}</span>}
@@ -738,7 +740,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                 producto suma cada columna. */}
                             <tfoot>
                                 <tr className="border-t-2 border-amber-500/40 bg-[#1a1410]">
-                                    <td className="px-3 py-3 sticky left-0 bg-[#1a1410] z-30 text-[10px] font-black uppercase tracking-widest text-amber-400">
+                                    <td className="px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-400">
                                         TOTAL POR PRODUCTO
                                     </td>
                                     {matrix.totals.map(t => (
