@@ -646,12 +646,15 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 )}
 
                 {!loading && matrix && matrix.rows.length > 0 && (
-                    /* v7.6.6 (Ergonomía): contenedor con scroll VERTICAL y HORIZONTAL.
-                       - `max-h-[70vh]` acota la altura para que la barra horizontal
-                         quede siempre alcanzable sin bajar hasta el final.
-                       - El encabezado de productos es `sticky top-0` (ver <thead>),
-                         así el nombre del producto permanece visible mientras se
-                         desplaza la lista de clientes hacia abajo. */
+                    /* v7.6.7 (Ergonomía): SOLO el encabezado queda fijo.
+                       - El contenedor tiene scroll VERTICAL (barra a la derecha)
+                         y HORIZONTAL (barra abajo), con altura acotada
+                         (`max-h-[70vh]`) para que ambas barras sean alcanzables.
+                       - El `<thead>` es `sticky top-0`: la fila Cliente / NUEZ /
+                         HIGO / PASAS / ESPOLVOREADO / MINIS / Total / Acciones
+                         NUNCA se pierde de vista al desplazar los clientes.
+                       - El `<tfoot>` (totales) ya NO es fijo: se desplaza con el
+                         cuerpo, tal como pidió el usuario. */
                     <div className="overflow-auto custom-scrollbar max-h-[70vh] rounded-2xl border border-amber-500/20">
                         <table className="w-full text-sm border-collapse">
                             <thead className="sticky top-0 z-20">
@@ -727,11 +730,13 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     </tr>
                                 ))}
                             </tbody>
-                            {/* v7.6.6 (Ergonomía): fila de totales FIJA al fondo
-                                (`sticky bottom-0`) y con el NOMBRE del producto
-                                sobre su total, para no perder la referencia de
-                                qué producto suma cada columna al desplazarse. */}
-                            <tfoot className="sticky bottom-0 z-20">
+                            {/* v7.6.7 (Ergonomía): la fila de totales YA NO es
+                                fija. El usuario pidió que SOLO el encabezado
+                                quede fijo; los totales se desplazan con el
+                                cuerpo. Se conserva el NOMBRE del producto sobre
+                                su total para no perder la referencia de qué
+                                producto suma cada columna. */}
+                            <tfoot>
                                 <tr className="border-t-2 border-amber-500/40 bg-[#1a1410]">
                                     <td className="px-3 py-3 sticky left-0 bg-[#1a1410] z-30 text-[10px] font-black uppercase tracking-widest text-amber-400">
                                         TOTAL POR PRODUCTO

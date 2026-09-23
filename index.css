@@ -11,10 +11,10 @@
 
 /* Custom Scrollbar for Premium Feel */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
-  /* v7.6.6 (Ergonomía): barra HORIZONTAL visible para la Matriz de Pedidos.
-     Sin `height` la barra lateral no se dibuja y el usuario no sabe que
-     puede desplazarse para ver más columnas de producto. */
+  /* v7.6.7 (Ergonomía): barra VERTICAL visible (derecha) para la Matriz de
+     Pedidos. Con 4px era casi invisible; 10px la hace claramente agarrable. */
+  width: 10px;
+  /* Barra HORIZONTAL visible (abajo) para desplazarse entre columnas. */
   height: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
