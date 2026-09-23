@@ -483,7 +483,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
         <div className="space-y-6 animate-[fade-in_0.3s_ease-in]">
 
             {/* ── Configuración ── */}
-            <div className="bg-black/40 border border-white/10 rounded-3xl p-6 backdrop-blur-sm">
+            <div className="bg-[#0d0b09] border-2 border-amber-500/30 rounded-3xl p-6 shadow-2xl">
                 <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
                     <h2 className="text-lg font-black uppercase tracking-widest text-amber-400">
                         ⚙️ Configuración de Pedidos
@@ -512,7 +512,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         <select
                             value={config.deadline_day || ''}
                             onChange={(e) => setConfig({ ...config, deadline_day: e.target.value })}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                            className="w-full bg-black/50 border-2 border-white/25 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                         >
                             {DAYS.map(d => <option key={d} value={d} className="bg-gray-900">{d}</option>)}
                         </select>
@@ -526,7 +526,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             type="time"
                             value={config.deadline_time || ''}
                             onChange={(e) => setConfig({ ...config, deadline_time: e.target.value })}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                            className="w-full bg-black/50 border-2 border-white/25 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                         />
                     </div>
 
@@ -537,7 +537,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         <select
                             value={config.delivery_day || ''}
                             onChange={(e) => setConfig({ ...config, delivery_day: e.target.value })}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                            className="w-full bg-black/50 border-2 border-white/25 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                         >
                             {DAYS.map(d => <option key={d} value={d} className="bg-gray-900">{d}</option>)}
                         </select>
@@ -550,7 +550,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         <select
                             value={config.selector || 'TODOS'}
                             onChange={(e) => setConfig({ ...config, selector: e.target.value })}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                            className="w-full bg-black/50 border-2 border-white/25 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                         >
                             {SELECTORES.map(s => <option key={s.id} value={s.id} className="bg-gray-900">{s.label}</option>)}
                         </select>
@@ -587,7 +587,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             type="date"
                             value={deliveryDate}
                             onChange={(e) => setDeliveryDate(e.target.value)}
-                            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                            className="bg-black/50 border-2 border-white/25 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:border-amber-400 outline-none"
                         />
                         <button
                             onClick={() => fetchMatrix(deliveryDate)}
@@ -767,7 +767,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         </h2>
                         <button
                             onClick={cancelarOcr}
-                            className="px-4 py-2 bg-white/15 border-2 border-white/40 rounded-xl text-xs font-black uppercase tracking-widest text-white hover:bg-white/25 transition-all"
+                            className="px-4 py-2 bg-black/60 border-2 border-white/50 rounded-xl text-xs font-black uppercase tracking-widest text-white hover:bg-white/20 transition-all"
                         >
                             ✕ Descartar
                         </button>
@@ -850,13 +850,13 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     />
                                 )}
                                 <div className="grid grid-cols-2 gap-2 text-[10px] font-black uppercase tracking-widest">
-                                    <div className="p-2 rounded-lg bg-white/15 border-2 border-white/30">
+                                    <div className="p-2 rounded-lg bg-black/60 border-2 border-white/40">
                                         <div className="text-white">Confianza OCR</div>
                                         <div className="text-amber-300 text-sm">
                                             {Math.round((ocrPropuesta.confianza_ocr || 0) * 100)}%
                                         </div>
                                     </div>
-                                    <div className="p-2 rounded-lg bg-white/15 border-2 border-white/30">
+                                    <div className="p-2 rounded-lg bg-black/60 border-2 border-white/40">
                                         <div className="text-white">Confianza IA</div>
                                         <div className="text-amber-300 text-sm">
                                             {Math.round((ocrPropuesta.confianza_llm || 0) * 100)}%
@@ -864,7 +864,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     </div>
                                 </div>
                                 {ocrPropuesta.cliente_match && (
-                                    <div className="p-2 rounded-lg bg-white/15 border-2 border-white/30 text-[10px] font-black uppercase tracking-widest">
+                                    <div className="p-2 rounded-lg bg-black/60 border-2 border-white/40 text-[10px] font-black uppercase tracking-widest">
                                         <div className="text-white">Match de cliente</div>
                                         <div className="text-amber-300">{ocrPropuesta.cliente_match}</div>
                                     </div>
@@ -889,7 +889,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     <select
                                         value={ocrEdit.cliente_id || ''}
                                         onChange={(e) => setOcrEdit({ ...ocrEdit, cliente_id: e.target.value })}
-                                        className="w-full bg-white/10 border-2 border-white/30 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
+                                        className="w-full bg-black/60 border-2 border-white/40 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                                     >
                                         <option value="" className="bg-gray-900">— Selecciona un cliente —</option>
                                         {clientesDirectorio.map(c => (
@@ -920,7 +920,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                         </label>
                                         <button
                                             onClick={agregarOcrItem}
-                                            className="px-3 py-1.5 bg-white/15 border-2 border-white/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/25 transition-all"
+                                            className="px-3 py-1.5 bg-black/60 border-2 border-white/50 rounded-lg text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/20 transition-all"
                                         >
                                             + Agregar renglón
                                         </button>
@@ -928,7 +928,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
 
                                     <div className="space-y-2">
                                         {ocrEdit.items.length === 0 && (
-                                            <p className="text-xs font-bold text-white py-3 text-center border-2 border-dashed border-white/40 rounded-xl">
+                                            <p className="text-xs font-bold text-white py-3 text-center border-2 border-dashed border-white/50 rounded-xl bg-black/40">
                                                 Sin renglones. Agrega uno manualmente.
                                             </p>
                                         )}
@@ -938,7 +938,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                                 className={`flex items-center gap-2 p-2 rounded-xl border-2 ${
                                                     it.requiere_revision
                                                         ? 'bg-amber-950 border-amber-400'
-                                                        : 'bg-white/15 border-white/30'
+                                                        : 'bg-black/60 border-white/40'
                                                 }`}
                                             >
                                                 <select
@@ -982,7 +982,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                 <div className="flex items-center justify-end gap-3 pt-2">
                                     <button
                                         onClick={cancelarOcr}
-                                        className="px-5 py-2.5 bg-white/15 border-2 border-white/40 rounded-xl text-xs font-black uppercase tracking-widest text-white hover:bg-white/25 transition-all"
+                                        className="px-5 py-2.5 bg-black/60 border-2 border-white/50 rounded-xl text-xs font-black uppercase tracking-widest text-white hover:bg-white/20 transition-all"
                                     >
                                         Cancelar
                                     </button>
