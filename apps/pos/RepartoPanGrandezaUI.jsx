@@ -129,13 +129,16 @@ export const RepartoPanGrandezaUI = ({ onBack, userPermissions = {}, userRole = 
     }
 
     // Landing Page — 3 botones
-    // NOTA: el fondo de madera lo pinta el shell (ExperimentCenterUI) en una capa
-    // `fixed inset-0` detrás del contenido. Aquí NO se pinta fondo ni se crea un
-    // contenedor de scroll propio: el scroll lo maneja el <main> del shell. Esto
-    // elimina el "velo" translúcido que aparecía al hacer scroll en móvil.
     return (
         <div
-            className="min-h-full flex flex-col text-white relative"
+            className="h-full flex flex-col text-white overflow-y-auto overflow-x-hidden relative"
+            style={{
+                backgroundColor: '#3a2e1e',
+                backgroundImage: 'url("/assets/wood_bg.jpg")',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundAttachment: 'fixed'
+            }}
         >
             {/* Header */}
             <div className="relative z-20 pt-4 pb-2 px-4 md:pt-8 md:px-10 bg-black border-b border-white/10 shadow-2xl">

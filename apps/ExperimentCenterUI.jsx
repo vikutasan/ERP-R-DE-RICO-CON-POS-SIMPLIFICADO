@@ -356,34 +356,17 @@ export const ExperimentCenterUI = () => {
                 </div>
             </aside>
 
-            {/* Fondo de madera — capa FIJA (no scrollea) para evitar el "velo"
-                translúcido que aparecía al hacer scroll en móvil. La textura se
-                pinta en un elemento `fixed inset-0` detrás del contenido, de modo
-                que nunca se desplaza con el scroll del <main>. */}
-            {activeModule !== 'settings' && (
-                <div
-                    aria-hidden="true"
-                    className="fixed inset-0 pointer-events-none"
-                    style={{
-                        backgroundImage: 'url("/assets/wood_bg.jpg")',
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                        zIndex: 0
-                    }}
-                />
-            )}
-
             {/* Area de Experiencia */}
-            <main
-                className="flex-1 overflow-y-auto relative custom-scrollbar transition-all duration-700"
-                style={{
-                    backgroundImage: activeModule === 'settings'
+            <main 
+                className="flex-1 overflow-y-auto relative custom-scrollbar bg-cover bg-center transition-all duration-700" 
+                style={{ 
+                    backgroundImage: activeModule === 'settings' 
                         ? `radial-gradient(circle at 50% 50%, rgba(249, 115, 22, 0.03), transparent 70%),
                            linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
                            linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px)`
-                        : 'none',
+                        : 'url("/assets/wood_bg.jpg")',
                     backgroundColor: activeModule === 'settings' ? '#050505' : 'transparent',
-                    backgroundSize: activeModule === 'settings' ? '100% 100%, 50px 50px, 50px 50px' : 'auto'
+                    backgroundSize: activeModule === 'settings' ? '100% 100%, 50px 50px, 50px 50px' : 'cover'
                 }}
             >
 
