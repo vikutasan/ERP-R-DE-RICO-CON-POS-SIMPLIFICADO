@@ -701,22 +701,25 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 )}
             </div>
 
-            {/* ── Panel de confirmación OCR (Fase B, Ruta A) ── */}
+            {/* ── Panel de confirmación OCR (Fase B, Ruta A) ──
+                Fondo SÓLIDO (no translúcido) para que el texto sea legible
+                sobre el fondo de madera. Antes usaba bg-purple-950/30 +
+                backdrop-blur, lo que dejaba ver la madera y dificultaba la lectura. */}
             {(ocrLoading || ocrError || ocrPropuesta) && (
-                <div className="bg-purple-950/30 border border-purple-500/30 rounded-3xl p-6 backdrop-blur-sm">
+                <div className="bg-[#1a1024] border-2 border-purple-500/50 rounded-3xl p-6 shadow-2xl shadow-purple-900/40">
                     <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-                        <h2 className="text-lg font-black uppercase tracking-widest text-purple-300">
+                        <h2 className="text-lg font-black uppercase tracking-widest text-purple-200">
                             📷 Lectura de Captura (IA)
                         </h2>
                         <button
                             onClick={cancelarOcr}
-                            className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                            className="px-4 py-2 bg-white/10 border border-white/20 rounded-xl text-xs font-black uppercase tracking-widest text-gray-200 hover:text-white hover:bg-white/20 transition-all"
                         >
                             ✕ Descartar
                         </button>
                     </div>
 
-                    <p className="text-[11px] text-purple-300/80 mb-4 leading-relaxed">
+                    <p className="text-[11px] text-purple-100 mb-4 leading-relaxed">
                         La IA <strong>propone</strong>; tú <strong>confirmas</strong>. Revisa el cliente y las
                         cantidades antes de guardar. Nada se registra hasta que presiones
                         «Confirmar pedido».
@@ -729,12 +732,12 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     )}
 
                     {!ocrLoading && ocrError && (
-                        <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30">
+                        <div className="p-4 rounded-2xl bg-red-950/60 border border-red-500/50">
                             <p className="text-xs font-black uppercase tracking-widest text-red-300 mb-1">
                                 No se pudo interpretar
                             </p>
-                            <p className="text-sm text-gray-300">{ocrError}</p>
-                            <p className="text-xs text-gray-500 mt-2">
+                            <p className="text-sm text-gray-100">{ocrError}</p>
+                            <p className="text-xs text-gray-300 mt-2">
                                 Puedes capturar el pedido a mano en la matriz de arriba.
                             </p>
                         </div>
@@ -752,31 +755,31 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     />
                                 )}
                                 <div className="grid grid-cols-2 gap-2 text-[10px] font-black uppercase tracking-widest">
-                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10">
-                                        <div className="text-gray-500">Confianza OCR</div>
-                                        <div className="text-purple-300 text-sm">
+                                    <div className="p-2 rounded-lg bg-white/10 border border-white/20">
+                                        <div className="text-gray-300">Confianza OCR</div>
+                                        <div className="text-purple-200 text-sm">
                                             {Math.round((ocrPropuesta.confianza_ocr || 0) * 100)}%
                                         </div>
                                     </div>
-                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10">
-                                        <div className="text-gray-500">Confianza IA</div>
-                                        <div className="text-purple-300 text-sm">
+                                    <div className="p-2 rounded-lg bg-white/10 border border-white/20">
+                                        <div className="text-gray-300">Confianza IA</div>
+                                        <div className="text-purple-200 text-sm">
                                             {Math.round((ocrPropuesta.confianza_llm || 0) * 100)}%
                                         </div>
                                     </div>
                                 </div>
                                 {ocrPropuesta.cliente_match && (
-                                    <div className="p-2 rounded-lg bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest">
-                                        <div className="text-gray-500">Match de cliente</div>
-                                        <div className="text-purple-300">{ocrPropuesta.cliente_match}</div>
+                                    <div className="p-2 rounded-lg bg-white/10 border border-white/20 text-[10px] font-black uppercase tracking-widest">
+                                        <div className="text-gray-300">Match de cliente</div>
+                                        <div className="text-purple-200">{ocrPropuesta.cliente_match}</div>
                                     </div>
                                 )}
                                 {ocrPropuesta.notas && (
-                                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-1">
+                                    <div className="p-3 rounded-lg bg-amber-950/60 border border-amber-500/50">
+                                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-300 mb-1">
                                             Notas de la IA
                                         </div>
-                                        <p className="text-xs text-gray-300">{ocrPropuesta.notas}</p>
+                                        <p className="text-xs text-gray-100">{ocrPropuesta.notas}</p>
                                     </div>
                                 )}
                             </div>
@@ -784,7 +787,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             {/* Editor de la propuesta */}
                             <div className="lg:col-span-2 space-y-4">
                                 <div>
-                                    <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                                    <label className="block text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">
                                         Cliente
                                     </label>
                                     <select
@@ -810,12 +813,12 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
 
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
-                                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-orange-400">
                                             Renglones propuestos
                                         </label>
                                         <button
                                             onClick={agregarOcrItem}
-                                            className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                                            className="px-3 py-1.5 bg-white/10 border border-white/20 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-200 hover:text-white hover:bg-white/20 transition-all"
                                         >
                                             + Agregar renglón
                                         </button>
@@ -823,7 +826,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
 
                                     <div className="space-y-2">
                                         {ocrEdit.items.length === 0 && (
-                                            <p className="text-xs text-gray-500 py-3 text-center border border-dashed border-white/10 rounded-xl">
+                                            <p className="text-xs text-gray-300 py-3 text-center border border-dashed border-white/20 rounded-xl">
                                                 Sin renglones. Agrega uno manualmente.
                                             </p>
                                         )}
@@ -832,8 +835,8 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                                 key={idx}
                                                 className={`flex items-center gap-2 p-2 rounded-xl border ${
                                                     it.requiere_revision
-                                                        ? 'bg-amber-500/10 border-amber-500/40'
-                                                        : 'bg-white/5 border-white/10'
+                                                        ? 'bg-amber-950/60 border-amber-500/60'
+                                                        : 'bg-white/10 border-white/20'
                                                 }`}
                                             >
                                                 <select
@@ -877,7 +880,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                 <div className="flex items-center justify-end gap-3 pt-2">
                                     <button
                                         onClick={cancelarOcr}
-                                        className="px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                                        className="px-5 py-2.5 bg-white/10 border border-white/20 rounded-xl text-xs font-black uppercase tracking-widest text-gray-200 hover:text-white hover:bg-white/20 transition-all"
                                     >
                                         Cancelar
                                     </button>
