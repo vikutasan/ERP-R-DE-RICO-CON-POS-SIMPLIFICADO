@@ -130,7 +130,12 @@ export const RepartoPanGrandezaUI = ({ onBack, userPermissions = {}, userRole = 
 
     // Landing Page — 3 botones
     return (
-        <div className="h-full flex flex-col text-white overflow-y-auto overflow-x-hidden relative" style={{ backgroundColor: '#3a2e1e' }}>
+        <div className="h-full flex flex-col text-white overflow-y-auto overflow-x-hidden relative" style={{ 
+            backgroundColor: '#3a2e1e',
+            backgroundImage: 'url("/assets/wood_bg.jpg")',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center'
+        }}>
             {/* Header */}
             <div className="relative z-20 pt-4 pb-2 px-4 md:pt-8 md:px-10 bg-black border-b border-white/10 shadow-2xl">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -209,12 +214,6 @@ export const RepartoPanGrandezaUI = ({ onBack, userPermissions = {}, userRole = 
                 @keyframes zoom-in-95 { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
             `}</style>
 
-            {/* Capa de textura de madera */}
-            <div className="absolute inset-0 z-0 pointer-events-none" style={{
-                backgroundImage: 'url("/assets/wood_bg.jpg")',
-                backgroundSize: 'cover',
-                backgroundPosition: 'center'
-            }} />
         </div>
     );
 };
