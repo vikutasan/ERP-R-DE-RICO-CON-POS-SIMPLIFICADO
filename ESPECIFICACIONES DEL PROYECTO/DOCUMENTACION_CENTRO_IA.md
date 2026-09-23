@@ -1,6 +1,6 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v27.3 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Correcciones de efectividad OCR (v27.1, v27.2) + Selector de cliente y captura manual (v27.3)
+> **Versión:** v27.4 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Correcciones de efectividad OCR (v27.1, v27.2) + Selector de cliente y captura manual (v27.3) + Pestaña «Lector» en el Centro de IA (v27.4)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
 > **Última actualización:** 23 Sep 2026
 > **Documentos relacionados:**
@@ -47,6 +47,7 @@
 
 **PARTE III — OCR DE PEDIDOS (pestaña Programación de Pedidos)**
 28. Lectura de capturas de WhatsApp (OCR + LLM)
+    - 28.15 Pestaña «📷 Lector» en el Centro de IA (v27.4 — Fase I)
 
 ---
 ---
@@ -56,17 +57,18 @@
 ## 1. RESUMEN EJECUTIVO
 
 El **Centro de IA** es un **módulo paraguas** que agrupa, en una sola pantalla con pestañas, las
-**tres capacidades de inteligencia artificial** del ERP:
+**cuatro capacidades de inteligencia artificial** del ERP:
 
 | Pestaña | Capacidad | Motor | Qué hace |
 |---|---|---|---|
 | 📊 **Estado del Motor** | Diagnóstico | — | Muestra si la IA está habilitada, configurada y disponible |
 | 👁️ **Visión** | Conteo de objetos | YOLO | Captura, anota y entrena el modelo de conteo de pan |
 | 🎙️ **Voz** | Dictado manos libres | Whisper + Ollama | Diagnóstico del micrófono y de los parámetros de captura |
+| 📷 **Lector** | Lectura de capturas (OCR) | Tesseract + Ollama | Sube una captura de WhatsApp y muestra el texto leído + la propuesta estructurada (diagnóstico) |
 
 **Frase que resume el diseño:**
 
-> *Un módulo, tres sentidos. El ERP nunca importa `torch`, `whisper` ni `ultralytics`.*
+> *Un módulo, cuatro sentidos. El ERP nunca importa `torch`, `whisper` ni `ultralytics`.*
 
 **Decisión de diseño clave:** NO se creó un módulo nuevo "IA por Voz". Se **expandió** el módulo
 existente `vision_train` (antes "Entrenamiento IA") para que sea el **hogar único** de toda la IA.
@@ -111,10 +113,11 @@ diseño del Centro de IA: **no se añadió ni un solo endpoint nuevo**.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  ExperimentCenterUI.jsx  (registro del módulo `vision_train`)   │
-│  └── <AICenterUI />  ← shell con 3 pestañas                      │
+│  └── <AICenterUI />  ← shell con 4 pestañas                      │
 │       ├── <AIEngineStatusPanel />   (pestaña Estado)             │
 │       ├── <VisionTrainingUI />      (pestaña Visión, reutilizada)│
-│       └── <AIVoicePanel />          (pestaña Voz)                │
+│       ├── <AIVoicePanel />          (pestaña Voz)                │
+│       └── <AIOcrPanel />            (pestaña Lector, v27.4)      │
 └─────────────────────────────────────────────────────────────────┘
                               │  HTTP (fetch)
                               ▼
@@ -1199,6 +1202,7 @@ El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP
 | v27.1 | 23 Sep 2026 | Corrección de efectividad del OCR: tema oscuro, multi-PSM, respaldo determinista y panel de diagnóstico (sección 28.12) |
 | v27.2 | 23 Sep 2026 | 2ª corrección de efectividad: causa raíz real = `uvicorn` del `api` sin `--reload` (endpoint 404); limpieza del prefijo «Cliente:» y match de productos contra todo el catálogo (sección 28.13) |
 | v27.3 | 23 Sep 2026 | Corrección de usabilidad del panel OCR: el selector de cliente se llenaba de la matriz (solo clientes con pedido previo) → ahora usa el directorio completo; y se añade la **captura manual de pedido** que el mensaje de error prometía pero no existía (sección 28.14) |
+| v27.4 | 23 Sep 2026 | Nueva pestaña **«📷 Lector»** en el Centro de IA: expone la capacidad OCR de forma descubrible (antes solo vivía dentro de la pestaña Grandeza «Programación de Pedidos»). Panel de diagnóstico que no guarda nada (sección 28.15) |
 
 ---
 
@@ -1617,6 +1621,49 @@ apuntaba a una capacidad que no existía.
 apuntar a una capacidad que exista y sea alcanzable. Si la matriz solo muestra pedidos ya
 registrados (D-4), entonces la captura manual **tiene que** vivir en el propio panel de captura,
 no en la matriz.
+
+### 28.15 Pestaña «📷 Lector» en el Centro de IA (v27.4 — Fase I)
+
+**Síntoma reportado:** «*Entré al módulo Centro IA y aún no aparece la pestaña de lector que
+dijiste que ibas a poner*».
+
+**Causa raíz:** la capacidad OCR (4ª del Centro de IA) se implementó **dentro** de la pestaña
+Grandeza «📋 Programación de Pedidos», pero **nunca se expuso como pestaña del propio Centro de
+IA**. El shell [`AICenterUI.jsx`](../../apps/ai/AICenterUI.jsx) solo declaraba **3 pestañas**
+(`ESTADO`, `VISION`, `VOZ`). Quien buscaba la capacidad en el Centro de IA —su hogar natural— no la
+encontraba: era **indescubrible**.
+
+**Corrección aplicada:**
+
+| # | Archivo | Cambio |
+|---|---|---|
+| 1 | [`AIOcrPanel.jsx`](../../apps/ai/components/AIOcrPanel.jsx) (nuevo) | Panel de **diagnóstico** del lector OCR. Sube una captura, muestra la vista previa, el **texto crudo** que leyó Tesseract, la **propuesta estructurada** (cliente + renglones) y el **diagnóstico** (confianza OCR/IA, motores, tipo de match de cliente). |
+| 2 | [`AICenterUI.jsx`](../../apps/ai/AICenterUI.jsx) | Nueva pestaña `LECTOR` (`📷 Lector`) en `TABS`, `ETIQUETA_TAB` y `ORDEN_TABS`. El panel se monta **siempre** y se oculta con CSS (preservación de estado, igual que las otras pestañas). |
+
+**Decisión de diseño (separación de responsabilidades):**
+
+- **Centro de IA → pestaña «Lector»** = **DIAGNÓSTICO**. Muestra *qué* entendió la IA. **No guarda
+  nada** (no hay botón «Confirmar»). Sirve para verificar que el motor lee bien.
+- **Grandeza → pestaña «Programación de Pedidos»** = **CAPTURA**. Confirma y guarda el pedido en la
+  matriz. Es el único lugar donde se registra.
+
+Esta separación **respeta el contrato human-in-the-loop**: el panel del Centro de IA nunca escribe
+en la base de datos. Para registrar, el operador va a Grandeza.
+
+**Contrato de datos:** el panel reutiliza el endpoint del ERP
+`POST /grandeza/order-requests/ocr-extract`, que ya resuelve cliente + productos contra el catálogo
+real. El motor de IA **nunca** decide un `client_id` ni un `product_id`.
+
+**Verificación:**
+
+| Comprobación | Resultado |
+|---|---|
+| `npx vite build` | **1829 módulos**, exit 0 (~21 s) |
+| Pestañas del Centro de IA | **4**: Estado, Visión, Voz, **Lector** |
+
+**Lección de diseño:** una capacidad nueva **debe** ser descubrible desde el módulo que la
+documenta como su hogar. Tener el OCR solo dentro de Grandeza, mientras la documentación lo
+anunciaba como «4ª capacidad del Centro de IA», creaba una **promesa incumplida** en la UI.
 
 ---
 
