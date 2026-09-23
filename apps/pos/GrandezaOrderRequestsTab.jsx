@@ -191,6 +191,53 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
         return matrix.rows.reduce((acc, r) => acc + rowTotal(r), 0);
     };
 
+    // ─── Compartir la matriz por WhatsApp ─────────────────────────────────────
+    // Arma un texto legible (monoespaciado) con la matriz completa: una línea
+    // por cliente con sus cantidades por producto, más la fila de totales.
+    // NO envía nada por sí sola: abre WhatsApp con el texto precargado para que
+    // el operador elija el destinatario y confirme (humano-en-el-bucle).
+    const buildMatrixWhatsAppText = () => {
+        if (!matrix || !matrix.rows || matrix.rows.length === 0) return '';
+
+        const productos = matrix.products || [];
+        const fecha = deliveryDate || hoyISO();
+
+        const lineas = [];
+        lineas.push(`📋 *MATRIZ DE PEDIDOS* — ${fecha}`);
+        lineas.push('');
+
+        // Encabezado de productos (abreviado a 4 letras para que quepa).
+        const abrev = (nombre) => String(nombre || '').slice(0, 4).toUpperCase();
+        const cabecera = ['CLIENTE', ...productos.map(p => abrev(p.product_name)), 'TOTAL'];
+        lineas.push(cabecera.join(' | '));
+        lineas.push('-'.repeat(cabecera.join(' | ').length));
+
+        // Una línea por cliente.
+        matrix.rows.forEach(row => {
+            const celdas = productos.map(p => String(qtyOf(row, p.product_id) || 0));
+            lineas.push([row.client_name, ...celdas, String(rowTotal(row))].join(' | '));
+        });
+
+        // Fila de totales por producto.
+        lineas.push('-'.repeat(cabecera.join(' | ').length));
+        const totales = (matrix.totals || []).map(t => String(t.total));
+        lineas.push(['TOTAL', ...totales, String(grandTotal())].join(' | '));
+        lineas.push('');
+        lineas.push(`👥 ${matrix.total_clients} clientes · 🧮 ${grandTotal()} piezas`);
+
+        return lineas.join('\n');
+    };
+
+    const enviarMatrizWhatsApp = () => {
+        const texto = buildMatrixWhatsAppText();
+        if (!texto) {
+            notify('No hay matriz para enviar', 'error');
+            return;
+        }
+        // Sin destinatario fijo: WhatsApp abre el selector de contacto.
+        window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
+    };
+
     // ─── Guardar una fila (UPSERT) ────────────────────────────────────────────
 
     const saveRow = async (row) => {
@@ -624,6 +671,17 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
                         >
                             {dispatching ? 'Enviando…' : '📤 Enviar a Producción'}
+                        </button>
+                        {/* v7.6.9: comparte la matriz completa por WhatsApp.
+                            Abre WhatsApp con el texto precargado; el operador
+                            elige el destinatario y confirma (humano-en-el-bucle). */}
+                        <button
+                            onClick={enviarMatrizWhatsApp}
+                            disabled={!matrix || matrix.rows.length === 0}
+                            className="px-5 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                            title="Abre WhatsApp con la matriz completa lista para enviar"
+                        >
+                            🟢 Enviar por WhatsApp
                         </button>
                     </div>
                 </div>
