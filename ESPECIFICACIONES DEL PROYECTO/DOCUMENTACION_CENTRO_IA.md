@@ -1,6 +1,6 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v26.2 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27)
+> **Versión:** v27.1 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Corrección de efectividad OCR (v27.1)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
 > **Última actualización:** 22 Sep 2026
 > **Documentos relacionados:**
@@ -1196,6 +1196,7 @@ El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP
 | v7 Fase 8 | — | Fine-tuning de YOLO: pipeline, orquestador, hot-reload, smoke test |
 | v26.1 | 22 Sep 2026 | Fusión de la documentación de entrenamiento dentro del Centro de IA |
 | v26.2 | 22 Sep 2026 | Añadida la 4ª capacidad: OCR de pedidos (Parte III, sección 28) |
+| v27.1 | 23 Sep 2026 | Corrección de efectividad del OCR: tema oscuro, multi-PSM, respaldo determinista y panel de diagnóstico (sección 28.12) |
 
 ---
 
@@ -1458,6 +1459,47 @@ matriz sigue disponible sin cambios.
   sube la captura manualmente.
 - **Entrenamiento de un modelo OCR propio** — se usa Tesseract preentrenado.
 - **Resolución de IDs por el LLM** — prohibido por diseño; siempre resuelve el ERP.
+
+### 28.12 Corrección de efectividad (v27.1 — Fase F)
+
+**Síntoma reportado:** el operador subía una captura de WhatsApp con texto perfectamente legible y
+la IA respondía «no reconoció nada».
+
+**Causa raíz (infraestructura):** el contenedor `ia-local` corría una **imagen construida antes de
+que existiera el código de OCR**. Esa imagen no contenía el binario `tesseract`, ni la librería
+`pytesseract`, ni el módulo `ocr.py`. El endpoint fallaba de forma silenciosa y el panel mostraba el
+mensaje genérico de error.
+
+> **Lección de operación:** la imagen de `ia-local` **no** está montada por volumen (`bind mount`);
+> el `Dockerfile` copia `app/` en tiempo de construcción. Por lo tanto, **cualquier cambio en
+> `ai-local/app/` exige reconstruir la imagen** (`docker compose -f docker-compose.ai.yml build
+> ia-local`) y recrear el contenedor (`up -d --force-recreate ia-local`). Reiniciar el contenedor
+> **no** basta. El contenedor tarda ~90 s en quedar sano porque carga Whisper y YOLO al arrancar.
+
+**Correcciones aplicadas:**
+
+| # | Archivo | Corrección |
+|---|---|---|
+| 1 | [`ocr.py`](../../ai-local/app/engines/ocr.py) | **Detección de tema oscuro/claro** por mediana de brillo del histograma + inversión. Tesseract asume texto oscuro sobre fondo claro; las capturas de WhatsApp en tema oscuro devolvían basura o nada. |
+| 2 | [`ocr.py`](../../ai-local/app/engines/ocr.py) | **Binarización por umbral + autocontraste** para eliminar el ruido de compresión JPEG. |
+| 3 | [`ocr.py`](../../ai-local/app/engines/ocr.py) | **Estrategia multi-PSM**: se prueban `--psm 6` (bloque uniforme), `--psm 4` (burbujas) y `--psm 3` (automático), y se elige el resultado con más líneas útiles y mayor confianza. Ningún PSM sirve para todas las capturas. |
+| 4 | [`nlu.py`](../../ai-local/app/engines/nlu.py) | **Parser determinista de respaldo por regex** (`parsear_pedido_determinista`). Si el LLM devuelve 0 renglones pero el OCR **sí** leyó texto, se extraen producto+cantidad por regex. Elimina el síntoma «no reconoció nada» cuando el texto estaba bien y solo falló el LLM. |
+| 5 | [`nlu.py`](../../ai-local/app/engines/nlu.py) | **Prompt con 2 ejemplos few-shot y 10 reglas**, incluyendo corrección de erratas típicas de OCR (`bo1illos` → `bolillos`, `c0nchas` → `conchas`). |
+| 6 | [`GrandezaOrderRequestsTab.jsx`](../../apps/pos/GrandezaOrderRequestsTab.jsx) | **Panel de diagnóstico** «🔎 Ver lo que el OCR sí leyó» con el texto crudo y el % de confianza. Permite distinguir «la imagen no tiene texto legible» de «el OCR leyó pero la IA no entendió». |
+
+**Verificación end-to-end:** `POST /ocr/extract-order` sobre una captura de prueba devolvió el
+cliente `Juan Perez` y 3 renglones (`bolillo 20`, `concha 15`, `telera 3`) con **94.8 %** de
+confianza OCR. El parser determinista de respaldo se validó por separado extrayendo los mismos 3
+renglones sin LLM.
+
+**Nuevo comportamiento de degradación en cascada:**
+
+```
+Tesseract lee texto  →  LLM estructura  →  si el LLM falla, regex de respaldo  →  match al catálogo
+```
+
+El operador **siempre** recibe una propuesta si el OCR leyó algo, y **siempre** puede ver qué leyó
+realmente el OCR para decidir si el problema es la imagen o el modelo.
 
 ---
 
