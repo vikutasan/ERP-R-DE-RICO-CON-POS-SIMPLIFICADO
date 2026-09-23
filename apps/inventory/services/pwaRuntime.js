@@ -29,7 +29,7 @@ const SW_URL = '/sw.js';
 const SW_SCOPE = '/';
 
 /** Color de tema por defecto si system_settings no lo provee. */
-const DEFAULT_THEME_COLOR = '#1e293b';
+const DEFAULT_THEME_COLOR = '#c4b49a';
 
 /** Nombre por defecto si system_settings no lo provee. */
 const DEFAULT_APP_NAME = 'R de Rico - ERP';
