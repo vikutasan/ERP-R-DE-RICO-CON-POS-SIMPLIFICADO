@@ -1068,3 +1068,71 @@ Se priorizó la **legibilidad** sobre la estética translúcida:
 - **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
 - **§7.9** — No se modificaron URLs ni endpoints.
 - **Sin cambios de lógica:** el diff es exclusivamente de clases de presentación.
+
+---
+
+## 20. CONTRASTE EN MÓVIL — PANELES RESTANTES (v7.6.4)
+
+### 20.1 Motivo
+
+Tras la sección 19, el usuario reportó: *«YA REPARASTE EL CONTRASTE DE LA MATRIZ
+DE PEDIDOS SI LA VEO DESDE EL MONITOR DE UNA PC, PERO SI ACCEDO DESDE MI MÓVIL
+AUN NO SE SOLUCIONA LO DEL CONTRASTE»*.
+
+### 20.2 Diagnóstico: por qué en PC sí y en móvil no
+
+La sección 19 corrigió **solo la matriz**. Pero la pestaña tiene **tres bloques
+apilados verticalmente**:
+
+1. **Panel de Configuración** (arriba)
+2. **Matriz de Pedidos** (centro) — *corregido en §19*
+3. **Panel de confirmación OCR** (abajo)
+
+En **PC** los tres bloques caben o el usuario ve la matriz directamente. En
+**móvil** el layout apila los tres y el usuario hace scroll a través del **Panel
+de Configuración** y del **Panel OCR**, que **seguían usando fondos translúcidos**
+(`bg-black/40`, `bg-white/5`, `bg-white/10`, `bg-white/15`). Sobre el fondo de
+madera, en pantallas móviles (menor luminosidad y contraste), esos paneles se ven
+«lavados» y el texto pierde legibilidad.
+
+### 20.3 Solución aplicada (solo estilos, cero lógica)
+
+| Elemento | Estilo anterior | Estilo nuevo |
+|---|---|---|
+| Panel de Configuración | `bg-black/40 backdrop-blur-sm` | `bg-[#0d0b09] border-2 border-amber-500/30 shadow-2xl` |
+| Selects/inputs de Configuración | `bg-white/5 border-white/10` | `bg-black/50 border-2 border-white/25` |
+| Input de fecha de entrega | `bg-white/5 border-white/10` | `bg-black/50 border-2 border-white/25` |
+| Tarjetas de metadatos OCR (confianza/match) | `bg-white/15 border-white/30` | `bg-black/60 border-2 border-white/40` |
+| Select de cliente OCR | `bg-white/10 border-white/30` | `bg-black/60 border-2 border-white/40` |
+| Botones Descartar / Agregar renglón / Cancelar | `bg-white/15 border-white/40` | `bg-black/60 border-2 border-white/50` |
+| Filas de renglón OCR | `bg-white/15 border-white/30` | `bg-black/60 border-white/40` |
+| Mensaje «Sin renglones» | `border-white/40` | `border-white/50 bg-black/40` |
+
+### 20.4 Archivos involucrados
+
+| Archivo | Tipo de Cambio |
+|---|---|
+| `apps/pos/GrandezaOrderRequestsTab.jsx` | Solo clases Tailwind del panel de Configuración y del panel OCR |
+| **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+| **Backend** | **CERO cambios** ✅ |
+
+### 20.5 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **25.13 s**.
+- **Commit:** `641b154` — `fix(grandeza): contraste movil de la pestana de Pedidos (K5)`.
+- **Diff:** 1 archivo, 15 inserciones, 15 eliminaciones.
+
+### 20.6 Nota sobre caché del móvil
+
+El contenedor `pos` corre un **Vite dev server** con HMR, pero los navegadores
+móviles cachean agresivamente. Si tras el despliegue el móvil sigue mostrando el
+aspecto anterior, hacer **recarga forzada** (o borrar caché del sitio) para
+descargar el bundle nuevo.
+
+### 20.7 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
+- **§7.9** — No se modificaron URLs ni endpoints.
+- **Sin cambios de lógica:** el diff es exclusivamente de clases de presentación.
