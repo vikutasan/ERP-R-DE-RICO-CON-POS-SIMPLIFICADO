@@ -1563,10 +1563,14 @@ export const GrandezaParamsUI = ({ onBack }) => {
                 </div>
 
                 {/* Tabs de Navegación Interna
-                    Fila ÚNICA con scroll horizontal (swipe en móvil). Se conserva
-                    el gesto horizontal que el usuario prefiere. La barra de scroll
-                    es visible y funcional (clase tabs-scrollbar, definida abajo). */}
-                <div className="tabs-scrollbar flex gap-3 md:gap-8 px-2 mt-4 overflow-x-auto whitespace-nowrap pb-3">
+                    Fila ÚNICA garantizada (flex-nowrap) con scroll horizontal.
+                    El contenedor NO envuelve: las pestañas se deslizan en un solo
+                    renglón. La pestaña activa se resalta con fondo ámbar sólido
+                    (sin subrayado inferior que pudiera encimarse con la de abajo). */}
+                <div
+                    className="tabs-scrollbar flex flex-nowrap items-stretch gap-2 md:gap-4 mt-4 pb-3"
+                    style={{ overflowX: 'auto', overflowY: 'hidden', WebkitOverflowScrolling: 'touch' }}
+                >
                     {[
                         { id: 'products', label: 'Productos Vinculados', icon: '🍞' },
                         { id: 'clients', label: 'Directorio de Clientes', icon: '👥' },
@@ -1577,10 +1581,11 @@ export const GrandezaParamsUI = ({ onBack }) => {
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`pb-2 px-3 py-2 rounded-t-xl font-black uppercase tracking-wider text-xs md:text-sm transition-all relative shrink-0 border-b-2 ${
+                            style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}
+                            className={`px-3 md:px-4 py-2 rounded-xl font-black uppercase tracking-wider text-xs md:text-sm transition-all ${
                                 activeTab === tab.id
-                                ? 'text-amber-300 border-amber-400 bg-white/5'
-                                : 'text-gray-200 border-transparent hover:text-white hover:bg-white/5'
+                                ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/30'
+                                : 'bg-white/5 text-gray-200 hover:bg-white/10 hover:text-white'
                             }`}
                         >
                             <span className="mr-2">{tab.icon}</span>

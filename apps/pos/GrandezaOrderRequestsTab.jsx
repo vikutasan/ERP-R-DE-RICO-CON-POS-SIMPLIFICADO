@@ -463,7 +463,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
-                        <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">
                             Día límite de pedidos
                         </label>
                         <select
@@ -476,7 +476,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     </div>
 
                     <div>
-                        <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">
                             Hora límite
                         </label>
                         <input
@@ -488,7 +488,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     </div>
 
                     <div>
-                        <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">
                             Día de entrega
                         </label>
                         <select
@@ -501,7 +501,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     </div>
 
                     <div>
-                        <label className="block text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-orange-400 mb-2">
                             Selector de clientes
                         </label>
                         <select
@@ -521,7 +521,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
                         className="w-5 h-5 accent-amber-500"
                     />
-                    <span className="text-xs font-black uppercase tracking-widest text-gray-400">
+                    <span className="text-xs font-black uppercase tracking-widest text-orange-400">
                         Programación de pedidos activa
                     </span>
                 </label>
@@ -534,7 +534,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         📋 Matriz de Pedidos
                     </h2>
                     <div className="flex items-center gap-3 flex-wrap">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-orange-400">
                             Fecha de entrega
                         </label>
                         <input
@@ -545,7 +545,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         />
                         <button
                             onClick={() => fetchMatrix(deliveryDate)}
-                            className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs font-black uppercase tracking-widest text-gray-400 hover:text-white hover:bg-white/10 transition-all"
+                            className="px-4 py-2.5 bg-white/5 border border-orange-400/40 rounded-xl text-xs font-black uppercase tracking-widest text-orange-400 hover:text-white hover:bg-orange-500/20 transition-all"
                         >
                             ⟳ Recargar
                         </button>
