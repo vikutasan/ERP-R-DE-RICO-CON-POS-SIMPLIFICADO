@@ -974,6 +974,74 @@ Cada mutación modifica **código de producción** y el test guardián debe volv
 
 ---
 
+## 8. PERSISTENCIA DE SESIÓN (v19.4)
+
+### 8.1 Síntoma Reportado
+
+> *"Cuando me logueo al sistema desde mi móvil por medio de un acceso directo que puse en mi navegador, en cuanto me salgo para consultar otra cosa del móvil, me saca del sistema y debo volver a loguearme."*
+
+### 8.2 Causa Raíz (CONFIRMADA)
+
+El estado de autenticación vivía **únicamente en memoria de React**:
+
+```jsx
+// apps/ExperimentCenterUI.jsx (ANTES de v19.4)
+const [isAuthenticated, setIsAuthenticated] = useState(false);
+const [userRole, setUserRole] = useState('ADMIN');
+const [userName, setUserName] = useState('');
+const [userId, setUserId] = useState(null);
+const [userPermissions, setUserPermissions] = useState({});
+const [userProfileId, setUserProfileId] = useState(null);
+```
+
+[`handleLogin()`](apps/ExperimentCenterUI.jsx:213) hacía `setIsAuthenticated(true)` pero **nunca escribía nada en `localStorage` ni `sessionStorage`**.
+
+**Mecanismo del fallo en móvil:** cuando el usuario sale del navegador (WhatsApp, cámara, etc.), el SO del teléfono **descarta la pestaña de memoria** para liberar RAM. Al volver, el navegador **recarga la página desde cero**. Como `isAuthenticated` arranca en `false` y no había nada persistido, la app mostraba el login de nuevo. En PC no ocurría porque el navegador mantiene la pestaña viva indefinidamente.
+
+**Nota:** el `localStorage` ya se usaba en otros módulos (carrito POS en [`useCart.js`](apps/pos/hooks/useCart.js:25), borrador de visitas del repartidor en [`GrandezaDriverUI.jsx`](apps/pos/GrandezaDriverUI.jsx:8), cámara preferida en [`VisionScanner.jsx`](apps/pos/VisionScanner.jsx:20)). La infraestructura existía; simplemente **nunca se aplicó al login**.
+
+### 8.3 Solución Implementada
+
+Persistir la sesión en `localStorage` y restaurarla al arrancar, con un **timeout de inactividad de 12 horas**.
+
+**Helpers a nivel de módulo** (fuera del componente, en [`ExperimentCenterUI.jsx`](apps/ExperimentCenterUI.jsx:48)):
+
+| Helper | Responsabilidad |
+|--------|-----------------|
+| `leerSesionPersistida()` | Lee y valida la sesión. Devuelve `null` si no existe, está corrupta o superó el timeout. Nunca lanza. |
+| `guardarSesionPersistida(user)` | Persiste `{ user, lastActivity }`. Falla en silencio. |
+| `refrescarActividadSesion()` | Actualiza SOLO `lastActivity`, conservando el usuario. |
+| `borrarSesionPersistida()` | Elimina la clave (logout explícito o por inactividad). |
+
+**Constantes:**
+- `SESSION_STORAGE_KEY = 'erp_session_v1'`
+- `SESSION_INACTIVITY_MS = 12 * 60 * 60 * 1000` (12 horas)
+
+**Integración en el componente:**
+
+1. **Restauración al arrancar** — los `useState` se inicializan con lazy initializers que leen la sesión persistida:
+   ```jsx
+   const [sesionInicial] = useState(() => leerSesionPersistida());
+   const [isAuthenticated, setIsAuthenticated] = useState(() => !!sesionInicial);
+   const [userRole, setUserRole] = useState(() => sesionInicial?.role || 'ADMIN');
+   // ... idem para userName, userId, userPermissions, userProfileId
+   ```
+2. **Persistencia al hacer login** — [`handleLogin()`](apps/ExperimentCenterUI.jsx:213) llama a `guardarSesionPersistida()` tras `setIsAuthenticated(true)`.
+3. **Refresco de actividad** — un `useEffect` (dependiente de `isAuthenticated`) registra listeners de `click`, `keydown`, `touchstart` y `visibilitychange`, con **throttle de 1 escritura por minuto** para no castigar el `localStorage`.
+4. **Logout centralizado** — `handleLogout()` borra la sesión persistida y pone `isAuthenticated = false`. Se usa en los **2 puntos de salida**: el botón lateral «SALIR DEL SISTEMA» y el `onForceLogout` del POS.
+5. **Sincronización de permisos** — [`handleUpdatePermissions()`](apps/ExperimentCenterUI.jsx:234) re-persiste la sesión cuando el perfil del usuario actual cambia en vivo.
+
+### 8.4 Consideración de Seguridad
+
+Guardar la sesión en `localStorage` implica que quien tenga el teléfono desbloqueado entra sin PIN. Para un ERP de uso interno con terminales compartidas es aceptable, y el **timeout de inactividad de 12 h** acota la ventana de exposición. **El PIN nunca se persiste** — solo el perfil, el rol y los permisos.
+
+### 8.5 Verificación
+
+- Build: `docker compose exec -T pos npx vite build` → **1829 módulos, 24.26 s, exit 0**.
+- Commit: `c2751c3` — *"v19.4: persistencia de sesion en localStorage con timeout de inactividad de 12h (arregla logout en movil)"* (1 archivo, +130/−10).
+
+---
+
 > **Esta es la FUENTE ÚNICA DE VERDAD de la v7.0.3.**
 > El POS de R de Rico es un monumento a la evolución: construimos sistemas complejos para sobrevivir, aprendimos que la complejidad causaba errores, y los sustituimos por simplicidad atómica robusta.
 > La v6.1 agregó verificación post-envío y bloqueo visual sin conexión. La v7.0 optimizó el rendimiento eliminando JOINs innecesarios en operaciones de alta frecuencia. La v7.0.1 igualó la resiliencia de las 3 operaciones atómicas con retries simétricos. La v7.0.2 cerró las últimas vulnerabilidades: auto-reconciliación post-fallo, `withRetries` DRY centralizado, y retries inteligentes en el checkout. La v7.0.3 blindó el Modal de Salida con un **contrato de resultado discriminado** (`{ outcome, reason }`): ya no se asume que "no lanzar excepción" equivale a éxito, el force logout persiste el carrito vía `sendBeacon`, y el endpoint de emergencia asocia el ticket a la terminal correcta. La v22 cerró el **CRÍTICO 1**: el backend del POS pasó de 0 a **33 tests** en 4 archivos, verificados con 9 mutaciones; en el proceso se descubrieron empíricamente D27 (`expire_all`), D28 (outbox muerto), D29 (fallback sin `ORDER BY`) y se refutó D19 (`expire_on_commit=False`).
