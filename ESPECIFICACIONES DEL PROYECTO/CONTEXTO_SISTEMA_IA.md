@@ -1232,6 +1232,63 @@ def _safe_category(product):
 
 ---
 
+### 16.13 PÃ©rdida de SesiÃ³n en MÃ³vil: el Estado de AutenticaciÃ³n VivÃ­a Solo en Memoria React (23/Septiembre/2026)
+
+**Commit:** `apps/ExperimentCenterUI.jsx` (v19.4) â€” `c2751c3`.
+
+**Contexto del Problema:**
+Al iniciar sesiÃ³n desde un **acceso directo en el navegador del mÃ³vil** (URL guardada en la pantalla de inicio), el usuario era **expulsado del sistema** en cuanto cambiaba de aplicaciÃ³n (por ejemplo, para consultar WhatsApp) y volvÃ­a. DebÃ­a **loguearse de nuevo cada vez**. El sÃ­ntoma se reproducÃ­a en **todos los mÃ³dulos** (Grandeza, POS, Almacenes, etc.), no en uno en particular.
+
+**Causa RaÃ­z:**
+El shell raÃ­z del ERP â€” `apps/ExperimentCenterUI.jsx` â€” mantenÃ­a el estado de autenticaciÃ³n **Ãºnicamente en memoria de React**:
+
+```javascript
+const [isAuthenticated, setIsAuthenticated] = useState(false);
+```
+
+`handleLogin()` actualizaba ese estado, pero **nunca lo persistÃ­a**. Los sistemas operativos mÃ³viles (iOS Safari, Chrome Android) **descartan las pestaÃ±as en segundo plano** para liberar RAM. Al volver a la pestaÃ±a, el navegador **recarga la pÃ¡gina desde cero**, React se reinicia y `isAuthenticated` vuelve a `false` â†’ el usuario ve el `LoginUI` de nuevo.
+
+No era un bug de un mÃ³dulo: era una **carencia de la infraestructura transversal de sesiÃ³n**. Por eso el arreglo va en el **shell raÃ­z** (`ExperimentCenterUI.jsx`), que es el Ãºnico punto donde vive el login compartido de todo el ERP.
+
+**SoluciÃ³n (persistencia en `localStorage` + timeout de inactividad de 12 h):**
+
+1. **Constantes a nivel de mÃ³dulo** (fuera del componente, para que sobrevivan a los re-renders):
+
+```javascript
+const SESSION_STORAGE_KEY = 'erp_session_v1';
+const SESSION_INACTIVITY_MS = 12 * 60 * 60 * 1000; // 12 horas
+```
+
+2. **Helpers de persistencia** â€” `leerSesionPersistida()`, `guardarSesionPersistida(user)`, `refrescarActividadSesion()`, `borrarSesionPersistida()`. El objeto persistido guarda el usuario y un `ultimaActividad` (timestamp). `leerSesionPersistida()` **descarta** la sesiÃ³n si `Date.now() - ultimaActividad > SESSION_INACTIVITY_MS`.
+
+3. **Estado inicializado con lazy initializer** â€” al montar, React lee `localStorage` **una sola vez** y restaura la sesiÃ³n si sigue vigente:
+
+```javascript
+const sesionInicial = leerSesionPersistida();
+const [isAuthenticated, setIsAuthenticated] = useState(!!sesionInicial);
+const [currentUser, setCurrentUser] = useState(sesionInicial?.user || null);
+```
+
+4. **Persistencia en login y en cambios de permisos** â€” `handleLogin()` y `handleUpdatePermissions()` llaman a `guardarSesionPersistida()`.
+
+5. **Logout centralizado** â€” `handleLogout()` limpia el estado **y** `localStorage` (`borrarSesionPersistida()`). Se usa tanto en el botÃ³n de logout del shell como en el `onForceLogout` que recibe el POS.
+
+6. **Refresco de actividad con throttle** â€” un `useEffect` (dependiente de `isAuthenticated`) registra listeners de `click`, `keydown`, `touchstart` y `visibilitychange` con un **throttle de 1 minuto**, de modo que cada interacciÃ³n real renueva `ultimaActividad` sin escribir en `localStorage` en cada evento.
+
+**Evidencia de AceptaciÃ³n:**
+- **`npx vite build`:** exit 0, **1829 mÃ³dulos**, ~24.26 s.
+- **`git status --porcelain apps/pos/`:** vacÃ­o â€” el mÃ³dulo POS **no se modificÃ³**; el arreglo es de infraestructura compartida.
+- **VerificaciÃ³n funcional:** al cambiar de app en el mÃ³vil y volver, la sesiÃ³n **se conserva**; tras 12 h de inactividad, se exige login de nuevo.
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo estado de autenticaciÃ³n que deba sobrevivir a una recarga del navegador se **persista** (`localStorage`/`sessionStorage`). El estado en memoria de React **no** sobrevive a que el SO mÃ³vil descarte la pestaÃ±a.
+- **OBLIGATORIO** que toda sesiÃ³n persistida lleve un **timestamp de Ãºltima actividad** y un **timeout de inactividad** explÃ­cito (aquÃ­, 12 h). Persistir sin caducidad es un riesgo de seguridad.
+- **OBLIGATORIO** que el **logout** (voluntario o forzado) **borre** la sesiÃ³n persistida. Un logout que solo limpia memoria deja la sesiÃ³n viva en disco.
+- **REGLA DE UBICACIÃ“N:** los arreglos de sesiÃ³n/autenticaciÃ³n pertenecen al **shell raÃ­z** (`ExperimentCenterUI.jsx`), que es donde vive el login compartido de **todos** los mÃ³dulos. **PROHIBIDO** duplicar lÃ³gica de sesiÃ³n dentro de un mÃ³dulo de negocio (POS, Grandeza, etc.).
+- **REGLA DE DIAGNÃ“STICO:** si un usuario "es expulsado" al cambiar de app en mÃ³vil, sospechar de **estado de autenticaciÃ³n no persistido**, no de un bug del mÃ³dulo que estaba viendo.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
