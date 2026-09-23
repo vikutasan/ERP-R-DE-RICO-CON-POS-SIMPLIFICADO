@@ -646,22 +646,28 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 )}
 
                 {!loading && matrix && matrix.rows.length > 0 && (
-                    <div className="overflow-x-auto custom-scrollbar">
+                    /* v7.6.6 (Ergonomía): contenedor con scroll VERTICAL y HORIZONTAL.
+                       - `max-h-[70vh]` acota la altura para que la barra horizontal
+                         quede siempre alcanzable sin bajar hasta el final.
+                       - El encabezado de productos es `sticky top-0` (ver <thead>),
+                         así el nombre del producto permanece visible mientras se
+                         desplaza la lista de clientes hacia abajo. */
+                    <div className="overflow-auto custom-scrollbar max-h-[70vh] rounded-2xl border border-amber-500/20">
                         <table className="w-full text-sm border-collapse">
-                            <thead>
-                                <tr className="border-b-2 border-amber-500/40 bg-black/60">
-                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-300 sticky left-0 bg-[#1a1410] z-10">
+                            <thead className="sticky top-0 z-20">
+                                <tr className="border-b-2 border-amber-500/40 bg-[#1a1410]">
+                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-300 sticky left-0 bg-[#1a1410] z-30">
                                         Cliente
                                     </th>
                                     {matrix.products.map(p => (
-                                        <th key={p.product_id} className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[90px]">
+                                        <th key={p.product_id} className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[90px] bg-[#1a1410]">
                                             {p.product_name}
                                         </th>
                                     ))}
-                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-400 min-w-[70px]">
+                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-400 min-w-[70px] bg-[#1a1410]">
                                         Total
                                     </th>
-                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[110px]">
+                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[110px] bg-[#1a1410]">
                                         Acciones
                                     </th>
                                 </tr>
@@ -721,20 +727,29 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     </tr>
                                 ))}
                             </tbody>
-                            <tfoot>
-                                <tr className="border-t-2 border-amber-500/40 bg-amber-500/5">
-                                    <td className="px-3 py-3 sticky left-0 bg-[#1a1410] z-10 text-[10px] font-black uppercase tracking-widest text-amber-400">
+                            {/* v7.6.6 (Ergonomía): fila de totales FIJA al fondo
+                                (`sticky bottom-0`) y con el NOMBRE del producto
+                                sobre su total, para no perder la referencia de
+                                qué producto suma cada columna al desplazarse. */}
+                            <tfoot className="sticky bottom-0 z-20">
+                                <tr className="border-t-2 border-amber-500/40 bg-[#1a1410]">
+                                    <td className="px-3 py-3 sticky left-0 bg-[#1a1410] z-30 text-[10px] font-black uppercase tracking-widest text-amber-400">
                                         TOTAL POR PRODUCTO
                                     </td>
                                     {matrix.totals.map(t => (
-                                        <td key={t.product_id} className="px-3 py-3 text-center font-black text-amber-400 text-sm">
-                                            {t.total}
+                                        <td key={t.product_id} className="px-3 py-2 text-center bg-[#1a1410]">
+                                            <div className="text-[9px] font-black uppercase tracking-widest text-amber-300/80 leading-tight truncate max-w-[90px] mx-auto">
+                                                {t.product_name}
+                                            </div>
+                                            <div className="font-black text-amber-400 text-sm">
+                                                {t.total}
+                                            </div>
                                         </td>
                                     ))}
-                                    <td className="px-3 py-3 text-center font-black text-amber-400 text-base">
+                                    <td className="px-3 py-3 text-center font-black text-amber-400 text-base bg-[#1a1410]">
                                         {grandTotal()}
                                     </td>
-                                    <td className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300">
+                                    <td className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 bg-[#1a1410]">
                                         {matrix.total_clients} clientes
                                     </td>
                                 </tr>

@@ -12,16 +12,26 @@
 /* Custom Scrollbar for Premium Feel */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
+  /* v7.6.6 (Ergonomía): barra HORIZONTAL visible para la Matriz de Pedidos.
+     Sin `height` la barra lateral no se dibuja y el usuario no sabe que
+     puede desplazarse para ver más columnas de producto. */
+  height: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(249, 115, 22, 0.2);
+  background: rgba(249, 115, 22, 0.45);
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(249, 115, 22, 0.5);
+  background: rgba(249, 115, 22, 0.8);
+}
+/* Firefox: barra fina pero visible */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(249, 115, 22, 0.45) rgba(0, 0, 0, 0.4);
 }
 
 .glass {
