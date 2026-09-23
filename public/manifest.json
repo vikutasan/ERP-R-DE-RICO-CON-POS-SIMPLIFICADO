@@ -6,21 +6,27 @@
     "scope": "/",
     "display": "standalone",
     "orientation": "any",
-    "theme_color": "#1e293b",
-    "background_color": "#0f172a",
+    "theme_color": "#c4b49a",
+    "background_color": "#c4b49a",
     "lang": "es",
     "icons": [
         {
-            "src": "/assets/logo.png",
+            "src": "/assets/logo_any.png",
             "sizes": "192x192",
             "type": "image/png",
             "purpose": "any"
         },
         {
-            "src": "/assets/logo.png",
+            "src": "/assets/logo_any.png",
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "any"
+        },
+        {
+            "src": "/assets/logo_maskable.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
         }
     ]
 }
