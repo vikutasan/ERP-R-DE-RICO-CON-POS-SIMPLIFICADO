@@ -1340,3 +1340,55 @@ Para que las tres zonas fijas convivan sin solaparse mal:
 - **§7.9** — No se modificaron URLs ni endpoints.
 - **Sin cambios de lógica de negocio ni de backend:** el diff es exclusivamente de
   presentación (CSS + clases de layout) y una guarda de nulidad en el render.
+
+---
+
+## 23. ENCABEZADO FIJO Y SCROLL VERTICAL EN LA MATRIZ (v7.6.7)
+
+### 23.1 Petición del usuario
+
+> *«Quiero que en la matriz de pedidos se deje fija la primer fila de que dice
+> Cliente, NUEZ, HIGO, PASAS, ESPOLVOREADO, MINIS, Total, Acciones y que el resto
+> de filas se les pueda escrolear hacia arriba o hacia abajo con una barra de
+> desplazamiento ubicada en la parte lateral derecha de la matriz para nunca
+> perder de vista el encabezado al editar o agregar un pedido.»*
+
+**Interpretación:** la v7.6.6 había dejado **dos** zonas fijas (encabezado arriba
+y totales abajo). El usuario quiere **solo el encabezado** fijo; la fila de
+totales debe desplazarse con el cuerpo. La barra de desplazamiento vertical debe
+ser **visible y agarrable** en el lateral derecho.
+
+### 23.2 Cambios aplicados
+
+| Archivo | Cambio |
+|---|---|
+| [`index.css`](index.css:13) | `.custom-scrollbar` pasa de `width: 4px` a **`width: 10px`** (barra **vertical** claramente visible y agarrable en el lateral derecho). Se conserva `height: 10px` para la barra horizontal |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:658) | El contenedor de la matriz mantiene `overflow-auto custom-scrollbar max-h-[70vh]` → scroll **vertical** (barra derecha) y **horizontal** (barra inferior), con altura acotada para que ambas barras sean alcanzables |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:660) | `<thead>` con `sticky top-0 z-20` y fondo sólido `bg-[#1a1410]` en cada celda → **la fila Cliente / NUEZ / HIGO / PASAS / ESPOLVOREADO / MINIS / Total / Acciones nunca se pierde de vista** |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:737) | `<tfoot>` **pierde** `sticky bottom-0 z-20` → la fila de totales ahora **se desplaza con el cuerpo**, tal como pidió el usuario. Se conserva el **nombre del producto sobre su total** (aporte de la v7.6.6) |
+
+### 23.3 Detalle técnico del apilado de capas (`z-index`)
+
+Tras este cambio quedan **dos** zonas fijas (antes tres):
+
+- **Columna «Cliente»** → `sticky left-0` + `z-30` (la más alta: siempre visible).
+- **Encabezado de productos** → `sticky top-0` + `z-20`.
+- **Fila de totales** → **ya no es fija** (fluye con el cuerpo).
+- Las celdas fijas usan **fondo sólido** `bg-[#1a1410]` (no translúcido) para que
+  el contenido que pasa por debajo no se transparente.
+
+### 23.4 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **23.35 s**.
+- **Backend:** **sin cambios** — el diff es exclusivamente de presentación.
+- **Commit:** `8189b19` — `v7.6.7 (Ergonomia): encabezado fijo en la Matriz de Pedidos + barra de scroll vertical visible`.
+- **Diff:** 2 archivos, 20 inserciones, 15 eliminaciones.
+
+### 23.5 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
+- **§7.9** — No se modificaron URLs ni endpoints.
+- **Sin cambios de lógica de negocio ni de backend:** el diff es exclusivamente de
+  presentación (CSS + clases de layout).
