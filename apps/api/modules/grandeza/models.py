@@ -22,6 +22,9 @@ class GrandezaProductConfig(Base):
     is_enabled = Column(Boolean, default=True)
     # DT-02 (Dinero): nunca Float. Numeric(12,2) = 10 enteros + 2 decimales.
     b2b_price = Column(Numeric(12, 2), nullable=False, default=0)  # Precio B2B Grandeza (distinto al precio tienda)
+    # Ergonomía (v7.6.5): orden de las columnas en la Matriz de Pedidos.
+    # Menor valor = más a la izquierda. NULL = al final (fallback por product_id).
+    display_order = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 

@@ -36,6 +36,19 @@ async def disable_grandeza_product(product_id: int, db: AsyncSession = Depends(g
         raise HTTPException(status_code=404, detail="Producto no encontrado en Grandeza")
     return {"message": "Producto deshabilitado de Grandeza"}
 
+@router.put("/products/order")
+async def reorder_grandeza_products(
+    data: schemas.GrandezaProductReorderRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    v7.6.5 (Ergonomía): fija el orden de las columnas de la Matriz de Pedidos.
+
+    Recibe `product_ids` en el orden deseado (izquierda → derecha).
+    """
+    aplicados = await grandeza_service.reorder_grandeza_products(db, data.product_ids)
+    return {"message": "Orden de columnas actualizado", "product_ids": aplicados}
+
 
 # ─── Clientes ─────────────────────────────────────────────────────────────────
 

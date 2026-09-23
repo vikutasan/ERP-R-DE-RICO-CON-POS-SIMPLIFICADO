@@ -92,7 +92,10 @@ class GrandezaService:
             select(GrandezaProductConfig)
             .options(selectinload(GrandezaProductConfig.product).selectinload(Product.technical_sheet))
             .where(GrandezaProductConfig.is_enabled == True)
-            .order_by(GrandezaProductConfig.id)
+            .order_by(
+                GrandezaProductConfig.display_order.asc().nulls_last(),
+                GrandezaProductConfig.product_id.asc(),
+            )
         )
         result = await db.execute(stmt)
         configs = result.scalars().all()
@@ -109,6 +112,7 @@ class GrandezaService:
                 "product_id": cfg.product_id,
                 "is_enabled": cfg.is_enabled,
                 "b2b_price": cfg.b2b_price,
+                "display_order": cfg.display_order,
                 "product_name": cfg.product.name if cfg.product else None,
                 "product_sku": cfg.product.sku if cfg.product else None,
                 "product_price": cfg.product.price if cfg.product else None,
@@ -142,6 +146,34 @@ class GrandezaService:
             config.is_enabled = False
             await db.flush()
         return config
+
+    async def reorder_grandeza_products(self, db: AsyncSession, product_ids: list):
+        """
+        v7.6.5 (Ergonomía): fija el orden de las columnas de la Matriz de Pedidos.
+
+        Recibe la lista de `product_id` en el orden deseado (izquierda → derecha)
+        y asigna `display_order = 1..N`. Los productos habilitados que NO vengan
+        en la lista quedan con `display_order = NULL` (al final, desempatados por
+        `product_id`), de modo que la operación es idempotente y no destructiva.
+        """
+        # 1. Limpiar el orden de todos los habilitados (los no listados caen al final).
+        todos = await db.execute(
+            select(GrandezaProductConfig).where(GrandezaProductConfig.is_enabled == True)
+        )
+        por_producto = {c.product_id: c for c in todos.scalars().all()}
+        for cfg in por_producto.values():
+            cfg.display_order = None
+
+        # 2. Asignar posiciones 1..N según el orden recibido.
+        aplicados = []
+        for posicion, pid in enumerate(product_ids, start=1):
+            cfg = por_producto.get(pid)
+            if cfg is not None:
+                cfg.display_order = posicion
+                aplicados.append(pid)
+
+        await db.flush()
+        return aplicados
 
     # ─── Clientes ─────────────────────────────────────────────────────────
 
@@ -1228,10 +1260,16 @@ class GrandezaService:
         pedidos = res.scalars().all()
 
         # 2. Productos habilitados en Grandeza (columnas de la tabla).
+        # v7.6.5 (Ergonomía): el orden de las columnas lo define `display_order`
+        # (menor = más a la izquierda). Si es NULL, cae al final y se desempata
+        # por `product_id` para mantener un orden estable.
         prods_res = await db.execute(
             select(GrandezaProductConfig)
             .where(GrandezaProductConfig.is_enabled == True)
-            .order_by(GrandezaProductConfig.product_id)
+            .order_by(
+                GrandezaProductConfig.display_order.asc().nulls_last(),
+                GrandezaProductConfig.product_id.asc(),
+            )
         )
         configs = prods_res.scalars().all()
         product_ids = [c.product_id for c in configs]

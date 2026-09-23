@@ -23,12 +23,19 @@ class GrandezaProductConfigResponse(BaseModel):
     product_id: int
     is_enabled: bool
     b2b_price: float
+    # v7.6.5 (Ergonomía): posición de la columna en la Matriz de Pedidos.
+    display_order: Optional[int] = None
     # Campos del producto anidado (para la vista)
     product_name: Optional[str] = None
     product_sku: Optional[str] = None
     product_price: Optional[float] = None  # Precio tienda
     order_lead_time_hours: Optional[float] = 0.0
     model_config = ConfigDict(from_attributes=True)
+
+
+class GrandezaProductReorderRequest(BaseModel):
+    """v7.6.5 (Ergonomía): orden deseado de las columnas (izquierda → derecha)."""
+    product_ids: List[int]
 
 
 # ─── Clientes Grandeza ────────────────────────────────────────────────────────
