@@ -1,8 +1,8 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v27.1 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Corrección de efectividad OCR (v27.1)
+> **Versión:** v27.2 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Correcciones de efectividad OCR (v27.1, v27.2)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
-> **Última actualización:** 22 Sep 2026
+> **Última actualización:** 23 Sep 2026
 > **Documentos relacionados:**
 > - [`CONTEXTO_SISTEMA_IA.md`](CONTEXTO_SISTEMA_IA.md) — Arquitectura del AI Gateway y reglas de resiliencia
 > - [`DOCUMENTACION_MODULO_POS.md`](DOCUMENTACION_MODULO_POS.md) — Módulo POS (consumidor de la voz y la visión)
@@ -1197,6 +1197,7 @@ El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP
 | v26.1 | 22 Sep 2026 | Fusión de la documentación de entrenamiento dentro del Centro de IA |
 | v26.2 | 22 Sep 2026 | Añadida la 4ª capacidad: OCR de pedidos (Parte III, sección 28) |
 | v27.1 | 23 Sep 2026 | Corrección de efectividad del OCR: tema oscuro, multi-PSM, respaldo determinista y panel de diagnóstico (sección 28.12) |
+| v27.2 | 23 Sep 2026 | 2ª corrección de efectividad: causa raíz real = `uvicorn` del `api` sin `--reload` (endpoint 404); limpieza del prefijo «Cliente:» y match de productos contra todo el catálogo (sección 28.13) |
 
 ---
 
@@ -1500,6 +1501,62 @@ Tesseract lee texto  →  LLM estructura  →  si el LLM falla, regex de respald
 
 El operador **siempre** recibe una propuesta si el OCR leyó algo, y **siempre** puede ver qué leyó
 realmente el OCR para decidir si el problema es la imagen o el modelo.
+
+### 28.13 Segunda corrección de efectividad (v27.2 — Fase G)
+
+**Síntoma reportado:** tras la Fase F, el operador volvió a reportar «**sigue sin ser capaz de leer
+nada**». El motor, probado de forma aislada, sí leía; pero desde la UI el resultado seguía siendo
+inútil.
+
+**Causa raíz real (infraestructura — la más importante):** el contenedor `api` ejecutaba `uvicorn`
+**sin la bandera `--reload`** y llevaba **2 horas** en marcha. El código de las Fases A/B/C está
+montado por volumen (`./apps/api:/app`), pero el proceso ya tenía los módulos viejos en memoria y
+**nunca recargó** los archivos nuevos. Resultado: el endpoint `POST /api/v1/grandeza/order-requests/
+ocr-extract` **no existía** en el proceso en vivo y devolvía **HTTP 404 `{"detail":"Not Found"}`**.
+
+Evidencia objetiva (rutas en `/openapi.json`):
+
+| Métrica | Antes del `restart` | Después del `restart` |
+|---|---|---|
+| Rutas totales | 173 | **181** |
+| Rutas `order-requests/*` | 0 | **7** |
+| Rutas `ocr/*` | 0 | **2** |
+
+> **Lección de operación (crítica):** el servicio `api` **sí** está montado por volumen, pero su
+> `uvicorn` corre **sin `--reload`**. Por lo tanto, **cualquier cambio en `apps/api/` exige
+> `docker compose restart api`**. No basta con guardar el archivo: el proceso en vivo conserva los
+> módulos antiguos. Esta fue la verdadera razón del «no lee nada», no el OCR.
+
+**Defectos adicionales corregidos (calidad del resultado):**
+
+| # | Archivo | Defecto | Corrección |
+|---|---|---|---|
+| 1 | [`ocr.py`](../../ai-local/app/engines/ocr.py) | `extraer_candidato_cliente()` tomaba la primera línea del encabezado **literal**, conservando el prefijo `"Cliente: "`. El nombre resultante (`"Cliente: Abarrotes La Esquina"`) no matcheaba el directorio → `cliente_match: "manual"`, `cliente_id: null`. | Nueva función `_limpiar_nombre_cliente()` con la regex `_RE_ETIQUETA_CLIENTE`, que elimina `Cliente:`, `Nombre:`, `Contacto:`, `Razón Social:`, `Negocio:`, `Tienda:`, `Para:`, `De:`, `A:` (repetible hasta 3 veces) y limpia comillas y dos puntos residuales. |
+| 2 | [`service.py`](../../apps/api/modules/grandeza/service.py) | `resolver_productos_ocr()` solo matcheaba contra `GrandezaProductConfig` con `is_enabled=True`. En la BD real solo hay **5 productos habilitados** (`ESPOLVOREADO`, `HIGO`, `MINIS`, `NUEZ`, `PASAS`), así que `bolillo`/`concha`/`telera` devolvían `producto_id: null` y `requiere_revision: true`. | El match ahora se hace contra **TODO el catálogo de productos** (el cliente puede pedir cualquiera), **priorizando** los habilitados para Grandeza. Se exige un mínimo de **4 caracteres** en el match fuzzy para evitar falsos positivos con palabras cortas. |
+
+**Verificación end-to-end (tras `restart api` + rebuild de `ia-local`):**
+
+| Campo | Antes (Fase F) | Después (Fase G) |
+|---|---|---|
+| `cliente_nombre` | `"Cliente: Abarrotes La Esquina"` | **`"Abarrotes La Esquina"`** |
+| `bolillo` → `producto_id` | `null` | **5** (`BOLILLO ARTESANAL MEDIANO`) |
+| `concha` → `producto_id` | `null` | **54** (`CONCHA DE CANELA GRANDE`) |
+| `telera` → `producto_id` | `null` | **3** |
+| `requiere_revision` | `true` (los 3) | **`false`** (los 3) |
+
+El `cliente_match` permanece en `"manual"` cuando el nombre no existe en el directorio: es el
+comportamiento correcto (el operador lo elige en la UI). El motor **nunca** inventa un `client_id`.
+
+**Regla de operación consolidada (obligatoria para futuros cambios):**
+
+```
+Cambio en ai-local/app/  →  docker compose -f docker-compose.ai.yml build ia-local
+                            docker compose -f docker-compose.ai.yml up -d --force-recreate ia-local
+                            (esperar ~90 s a que quede "healthy")
+
+Cambio en apps/api/      →  docker compose restart api
+                            (el uvicorn NO tiene --reload)
+```
 
 ---
 
