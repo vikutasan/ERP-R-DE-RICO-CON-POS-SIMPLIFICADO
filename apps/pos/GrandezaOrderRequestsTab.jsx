@@ -904,7 +904,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                             Agrégalos en la pestaña «Clientes» antes de capturar pedidos.
                                         </p>
                                     )}
-                                    {ocrPropuesta.cliente_nombre && !ocrEdit.cliente_id && (
+                                    {ocrPropuesta && ocrPropuesta.cliente_nombre && !ocrEdit.cliente_id && (
                                         <p className="text-xs font-bold text-amber-300 mt-1">
                                             La IA propuso: «{ocrPropuesta.cliente_nombre}»
                                             {ocrPropuesta.cliente_telefono ? ` (${ocrPropuesta.cliente_telefono})` : ''}
