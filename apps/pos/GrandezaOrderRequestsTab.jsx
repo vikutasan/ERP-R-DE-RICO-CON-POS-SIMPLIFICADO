@@ -63,7 +63,20 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
     const [ocrPreview, setOcrPreview] = useState(null);       // dataURL de la captura
     const [ocrEdit, setOcrEdit] = useState(null);             // { cliente_id, items: [{producto_id, cantidad}] }
     const [ocrSaving, setOcrSaving] = useState(false);
+    // Captura MANUAL de un pedido (sin captura de pantalla). Reutiliza el
+    // mismo editor que el panel OCR: cliente + renglones producto/cantidad.
+    // Necesario porque la matriz superior solo muestra a quienes YA pidieron
+    // (D-4), así que no hay forma de dar de alta un pedido desde cero.
+    const [manualMode, setManualMode] = useState(false);
     const fileInputRef = React.useRef(null);
+
+    // Directorio COMPLETO de clientes activos de Grandeza.
+    // El selector de cliente del panel OCR NO puede usar `matrix.rows`: la
+    // matriz solo trae clientes que YA tienen pedido para esa fecha (D-4).
+    // Al capturar un pedido nuevo (el caso normal del OCR), ese cliente no
+    // está en la matriz y el dropdown quedaría vacío. Por eso se carga el
+    // directorio aparte, una sola vez.
+    const [clientesDirectorio, setClientesDirectorio] = useState([]);
 
     const notify = (text, type = 'success') => {
         if (onStatus) onStatus(text, type);
@@ -107,8 +120,21 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
         }
     }, []);
 
+    const fetchClientesDirectorio = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_BASE}/grandeza/clients?active_only=true`);
+            if (res.ok) {
+                const data = await res.json();
+                setClientesDirectorio(Array.isArray(data) ? data : []);
+            }
+        } catch (e) {
+            console.error('Error fetching clientes directorio:', e);
+        }
+    }, []);
+
     useEffect(() => { fetchConfig(); }, [fetchConfig]);
     useEffect(() => { fetchMatrix(deliveryDate); }, [deliveryDate, fetchMatrix]);
+    useEffect(() => { fetchClientesDirectorio(); }, [fetchClientesDirectorio]);
 
     // ─── Config ───────────────────────────────────────────────────────────────
 
@@ -289,7 +315,9 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
 
             // Catálogos reales para que el ERP haga el match en cascada.
             const productos_catalogo = (matrix?.products || []).map(p => p.product_name);
-            const clientes_catalogo = (matrix?.rows || []).map(r => r.client_name);
+            // El match de cliente se hace contra el directorio COMPLETO, no
+            // contra la matriz (que solo trae a quienes ya pidieron).
+            const clientes_catalogo = clientesDirectorio.map(c => c.name);
 
             const res = await fetch(`${API_BASE}/grandeza/order-requests/ocr-extract`, {
                 method: 'POST',
@@ -354,8 +382,23 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
         setOcrPropuesta(null);
         setOcrEdit(null);
         setOcrError(null);
+        setManualMode(false);
         if (ocrPreview) URL.revokeObjectURL(ocrPreview);
         setOcrPreview(null);
+    };
+
+    /**
+     * Abre el editor en modo CAPTURA MANUAL (sin captura de pantalla).
+     * Arranca con un renglón vacío para que el operador lo llene.
+     */
+    const abrirManual = () => {
+        setOcrPropuesta(null);
+        setOcrError(null);
+        setManualMode(true);
+        setOcrEdit({
+            cliente_id: '',
+            items: [{ producto_id: '', producto: '', cantidad: 0, confianza: 0, requiere_revision: false }],
+        });
     };
 
     const setOcrItemField = (index, field, value) => {
@@ -565,6 +608,14 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             {ocrLoading ? '🔍 Leyendo…' : '📷 Subir captura'}
                         </button>
                         <button
+                            onClick={abrirManual}
+                            disabled={ocrLoading}
+                            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                            title="Captura un pedido a mano, sin captura de pantalla"
+                        >
+                            ✍️ Pedido manual
+                        </button>
+                        <button
                             onClick={dispatchToProduction}
                             disabled={dispatching || !matrix || matrix.rows.length === 0}
                             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
@@ -705,11 +756,11 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 Fondo SÓLIDO casi negro (no translúcido) para máximo contraste
                 sobre el fondo de madera. Todo el texto es blanco puro o de
                 tono muy claro; los bordes son gruesos y de color vivo. */}
-            {(ocrLoading || ocrError || ocrPropuesta) && (
+            {(ocrLoading || ocrError || ocrPropuesta || manualMode) && (
                 <div className="bg-black border-2 border-purple-400 rounded-3xl p-6 shadow-2xl shadow-purple-900/60">
                     <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
                         <h2 className="text-lg font-black uppercase tracking-widest text-white">
-                            📷 Lectura de Captura (IA)
+                            {manualMode ? '✍️ Captura Manual de Pedido' : '📷 Lectura de Captura (IA)'}
                         </h2>
                         <button
                             onClick={cancelarOcr}
@@ -720,10 +771,21 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     </div>
 
                     <p className="text-xs text-white mb-4 leading-relaxed">
-                        La IA <strong className="text-amber-300">propone</strong>; tú{' '}
-                        <strong className="text-amber-300">confirmas</strong>. Revisa el cliente y las
-                        cantidades antes de guardar. Nada se registra hasta que presiones
-                        «Confirmar pedido».
+                        {manualMode ? (
+                            <>
+                                Elige el <strong className="text-amber-300">cliente</strong> y agrega
+                                los <strong className="text-amber-300">renglones</strong> de producto
+                                con su cantidad. Nada se registra hasta que presiones
+                                «Confirmar pedido».
+                            </>
+                        ) : (
+                            <>
+                                La IA <strong className="text-amber-300">propone</strong>; tú{' '}
+                                <strong className="text-amber-300">confirmas</strong>. Revisa el cliente y las
+                                cantidades antes de guardar. Nada se registra hasta que presiones
+                                «Confirmar pedido».
+                            </>
+                        )}
                     </p>
 
                     {ocrLoading && (
@@ -739,8 +801,14 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             </p>
                             <p className="text-sm font-bold text-white">{ocrError}</p>
                             <p className="text-xs text-white mt-2">
-                                Puedes capturar el pedido a mano en la matriz de arriba.
+                                Puedes capturar el pedido a mano con el botón de abajo.
                             </p>
+                            <button
+                                onClick={abrirManual}
+                                className="mt-3 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                            >
+                                ✍️ Capturar pedido manualmente
+                            </button>
 
                             {/* Diagnóstico: qué leyó realmente el OCR.
                                 Sirve para distinguir "la imagen no tiene texto
@@ -766,9 +834,10 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         </div>
                     )}
 
-                    {!ocrLoading && ocrPropuesta && ocrEdit && (
+                    {!ocrLoading && ocrEdit && (ocrPropuesta || manualMode) && (
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            {/* Vista previa + metadatos */}
+                            {/* Vista previa + metadatos (solo en modo OCR) */}
+                            {ocrPropuesta && (
                             <div className="lg:col-span-1 space-y-4">
                                 {ocrPreview && (
                                     <img
@@ -806,9 +875,10 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     </div>
                                 )}
                             </div>
+                            )}
 
                             {/* Editor de la propuesta */}
-                            <div className="lg:col-span-2 space-y-4">
+                            <div className={ocrPropuesta ? 'lg:col-span-2 space-y-4' : 'lg:col-span-3 space-y-4'}>
                                 <div>
                                     <label className="block text-xs font-black uppercase tracking-widest text-orange-400 mb-2">
                                         Cliente
@@ -819,12 +889,18 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                         className="w-full bg-white/10 border-2 border-white/30 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-amber-400 outline-none"
                                     >
                                         <option value="" className="bg-gray-900">— Selecciona un cliente —</option>
-                                        {(matrix?.rows || []).map(r => (
-                                            <option key={r.client_id} value={r.client_id} className="bg-gray-900">
-                                                {r.client_name}{r.phone ? ` · ${r.phone}` : ''}
+                                        {clientesDirectorio.map(c => (
+                                            <option key={c.id} value={c.id} className="bg-gray-900">
+                                                {c.name}{c.phone ? ` · ${c.phone}` : ''}
                                             </option>
                                         ))}
                                     </select>
+                                    {clientesDirectorio.length === 0 && (
+                                        <p className="text-xs font-bold text-red-300 mt-1">
+                                            No hay clientes activos en el directorio de Grandeza.
+                                            Agrégalos en la pestaña «Clientes» antes de capturar pedidos.
+                                        </p>
+                                    )}
                                     {ocrPropuesta.cliente_nombre && !ocrEdit.cliente_id && (
                                         <p className="text-xs font-bold text-amber-300 mt-1">
                                             La IA propuso: «{ocrPropuesta.cliente_nombre}»
