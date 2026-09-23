@@ -1563,10 +1563,10 @@ export const GrandezaParamsUI = ({ onBack }) => {
                 </div>
 
                 {/* Tabs de Navegación Interna
-                    Móvil: se envuelven en varias filas (flex-wrap) para que las 5
-                    pestañas sean SIEMPRE visibles sin scroll horizontal oculto.
-                    Escritorio: fila única con scroll horizontal si no cabe. */}
-                <div className="flex flex-wrap md:flex-nowrap gap-x-4 md:gap-x-8 gap-y-1 px-2 mt-4 md:overflow-x-auto md:whitespace-nowrap custom-scrollbar pb-2">
+                    Fila ÚNICA con scroll horizontal (swipe en móvil). Se conserva
+                    el gesto horizontal que el usuario prefiere. La barra de scroll
+                    es visible y funcional (clase tabs-scrollbar, definida abajo). */}
+                <div className="tabs-scrollbar flex gap-3 md:gap-8 px-2 mt-4 overflow-x-auto whitespace-nowrap pb-3">
                     {[
                         { id: 'products', label: 'Productos Vinculados', icon: '🍞' },
                         { id: 'clients', label: 'Directorio de Clientes', icon: '👥' },
@@ -1577,17 +1577,14 @@ export const GrandezaParamsUI = ({ onBack }) => {
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`pb-3 px-2 font-black uppercase tracking-widest text-xs md:text-sm transition-all relative shrink-0 ${
+                            className={`pb-2 px-3 py-2 rounded-t-xl font-black uppercase tracking-wider text-xs md:text-sm transition-all relative shrink-0 border-b-2 ${
                                 activeTab === tab.id
-                                ? 'text-amber-400'
-                                : 'text-gray-500 hover:text-gray-300'
+                                ? 'text-amber-300 border-amber-400 bg-white/5'
+                                : 'text-gray-200 border-transparent hover:text-white hover:bg-white/5'
                             }`}
                         >
                             <span className="mr-2">{tab.icon}</span>
                             {tab.label}
-                            {activeTab === tab.id && (
-                                <div className="absolute bottom-[-8px] left-0 w-full h-[3px] bg-amber-400 rounded-t-full shadow-[0_0_10px_rgba(251,191,36,0.8)]"></div>
-                            )}
                         </button>
                     ))}
                 </div>
@@ -1620,6 +1617,20 @@ export const GrandezaParamsUI = ({ onBack }) => {
                 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
                 .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
                 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(59,130,246,0.5); }
+
+                /* Barra de pestañas: scroll HORIZONTAL visible y funcional en móvil.
+                   Se define altura (height) para el eje horizontal, un thumb ámbar
+                   con contraste y soporte Firefox (scrollbar-width/scrollbar-color). */
+                .tabs-scrollbar {
+                    scrollbar-width: thin;
+                    scrollbar-color: rgba(251,191,36,0.7) rgba(255,255,255,0.06);
+                    -webkit-overflow-scrolling: touch;
+                }
+                .tabs-scrollbar::-webkit-scrollbar { height: 6px; }
+                .tabs-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.06); border-radius: 10px; }
+                .tabs-scrollbar::-webkit-scrollbar-thumb { background: rgba(251,191,36,0.7); border-radius: 10px; }
+                .tabs-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(251,191,36,1); }
+
                 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
             `}</style>
         </div>
