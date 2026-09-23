@@ -1289,6 +1289,43 @@ const [currentUser, setCurrentUser] = useState(sesionInicial?.user || null);
 
 ---
 
+### 16.14 Icono PWA "Mordido" y Dos CafÃ©s Distintos: Zona Segura Maskable y Color de Fondo Desalineado (23/Septiembre/2026)
+
+**Commit:** `public/manifest.json`, `public/assets/logo_maskable.png`, `public/assets/logo_any.png`, `index.html` â€” `75ff245`.
+
+**Contexto del Problema:**
+Al instalar la app en el mÃ³vil, el usuario reportÃ³ **dos defectos visuales**:
+1. El icono quedaba **"mordido" en los aleros laterales de la casita** (el logo se recortaba por los lados).
+2. Al abrir la app, la **pantalla de arranque** mostraba el logo sobre un fondo cafÃ©, pero el **fondo del icono** era **otro cafÃ© distinto** â€” se veÃ­a **"parchado"**.
+
+**Causa RaÃ­z (dos causas independientes):**
+
+**Causa 1 â€” Zona segura maskable violada.** El icono declarado como `"purpose": "maskable"` (`logo_maskable.jpg`) tenÃ­a el contenido **casi a sangre**: el *bounding box* del logo medÃ­a `(16, 124, 1006, 858)` sobre un lienzo de 1024Ã—1024, es decir, **solo 16 px de margen izquierdo y 18 px de derecho**. Android aplica una **mÃ¡scara circular** y garantiza que solo el **80 % central del diÃ¡metro** quede visible (zona segura). Todo lo que caiga fuera de ese cÃ­rculo se recorta â†’ los aleros de la casita quedaban cortados.
+
+**Causa 2 â€” Dos tonos de cafÃ© distintos.** El fondo del icono era `#c2af91` (194, 175, 145) mientras que el `theme_color`/`background_color` del manifest (el fondo de la pantalla de arranque) era `#c4b49a` (196, 180, 154). Dos cafÃ©s casi iguales pero **no idÃ©nticos** producen el efecto "parchado". AdemÃ¡s, `index.html` aÃºn declaraba `<meta name="theme-color" content="#1e293b" />` (azul oscuro), **contradiciendo** al manifest.
+
+**SoluciÃ³n:**
+1. Se generaron **dos iconos PNG nuevos** de 512Ã—512 con un **Ãºnico tono de fondo `#c4b49a`** (el mismo del manifest):
+   - `public/assets/logo_maskable.png` â€” el logo escalado al **76 %** del lienzo (margen del 12 % por lado), de modo que **nada** cae fuera de la zona segura maskable.
+   - `public/assets/logo_any.png` â€” el logo escalado al **92 %**, para el icono `"any"` (que no lleva mÃ¡scara circular).
+2. Se recortÃ³ el logo a su **contenido real** (se eliminÃ³ el fondo negro del PNG original de 1024Ã—785) y se **aplanÃ³ el canal alfa sobre el fondo cafÃ©** para evitar halos oscuros en los bordes.
+3. Se actualizÃ³ `public/manifest.json` para apuntar a los PNG nuevos y se **retirÃ³** el JPEG maskable.
+4. Se alineÃ³ `index.html`: `<meta name="theme-color" content="#c4b49a" />`.
+
+**Evidencia de AceptaciÃ³n:**
+- **GeneraciÃ³n:** `logo_maskable.png` 512Ã—512, esquina `(196, 180, 154)` = `#c4b49a`, centro `(198, 137, 65)` (cafÃ© del logo). `logo_any.png` 512Ã—512.
+- **Manifest:** los tres iconos apuntan a PNG; `theme_color` = `background_color` = `#c4b49a`.
+- **`index.html`:** `theme-color` = `#c4b49a` (ya no `#1e293b`).
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo icono declarado `"purpose": "maskable"` mantenga su contenido dentro de la **zona segura** (cÃ­rculo del 80 % central). Regla prÃ¡ctica: el contenido no debe superar el **76â€“80 %** del lienzo, con margen uniforme por los cuatro lados. Un icono a sangre **se recorta** en Android.
+- **OBLIGATORIO** que el **fondo del icono** y el `background_color`/`theme_color` del manifest sean **exactamente el mismo valor hex**. Dos tonos "casi iguales" producen el efecto parchado en la pantalla de arranque.
+- **OBLIGATORIO** que el `<meta name="theme-color">` de `index.html` **coincida** con el `theme_color` del manifest. Un valor desalineado genera un destello de color incorrecto al abrir la app.
+- **OBLIGATORIO** que los iconos PWA sean **PNG** (no JPEG) cuando lleven fondo plano: el JPEG introduce artefactos de compresiÃ³n en los bordes del logo.
+- **REGLA DE DIAGNÃ“STICO:** si un icono PWA se ve "mordido" o recortado, la causa es la **zona segura maskable**, no el diseÃ±o del logo. Si la pantalla de arranque se ve "parchada", comparar el hex del fondo del icono contra el `background_color` del manifest.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
