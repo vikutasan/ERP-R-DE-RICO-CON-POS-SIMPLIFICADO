@@ -114,6 +114,47 @@ const borrarSesionPersistida = () => {
     try { localStorage.removeItem(SESSION_STORAGE_KEY); } catch (e) { /* no-op */ }
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// v19.5 — ENLACE DE ACCESO LIMPIO (`?logout=1`)
+// ═══════════════════════════════════════════════════════════════════════════
+// PROPÓSITO: entregar a un colaborador un enlace que SIEMPRE muestre la
+// pantalla de PIN, aunque el teléfono tenga una sesión guardada (por ejemplo,
+// si el dueño probó la app y quedó su sesión en el dispositivo).
+//
+// IMPORTANTE (SEGURIDAD): esto NO es una capa de seguridad. La seguridad real
+// es el PIN + los permisos del perfil. Este parámetro solo garantiza que se
+// vea el login; cualquiera con la URL pública llega igual al login.
+//
+// Se ejecuta ANTES de leer la sesión persistida, para que `leerSesionPersistida`
+// devuelva `null` y el shell renderice el `LoginUI`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Detecta `?logout=1` (o `?logout=true`) en la URL actual. */
+const esAccesoLimpio = () => {
+    try {
+        const valor = new URLSearchParams(window.location.search).get('logout');
+        return valor === '1' || valor === 'true';
+    } catch (e) {
+        return false;
+    }
+};
+
+/**
+ * Purga la sesión y limpia el parámetro `?logout` de la URL (sin recargar),
+ * para que un refresh posterior no vuelva a purgar ni quede el parámetro a la
+ * vista. Devuelve `true` si se aplicó el acceso limpio.
+ */
+const aplicarAccesoLimpio = () => {
+    if (!esAccesoLimpio()) return false;
+    borrarSesionPersistida();
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('logout');
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    } catch (e) { /* no-op: si falla, la sesión ya fue purgada */ }
+    return true;
+};
+
 const INITIAL_CATEGORIES = [
     { name: "1.-EMPAQUE Y PAN BLANCO", visionEnabled: true },
     { name: "2.-A - B", visionEnabled: true },
@@ -148,7 +189,14 @@ export const ExperimentCenterUI = () => {
     // v19.4: la sesión se RESTAURA desde localStorage al arrancar. Si existe y
     // no superó el timeout de inactividad, el usuario entra directo sin PIN.
     // Esto es lo que arregla el logout al cambiar de app en el móvil.
-    const [sesionInicial] = useState(() => leerSesionPersistida());
+    //
+    // v19.5: si la URL trae `?logout=1`, se PURGA la sesión ANTES de leerla,
+    // de modo que el shell renderice SIEMPRE el LoginUI. Es el "enlace de
+    // acceso limpio" para entregar a colaboradores.
+    const [sesionInicial] = useState(() => {
+        aplicarAccesoLimpio();
+        return leerSesionPersistida();
+    });
 
     const [isAuthenticated, setIsAuthenticated] = useState(() => !!sesionInicial);
     const [categories, setCategories] = useState(INITIAL_CATEGORIES);
