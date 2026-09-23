@@ -570,8 +570,11 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 </label>
             </div>
 
-            {/* ── Matriz ── */}
-            <div className="bg-black/40 border border-white/10 rounded-3xl p-6 backdrop-blur-sm">
+            {/* ── Matriz ──
+                Fondo SÓLIDO casi negro (no translúcido) para máximo contraste
+                sobre el fondo de madera. Encabezados en blanco/ámbar vivo,
+                inputs con fondo sólido y bordes visibles. */}
+            <div className="bg-[#0d0b09] border-2 border-amber-500/30 rounded-3xl p-6 shadow-2xl">
                 <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
                     <h2 className="text-lg font-black uppercase tracking-widest text-amber-400">
                         📋 Matriz de Pedidos
@@ -626,17 +629,17 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                 </div>
 
                 {loading && (
-                    <div className="text-center py-10 text-gray-500 text-sm font-bold uppercase tracking-widest animate-pulse">
+                    <div className="text-center py-10 text-amber-300 text-sm font-bold uppercase tracking-widest animate-pulse">
                         Cargando matriz…
                     </div>
                 )}
 
                 {!loading && matrix && matrix.rows.length === 0 && (
-                    <div className="text-center py-12 border border-dashed border-white/10 rounded-2xl">
-                        <p className="text-gray-500 text-sm font-bold uppercase tracking-widest">
+                    <div className="text-center py-12 border-2 border-dashed border-amber-500/30 rounded-2xl bg-black/30">
+                        <p className="text-white text-sm font-bold uppercase tracking-widest">
                             Sin pedidos registrados para esta fecha
                         </p>
-                        <p className="text-gray-600 text-xs mt-2">
+                        <p className="text-gray-300 text-xs mt-2">
                             Solo aparecen los clientes que respondieron (D-4).
                         </p>
                     </div>
@@ -646,30 +649,30 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                     <div className="overflow-x-auto custom-scrollbar">
                         <table className="w-full text-sm border-collapse">
                             <thead>
-                                <tr className="border-b border-white/10">
-                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-gray-500 sticky left-0 bg-[#1a1410] z-10">
+                                <tr className="border-b-2 border-amber-500/40 bg-black/60">
+                                    <th className="text-left px-3 py-3 text-[10px] font-black uppercase tracking-widest text-amber-300 sticky left-0 bg-[#1a1410] z-10">
                                         Cliente
                                     </th>
                                     {matrix.products.map(p => (
-                                        <th key={p.product_id} className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-gray-500 min-w-[90px]">
+                                        <th key={p.product_id} className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[90px]">
                                             {p.product_name}
                                         </th>
                                     ))}
                                     <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-400 min-w-[70px]">
                                         Total
                                     </th>
-                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-gray-500 min-w-[110px]">
+                                    <th className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300 min-w-[110px]">
                                         Acciones
                                     </th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {matrix.rows.map(row => (
-                                    <tr key={row.client_id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                                    <tr key={row.client_id} className="border-b border-white/10 hover:bg-amber-500/10">
                                         <td className="px-3 py-2 sticky left-0 bg-[#1a1410] z-10">
                                             <div className="font-bold text-white text-xs">{row.client_name}</div>
                                             <div className="flex items-center gap-2 mt-0.5">
-                                                {row.phone && <span className="text-[10px] text-gray-500">{row.phone}</span>}
+                                                {row.phone && <span className="text-[10px] text-gray-300">{row.phone}</span>}
                                                 {row.source === 'OCR' && (
                                                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-black uppercase">
                                                         OCR
@@ -689,7 +692,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                                     min="0"
                                                     value={qtyOf(row, p.product_id)}
                                                     onChange={(e) => setQty(row, p.product_id, e.target.value)}
-                                                    className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-center text-sm font-bold text-white focus:border-amber-400 outline-none"
+                                                    className="w-16 bg-black/50 border-2 border-white/25 rounded-lg px-2 py-1.5 text-center text-sm font-bold text-white focus:border-amber-400 focus:bg-black/70 outline-none"
                                                 />
                                             </td>
                                         ))}
@@ -731,7 +734,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                                     <td className="px-3 py-3 text-center font-black text-amber-400 text-base">
                                         {grandTotal()}
                                     </td>
-                                    <td className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-gray-500">
+                                    <td className="px-3 py-3 text-center text-[10px] font-black uppercase tracking-widest text-amber-300">
                                         {matrix.total_clients} clientes
                                     </td>
                                 </tr>
@@ -745,7 +748,7 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                         <p className="text-xs font-black uppercase tracking-widest text-blue-300 mb-2">
                             Resultado del envío a Producción
                         </p>
-                        <p className="text-sm text-gray-300">
+                        <p className="text-sm text-white font-semibold">
                             {dispatchResult.orders_created} órdenes nuevas · {dispatchResult.orders_updated} actualizadas · {dispatchResult.total_units} piezas
                         </p>
                     </div>
