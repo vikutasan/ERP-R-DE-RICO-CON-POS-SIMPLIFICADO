@@ -1136,3 +1136,125 @@ descargar el bundle nuevo.
 - **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
 - **§7.9** — No se modificaron URLs ni endpoints.
 - **Sin cambios de lógica:** el diff es exclusivamente de clases de presentación.
+
+---
+
+## 21. ERGONOMÍA — ORDEN DE LAS COLUMNAS DE PRODUCTO (v7.6.5)
+
+### 21.1 Motivo
+
+El usuario solicitó: *«VAMOS A MEJORAR LA ERGONOMÍA DE LA MATRIZ DE PEDIDOS, LAS
+COLUMNAS DE PRODUCTOS LAS VAMOS A COLOCAR EN EL SIGUIENTE ORDEN DE IZQUIERDA A
+DERECHA: NUEZ, HIGO, PASAS, ESPOLVOREADO Y MINIS»*.
+
+### 21.2 Diagnóstico: por qué el orden era arbitrario
+
+En [`get_order_matrix()`](apps/api/modules/grandeza/service.py:1209) las columnas
+se construían desde `GrandezaProductConfig` ordenadas por **`product_id`**:
+
+```python
+.order_by(GrandezaProductConfig.product_id)
+```
+
+Ese orden es el **orden de alta en el catálogo**, no el orden de trabajo real.
+Los IDs resultantes eran:
+
+| product_id | Producto |
+|---|---|
+| 67 | ESPOLVOREADO |
+| 76 | HIGO |
+| 103 | MINIS |
+| 112 | NUEZ |
+| 119 | PASAS |
+
+Es decir, la matriz mostraba **ESPOLVOREADO, HIGO, MINIS, NUEZ, PASAS** — un orden
+sin relación con la secuencia de llenado del pan.
+
+### 21.3 Solución: columna `display_order` (configurable, no hardcodeada)
+
+Se añadió la columna **`display_order`** (Integer, nullable, indexada) a la tabla
+`grandeza_product_config`. El orden de las columnas pasa a ser **dato**, no código:
+
+- **Menor valor = más a la izquierda.**
+- **`NULL` = al final**, desempatado por `product_id` (orden estable).
+- Es **editable desde la UI** mediante un endpoint dedicado, sin tocar código.
+
+#### Orden sembrado (el solicitado por el usuario)
+
+| Posición | Producto | product_id |
+|---|---|---|
+| 1 | NUEZ | 112 |
+| 2 | HIGO | 76 |
+| 3 | PASAS | 119 |
+| 4 | ESPOLVOREADO | 67 |
+| 5 | MINIS | 103 |
+
+### 21.4 Cambios por archivo
+
+| Archivo | Cambio |
+|---|---|
+| [`apps/api/modules/grandeza/models.py`](apps/api/modules/grandeza/models.py:13) | Nueva columna `display_order = Column(Integer, nullable=True, index=True)` en `GrandezaProductConfig` |
+| [`apps/api/modules/grandeza/service.py`](apps/api/modules/grandeza/service.py:1209) | `get_order_matrix()` y `get_grandeza_products()` ordenan por `display_order ASC NULLS LAST, product_id ASC` |
+| [`apps/api/modules/grandeza/service.py`](apps/api/modules/grandeza/service.py:146) | Nuevo método `reorder_grandeza_products(db, product_ids)` |
+| [`apps/api/modules/grandeza/schemas.py`](apps/api/modules/grandeza/schemas.py:21) | `display_order` expuesto en `GrandezaProductConfigResponse` + nuevo `GrandezaProductReorderRequest` |
+| [`apps/api/modules/grandeza/router.py`](apps/api/modules/grandeza/router.py:39) | Nuevo endpoint `PUT /grandeza/products/order` |
+| [`apps/api/migrations_applied/migrate_grandeza_product_display_order.py`](apps/api/migrations_applied/migrate_grandeza_product_display_order.py:1) | Migración idempotente: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` + siembra del orden |
+| **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+| **Frontend** | **CERO cambios** ✅ (el orden llega ya resuelto en `matrix.products`) |
+
+### 21.5 Endpoint de reordenamiento
+
+```
+PUT /api/v1/grandeza/products/order
+Body: { "product_ids": [112, 76, 119, 67, 103] }
+```
+
+Asigna `display_order = 1..N` en el orden recibido. Los productos habilitados que
+**no** vengan en la lista quedan con `display_order = NULL` (al final). La
+operación es **idempotente y no destructiva** (no borra ni deshabilita nada).
+
+### 21.6 Migración (§7.7)
+
+`create_all` **no altera** tablas existentes, por eso la migración usa
+`ALTER TABLE grandeza_product_config ADD COLUMN IF NOT EXISTS display_order INTEGER`
+(idempotente). Reutiliza el motor de la propia app (`core.database.engine`) para
+no duplicar credenciales ni depender de la forma del `DATABASE_URL` del entorno.
+
+Ejecución:
+
+```
+docker compose exec -T api python -c "import sys; sys.path.insert(0,'/app'); exec(open('/app/migrations_applied/migrate_grandeza_product_display_order.py').read())"
+```
+
+Salida verificada:
+
+```
+   [1] 112 — NUEZ
+   [2] 76 — HIGO
+   [3] 119 — PASAS
+   [4] 67 — ESPOLVOREADO
+   [5] 103 — MINIS
+```
+
+### 21.7 Verificación
+
+- **Backend:** `get_order_matrix()` devuelve
+  `PRODUCTS: ['NUEZ', 'HIGO', 'PASAS', 'ESPOLVOREADO', 'MINIS']` y
+  `TOTALS: ['NUEZ', 'HIGO', 'PASAS', 'ESPOLVOREADO', 'MINIS']` (orden consistente
+  entre encabezados y pie).
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **24.92 s**.
+- **Commit:** `98066ce` — `v7.6.5: ergonomia Matriz de Pedidos - orden de columnas configurable`.
+- **Diff:** 5 archivos, 150 inserciones, 2 eliminaciones.
+
+> **Nota operativa:** el contenedor `api` corre uvicorn **sin `--reload`**; tras
+> cambiar `apps/api/` es obligatorio `docker compose restart api`.
+
+### 21.8 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
+- **§7.6** — Se mantiene la carga anticipada (`selectinload`) en las consultas.
+- **§7.7** — Migración con `ADD COLUMN IF NOT EXISTS` (no se confió en `create_all`).
+- **§7.9** — El nuevo endpoint deriva de `CONFIG.API_BASE_URL` como el resto.
+- **Sin cambios de lógica de negocio:** solo se añadió un criterio de orden.
