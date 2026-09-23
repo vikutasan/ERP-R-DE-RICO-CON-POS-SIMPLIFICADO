@@ -1367,25 +1367,45 @@ ser **visible y agarrable** en el lateral derecho.
 | [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:660) | `<thead>` con `sticky top-0 z-20` y fondo sólido `bg-[#1a1410]` en cada celda → **la fila Cliente / NUEZ / HIGO / PASAS / ESPOLVOREADO / MINIS / Total / Acciones nunca se pierde de vista** |
 | [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:737) | `<tfoot>` **pierde** `sticky bottom-0 z-20` → la fila de totales ahora **se desplaza con el cuerpo**, tal como pidió el usuario. Se conserva el **nombre del producto sobre su total** (aporte de la v7.6.6) |
 
-### 23.3 Detalle técnico del apilado de capas (`z-index`)
+### 23.3 Corrección posterior (v7.6.8): la columna «Cliente» NO debe ser fija
 
-Tras este cambio quedan **dos** zonas fijas (antes tres):
+**Aclaración del usuario:**
 
-- **Columna «Cliente»** → `sticky left-0` + `z-30` (la más alta: siempre visible).
-- **Encabezado de productos** → `sticky top-0` + `z-20`.
+> *«Solo quería que dejaras fija la parte de arriba, no la columna de clientes.»*
+
+La v7.6.7 conservaba la columna «Cliente» con `sticky left-0` (herencia de la
+v7.6.6). El usuario pidió **únicamente** el encabezado fijo. Se retiró
+`sticky left-0` de las **tres** celdas de la primera columna:
+
+| Archivo | Cambio |
+|---|---|
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:662) | `<th>` «Cliente» pierde `sticky left-0` y `z-30`; conserva `bg-[#1a1410]` |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:681) | `<td>` del cuerpo pierde `sticky left-0`, `bg-[#1a1410]` y `z-10` |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:741) | `<td>` «TOTAL POR PRODUCTO» pierde `sticky left-0`, `bg-[#1a1410]` y `z-30` |
+
+### 23.4 Detalle técnico del apilado de capas (`z-index`)
+
+Tras esta corrección queda **una sola** zona fija (antes tres):
+
+- **Encabezado de productos** → `sticky top-0` + `z-20` (la única zona fija).
+- **Columna «Cliente»** → **ya no es fija** (se desplaza con el resto de columnas).
 - **Fila de totales** → **ya no es fija** (fluye con el cuerpo).
-- Las celdas fijas usan **fondo sólido** `bg-[#1a1410]` (no translúcido) para que
-  el contenido que pasa por debajo no se transparente.
+- Las celdas del encabezado usan **fondo sólido** `bg-[#1a1410]` (no translúcido)
+  para que el contenido que pasa por debajo no se transparente.
 
-### 23.4 Verificación
+### 23.5 Verificación
 
-- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+- **Frontend (v7.6.7):** `docker compose exec -T pos npx vite build` → exit code 0,
   **1829 módulos** transformados, build en **23.35 s**.
+- **Frontend (v7.6.8):** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **21.43 s**.
 - **Backend:** **sin cambios** — el diff es exclusivamente de presentación.
-- **Commit:** `8189b19` — `v7.6.7 (Ergonomia): encabezado fijo en la Matriz de Pedidos + barra de scroll vertical visible`.
-- **Diff:** 2 archivos, 20 inserciones, 15 eliminaciones.
+- **Commits:** `8189b19` (v7.6.7, encabezado fijo + scrollbar vertical) y
+  `d1ab333` (v7.6.8, retiro del `sticky` de la columna «Cliente»).
+- **Diff v7.6.7:** 2 archivos, 20 inserciones, 15 eliminaciones.
+- **Diff v7.6.8:** 1 archivo, 8 inserciones, 6 eliminaciones.
 
-### 23.5 Cumplimiento de las directivas (§7)
+### 23.6 Cumplimiento de las directivas (§7)
 
 - **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
 - **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
