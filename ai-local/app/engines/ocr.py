@@ -40,9 +40,20 @@ def _decodificar_imagen(imagen_base64: str) -> Image.Image:
 def _preprocesar(imagen: Image.Image) -> Image.Image:
     """Mejora la legibilidad para el OCR.
 
-    Las capturas de WhatsApp suelen tener texto claro sobre fondo oscuro.
-    Se escala x2 (Tesseract lee mejor letras grandes) y se aplica
-    autocontraste para separar el texto del fondo.
+    Las capturas de WhatsApp pueden venir en dos variantes:
+      - Tema CLARO: texto oscuro sobre fondo blanco.
+      - Tema OSCURO: texto claro sobre fondo casi negro.
+
+    Tesseract asume SIEMPRE texto oscuro sobre fondo claro. Si la captura
+    viene en tema oscuro y no se invierte, el OCR devuelve basura o nada.
+    Por eso se detecta el brillo promedio y se invierte cuando hace falta.
+
+    Pasos:
+      1. Escalar x2 si la imagen es pequena (Tesseract lee mejor letras grandes).
+      2. Detectar tema (oscuro/claro) por brillo promedio y normalizar a
+         texto oscuro sobre fondo claro.
+      3. Autocontraste para separar el texto del fondo.
+      4. Binarizar (umbral) para eliminar el ruido de compresion JPEG.
     """
     from PIL import ImageOps
 
@@ -51,7 +62,29 @@ def _preprocesar(imagen: Image.Image) -> Image.Image:
     if ancho < 1200:
         imagen = imagen.resize((ancho * 2, alto * 2), Image.LANCZOS)
 
+    # --- Deteccion de tema ---
+    # El histograma de una captura de chat es bimodal: fondo + texto.
+    # Si la MEDIANA de brillo es baja (<128), el fondo es oscuro y hay que
+    # invertir para que Tesseract vea texto oscuro sobre fondo claro.
+    histograma = imagen.histogram()
+    total_px = sum(histograma) or 1
+    acumulado = 0
+    mediana = 128
+    for valor, cuenta in enumerate(histograma):
+        acumulado += cuenta
+        if acumulado >= total_px / 2:
+            mediana = valor
+            break
+    if mediana < 128:
+        imagen = ImageOps.invert(imagen)
+
     imagen = ImageOps.autocontrast(imagen)
+
+    # --- Binarizacion ---
+    # Umbral fijo 160: por debajo -> negro (texto), por encima -> blanco.
+    # Elimina el ruido de compresion de WhatsApp, que es lo que mas confunde
+    # a Tesseract en capturas de pantalla.
+    imagen = imagen.point(lambda px: 255 if px > 160 else 0, mode="1")
     return imagen
 
 
@@ -76,34 +109,65 @@ def extraer_texto(imagen_base64: str) -> dict:
     imagen = _decodificar_imagen(imagen_base64)
     imagen = _preprocesar(imagen)
 
-    # --psm 6: asume un bloque uniforme de texto (el caso de un chat).
-    config = "--psm 6"
-    texto = pytesseract.image_to_string(imagen, lang=IDIOMA_OCR, config=config)
+    # --- Estrategia multi-PSM ---
+    # No existe un unico --psm que funcione para todas las capturas:
+    #   --psm 6 : bloque uniforme de texto (chat tipico)
+    #   --psm 4 : columnas de texto de tamano variable (burbujas)
+    #   --psm 3 : segmentacion automatica (fallback general)
+    # Se prueban los tres y se elige el que devuelva MAS texto util.
+    # Esto es lo que convierte "no reconocio nada" en "leyo el pedido".
+    configuraciones = ("--psm 6", "--psm 4", "--psm 3")
 
-    # Confianza promedio por palabra.
-    confianza = 0.0
-    try:
-        datos = pytesseract.image_to_data(
-            imagen, lang=IDIOMA_OCR, config=config,
-            output_type=pytesseract.Output.DICT,
-        )
-        confs = [
-            float(c) for c in datos.get("conf", [])
-            if str(c).strip() not in ("", "-1")
-        ]
-        if confs:
-            confianza = round(sum(confs) / len(confs) / 100.0, 3)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("No se pudo calcular confianza OCR: %s", exc)
+    mejor_texto = ""
+    mejor_lineas: list[str] = []
+    mejor_confianza = 0.0
 
-    lineas = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+    for config in configuraciones:
+        try:
+            texto = pytesseract.image_to_string(
+                imagen, lang=IDIOMA_OCR, config=config
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("OCR fallo con %s: %s", config, exc)
+            continue
 
-    logger.info("OCR: %d lineas, confianza %.2f", len(lineas), confianza)
+        lineas = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+
+        # Confianza promedio por palabra para esta configuracion.
+        confianza = 0.0
+        try:
+            datos = pytesseract.image_to_data(
+                imagen, lang=IDIOMA_OCR, config=config,
+                output_type=pytesseract.Output.DICT,
+            )
+            confs = [
+                float(c) for c in datos.get("conf", [])
+                if str(c).strip() not in ("", "-1")
+            ]
+            if confs:
+                confianza = round(sum(confs) / len(confs) / 100.0, 3)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("No se pudo calcular confianza OCR (%s): %s", config, exc)
+
+        # Criterio de seleccion: primero cantidad de lineas utiles, luego
+        # confianza. Una captura de chat con 8 lineas legibles es mejor que
+        # una con 2 lineas de alta confianza.
+        puntaje = (len(lineas), confianza)
+        mejor_puntaje = (len(mejor_lineas), mejor_confianza)
+        if puntaje > mejor_puntaje:
+            mejor_texto = texto
+            mejor_lineas = lineas
+            mejor_confianza = confianza
+
+    logger.info(
+        "OCR: %d lineas, confianza %.2f (mejor de %d configuraciones)",
+        len(mejor_lineas), mejor_confianza, len(configuraciones),
+    )
 
     return {
-        "texto": texto,
-        "lineas": lineas,
-        "confianza": confianza,
+        "texto": mejor_texto,
+        "lineas": mejor_lineas,
+        "confianza": mejor_confianza,
         "motor": "tesseract",
     }
 

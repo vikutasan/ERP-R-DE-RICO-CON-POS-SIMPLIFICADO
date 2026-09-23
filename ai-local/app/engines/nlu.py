@@ -14,6 +14,8 @@ REGLA (spec §5.2): este motor PROPONE. Nunca registra stock.
 import json
 import logging
 import os
+import re
+import unicodedata
 
 import httpx
 
@@ -201,9 +203,10 @@ async def interpretar(payload: schemas.VoiceParseIntentRequest) -> schemas.Voice
 # renglones producto+cantidad. El LLM NUNCA inventa productos: si un renglon
 # no se parece a nada del catalogo, lo deja con el texto tal cual y confianza
 # baja, para que el operador lo corrija en la UI.
-PROMPT_PEDIDO = """Eres un asistente que lee capturas de pantalla de WhatsApp
-de una panaderia. Recibes el TEXTO CRUDO extraido por OCR de una conversacion
-donde un cliente escribe su pedido. Devuelves UNICAMENTE un objeto JSON.
+PROMPT_PEDIDO = """Eres un asistente experto que lee capturas de pantalla de
+WhatsApp de una panaderia mexicana. Recibes el TEXTO CRUDO extraido por OCR de
+una conversacion donde un cliente escribe su pedido. Devuelves UNICAMENTE un
+objeto JSON.
 
 FORMATO EXACTO (sin texto fuera del JSON):
 {
@@ -214,20 +217,166 @@ FORMATO EXACTO (sin texto fuera del JSON):
   "confianza": numero entre 0 y 1
 }
 
+EJEMPLOS DE ENTRADA -> SALIDA:
+
+Entrada:
+"Juan Perez
+12:30
+Hola buenas tardes
+me manda 20 bolillos y 15 conchas
+y 3 kilos de telera
+gracias"
+
+Salida:
+{"items":[{"producto":"bolillos","cantidad":20,"confianza":0.95},{"producto":"conchas","cantidad":15,"confianza":0.95},{"producto":"telera","cantidad":3,"confianza":0.9}],"notas":null,"confianza":0.93}
+
+Entrada:
+"Maria
+10:15
+buenos dias
+quiero 50 pz de bolillo
+10 concha
+5 rosca de reyes"
+
+Salida:
+{"items":[{"producto":"bolillo","cantidad":50,"confianza":0.95},{"producto":"concha","cantidad":10,"confianza":0.95},{"producto":"rosca de reyes","cantidad":5,"confianza":0.9}],"notas":null,"confianza":0.93}
+
 REGLAS DE INTERPRETACION:
-1. Extrae SOLO los productos que el CLIENTE pide. Ignora saludos, "gracias",
-   confirmaciones del vendedor y mensajes del sistema ("en linea", horas).
-2. Si el cliente escribe "20 bolillos y 15 conchas", devuelve DOS renglones.
-3. Si un renglon no trae cantidad explicita, usa 1.
-4. Si el texto menciona un producto que NO esta en la lista de candidatos,
+1. Extrae SOLO los productos que el CLIENTE pide. Ignora saludos ("hola",
+   "buenas tardes"), cortesia ("gracias"), confirmaciones del vendedor,
+   nombres de personas, horas ("12:30") y mensajes del sistema ("en linea").
+2. Un renglon puede traer VARIOS productos: "20 bolillos y 15 conchas" son
+   DOS renglones separados. Separa SIEMPRE por "y", "e", comas o saltos.
+3. La cantidad puede venir ANTES ("20 bolillos") o DESPUES ("bolillos 20").
+   Acepta "20 pz", "20x", "3 kg", "3 kilos", "2 cajas".
+4. Si un renglon NO trae cantidad explicita, usa 1.
+5. Si el texto menciona un producto que NO esta en la lista de candidatos,
    devuelvelo igual con el texto tal cual y confianza baja (<= 0.4). El
    operador lo corregira. NUNCA lo omitas en silencio.
-5. Si no encuentras ningun producto, devuelve "items": [] y confianza baja.
-6. "confianza" global refleja que tan seguro estas de la lectura completa.
-7. NUNCA inventes productos que no aparezcan en el texto.
-8. NUNCA sumes ni agrupes renglones distintos.
+6. Si NO encuentras ningun producto, devuelve "items": [] y confianza baja.
+7. "confianza" global refleja que tan seguro estas de la lectura completa.
+8. NUNCA inventes productos que no aparezcan en el texto.
+9. NUNCA sumes ni agrupes renglones distintos.
+10. Corrige errores obvios de OCR en nombres de producto comunes
+    ("bo1illos" -> "bolillos", "c0nchas" -> "conchas").
 
 No expliques nada. No agregues texto fuera del JSON. No ejecutes acciones."""
+
+
+# ---------------------------------------------------------------------------
+# Parser DETERMINISTA de respaldo (sin LLM)
+# ---------------------------------------------------------------------------
+# Por que existe: el LLM local (qwen2.5:3b en CPU) puede tardar, fallar o
+# devolver items vacios. Si eso pasa, el operador veia "no reconocio nada"
+# aunque el OCR SI hubiera leido el texto. Este parser por regex garantiza
+# que SIEMPRE se proponga algo cuando el OCR devolvio texto util.
+#
+# Es deliberadamente simple y conservador: extrae "cantidad + producto" de
+# cada linea. El match contra el catalogo real lo hace el Gateway despues.
+# El operador corrige en la UI. Nunca inventa: solo lee lo que esta escrito.
+
+# Palabras que NO son productos (saludos, cortesia, ruido de chat).
+_RUIDO = {
+    "hola", "buenas", "buenos", "dias", "tardes", "noches", "gracias",
+    "por", "favor", "ok", "okay", "si", "no", "listo", "en", "linea",
+    "escribiendo", "hoy", "manana", "ayer", "pedido", "favor.", "saludos",
+    "buen", "dia", "que", "tal", "como", "estas", "nos", "vemos", "cliente",
+    "vendedor", "am", "pm", "el", "la", "los", "las", "de", "del", "y",
+}
+
+# "20 bolillos", "20x conchas", "20 bolillos y 15 conchas", "3 kg de pan"
+_RE_CANTIDAD_PRODUCTO = re.compile(
+    r"(?P<cant>\d{1,4}(?:[.,]\d{1,2})?)\s*"
+    r"(?:x|pz|pza|piezas?|kg|kilos?|cajas?|charolas?|bolsas?)?\s*"
+    r"(?:de\s+)?"
+    r"(?P<prod>[a-záéíóúñü][a-záéíóúñü\s]{2,40})",
+    re.IGNORECASE,
+)
+
+# "bolillos 20" (producto primero, cantidad despues)
+_RE_PRODUCTO_CANTIDAD = re.compile(
+    r"(?P<prod>[a-záéíóúñü][a-záéíóúñü\s]{2,40}?)\s*"
+    r"(?:x|:)?\s*"
+    r"(?P<cant>\d{1,4}(?:[.,]\d{1,2})?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _sin_acentos(texto: str) -> str:
+    """Normaliza para comparar: minusculas y sin acentos."""
+    normal = unicodedata.normalize("NFKD", texto.lower())
+    return "".join(c for c in normal if not unicodedata.combining(c))
+
+
+def _limpiar_producto(nombre: str) -> str:
+    """Quita conectores y ruido del final del nombre del producto."""
+    limpio = nombre.strip(" .,;:-")
+    # Cortar en conectores que suelen unir dos renglones.
+    for conector in (" y ", " e ", " mas ", " tambien ", " ademas "):
+        if conector in f" {limpio} ":
+            limpio = f" {limpio} ".split(conector)[0].strip()
+    palabras = [p for p in limpio.split() if _sin_acentos(p) not in _RUIDO]
+    return " ".join(palabras).strip(" .,;:-")
+
+
+def parsear_pedido_determinista(texto_ocr: str) -> dict:
+    """Extrae renglones producto+cantidad SIN LLM (respaldo por regex).
+
+    Devuelve el mismo contrato que `parsear_pedido`: {items, notas, confianza}.
+    Se usa cuando el LLM falla o devuelve cero items pero el OCR SI leyo texto.
+    """
+    items: list[dict] = []
+    vistos: set[str] = set()
+
+    for linea in (texto_ocr or "").splitlines():
+        limpia = linea.strip()
+        if len(limpia) < 3:
+            continue
+
+        # Intento 1: "20 bolillos"
+        for m in _RE_CANTIDAD_PRODUCTO.finditer(limpia):
+            producto = _limpiar_producto(m.group("prod"))
+            if not producto or len(producto) < 3:
+                continue
+            clave = _sin_acentos(producto)
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            try:
+                cantidad = float(m.group("cant").replace(",", "."))
+            except ValueError:
+                cantidad = 1.0
+            items.append(
+                {"producto": producto, "cantidad": cantidad, "confianza": 0.45}
+            )
+
+        # Intento 2: "bolillos 20" (solo si el intento 1 no encontro nada).
+        if not items:
+            m2 = _RE_PRODUCTO_CANTIDAD.search(limpia)
+            if m2:
+                producto = _limpiar_producto(m2.group("prod"))
+                if producto and len(producto) >= 3:
+                    clave = _sin_acentos(producto)
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        try:
+                            cantidad = float(m2.group("cant").replace(",", "."))
+                        except ValueError:
+                            cantidad = 1.0
+                        items.append(
+                            {
+                                "producto": producto,
+                                "cantidad": cantidad,
+                                "confianza": 0.4,
+                            }
+                        )
+
+    logger.info("Parser determinista: %d renglones (respaldo sin LLM)", len(items))
+    return {
+        "items": items,
+        "notas": "Lectura por respaldo (sin IA). Revisa las cantidades.",
+        "confianza": 0.4 if items else 0.0,
+    }
 
 
 async def parsear_pedido(
@@ -309,6 +458,19 @@ async def parsear_pedido(
         confianza = float(datos.get("confianza") or 0.0)
     except (TypeError, ValueError):
         confianza = 0.0
+
+    # --- Respaldo determinista ---
+    # Si el LLM no devolvio NINGUN renglon pero el OCR SI leyo texto, se
+    # aplica el parser por regex. Esto evita el sintoma "no reconocio nada"
+    # cuando en realidad el texto estaba bien y solo fallo el LLM.
+    if not items and (texto_ocr or "").strip():
+        respaldo = parsear_pedido_determinista(texto_ocr)
+        if respaldo["items"]:
+            logger.warning(
+                "LLM devolvio 0 renglones; se usa respaldo determinista (%d renglones)",
+                len(respaldo["items"]),
+            )
+            return respaldo
 
     logger.info("Parser de pedido: %d renglones, confianza %.2f", len(items), confianza)
 

@@ -741,6 +741,28 @@ export const GrandezaOrderRequestsTab = ({ onStatus }) => {
                             <p className="text-xs text-white mt-2">
                                 Puedes capturar el pedido a mano en la matriz de arriba.
                             </p>
+
+                            {/* Diagnóstico: qué leyó realmente el OCR.
+                                Sirve para distinguir "la imagen no tiene texto
+                                legible" de "el OCR leyó pero la IA no entendió". */}
+                            {ocrPropuesta && (ocrPropuesta.texto_crudo || (ocrPropuesta.lineas || []).length > 0) && (
+                                <details className="mt-3">
+                                    <summary className="cursor-pointer text-xs font-black uppercase tracking-widest text-amber-300 hover:text-amber-200">
+                                        🔎 Ver lo que el OCR sí leyó ({Math.round((ocrPropuesta.confianza_ocr || 0) * 100)}% confianza)
+                                    </summary>
+                                    <div className="mt-2 p-3 rounded-xl bg-black border-2 border-white/30 max-h-56 overflow-auto">
+                                        <pre className="text-[11px] leading-relaxed text-white whitespace-pre-wrap break-words font-mono">
+                                            {ocrPropuesta.texto_crudo || '(sin texto)'}
+                                        </pre>
+                                    </div>
+                                    <p className="text-[10px] text-white/70 mt-2 leading-relaxed">
+                                        Si aquí aparece el texto correcto pero arriba dice que no se
+                                        pudo interpretar, el problema es del modelo de IA, no de la
+                                        imagen. Si aquí sale vacío o basura, la captura necesita más
+                                        resolución o menos recorte.
+                                    </p>
+                                </details>
+                            )}
                         </div>
                     )}
 
