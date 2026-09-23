@@ -180,6 +180,35 @@ def extraer_texto(imagen_base64: str) -> dict:
 _RE_TELEFONO = re.compile(r"(\+?\d[\d\s\-()]{8,}\d)")
 
 
+# Etiquetas que el OCR puede leer ANTES del nombre real del cliente.
+# Ej.: "Cliente: Abarrotes La Esquina" -> "Abarrotes La Esquina".
+_RE_ETIQUETA_CLIENTE = re.compile(
+    r"^\s*(?:cliente|nombre|contacto|raz[oó]n\s*social|negocio|tienda|"
+    r"para|de|a)\s*[:\-–]\s*",
+    re.IGNORECASE,
+)
+
+
+def _limpiar_nombre_cliente(texto: str) -> str:
+    """Quita etiquetas ("Cliente:", "Nombre:") y ruido del encabezado.
+
+    El OCR suele leer el encabezado del chat como "Cliente: Abarrotes La
+    Esquina". Si no se quita la etiqueta, el match contra el directorio
+    falla y el operador tiene que elegir el cliente a mano.
+    """
+    limpio = (texto or "").strip()
+    # Quitar la etiqueta tantas veces como aparezca ("Cliente: Nombre: X").
+    for _ in range(3):
+        nuevo = _RE_ETIQUETA_CLIENTE.sub("", limpio).strip()
+        if nuevo == limpio:
+            break
+        limpio = nuevo
+    # Quitar comillas y dos puntos/puntos sueltos al inicio o final.
+    limpio = limpio.strip(" \t\"'“”«»")
+    limpio = limpio.strip(" :.-–")
+    return limpio.strip()
+
+
 def extraer_candidato_cliente(lineas: list[str]) -> dict:
     """Propone un cliente a partir de las primeras lineas del OCR.
 
@@ -213,7 +242,11 @@ def extraer_candidato_cliente(lineas: list[str]) -> dict:
             continue
         if limpia.lower() in ("en linea", "escribiendo...", "online"):
             continue
-        nombre = limpia
+        # Quitar etiquetas del encabezado ("Cliente:", "Nombre:", ...).
+        candidato = _limpiar_nombre_cliente(limpia)
+        if not candidato:
+            continue
+        nombre = candidato
         break
 
     return {"nombre": nombre, "telefono": telefono}

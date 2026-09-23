@@ -1567,23 +1567,37 @@ class GrandezaService:
         self, db: AsyncSession, nombres: list,
     ) -> list:
         """
-        Resuelve nombres propuestos por el LLM contra el catálogo Grandeza.
+        Resuelve nombres propuestos por el LLM contra el catálogo real.
+
+        El OCR lee un pedido de WhatsApp: el cliente puede pedir CUALQUIER
+        producto del catálogo, no solo los habilitados para Grandeza. Por eso
+        el match se hace contra TODO el catálogo de productos, pero se
+        PRIORIZAN los productos habilitados para Grandeza (is_enabled=True):
+        si un nombre matchea un producto Grandeza, ese gana.
 
         Devuelve [{producto, producto_id, cantidad, confianza, requiere_revision}].
         Si un nombre no matchea, producto_id=None y requiere_revision=True:
         la UI obliga al operador a elegirlo (nunca se descarta en silencio).
         """
+        # 1. Productos habilitados para Grandeza (prioridad alta).
         prods_res = await db.execute(
             select(GrandezaProductConfig).where(GrandezaProductConfig.is_enabled == True)
         )
         configs = prods_res.scalars().all()
-        ids = [c.product_id for c in configs]
-        nombres_catalogo = await self._resolver_nombres_producto(db, ids)
+        ids_grandeza = {c.product_id for c in configs}
 
-        indice = [
-            (pid, self._normalizar_texto(nombre))
-            for pid, nombre in nombres_catalogo.items()
-        ]
+        # 2. Catálogo COMPLETO de productos (el cliente puede pedir cualquiera).
+        todos_res = await db.execute(select(Product.id, Product.name))
+        catalogo = [(pid, nombre) for pid, nombre in todos_res.all() if nombre]
+
+        # 3. Índice ordenado: primero los Grandeza, luego el resto.
+        indice = sorted(
+            (
+                (pid, self._normalizar_texto(nombre), pid in ids_grandeza)
+                for pid, nombre in catalogo
+            ),
+            key=lambda t: (not t[2],),  # Grandeza primero
+        )
 
         resueltos = []
         for entrada in nombres or []:
@@ -1595,13 +1609,15 @@ class GrandezaService:
             pid_match = None
             if objetivo:
                 # 1. Exacto.
-                for pid, nombre_norm in indice:
+                for pid, nombre_norm, _es_grandeza in indice:
                     if nombre_norm == objetivo:
                         pid_match = pid
                         break
-                # 2. Contención (fuzzy).
-                if pid_match is None:
-                    for pid, nombre_norm in indice:
+                # 2. Contención (fuzzy): el nombre del catálogo contiene lo
+                #    propuesto o viceversa. Se exige un mínimo de 4 caracteres
+                #    para evitar falsos positivos con palabras cortas.
+                if pid_match is None and len(objetivo) >= 4:
+                    for pid, nombre_norm, _es_grandeza in indice:
                         if nombre_norm and (
                             objetivo in nombre_norm or nombre_norm in objetivo
                         ):
