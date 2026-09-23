@@ -996,3 +996,101 @@ Con la corrección de la Fase C, los pedidos programados aparecen **con sus reng
 - **§7.7** — `CREATE TABLE IF NOT EXISTS` en el arranque (no se confía en `create_all`).
 - **§7.9** — Todas las URLs derivan de `CONFIG.API_BASE_URL`.
 - **§7.10** — No se usa `datetime.now()` directo; se usa `_now_mexico()`.
+
+---
+
+## 19. Corrección de Interfaz — Velo Transparente al Hacer Scroll en Móvil (v7.6.2 — 23/Septiembre/2026)
+
+### 19.1 Síntoma
+
+Al acceder a la **landing principal del módulo Reparto Pan Grandeza** (la pantalla con las tres
+herramientas: 📋 Parámetros, 📅 Jornada Diaria, 🚗 Repartidor) **desde un dispositivo móvil**, al
+hacer *scroll* hacia abajo aparecía un **velo transparente** que lavaba los colores y daba la
+sensación de un programa "mal planeado". El defecto **solo se manifestaba en móvil**, no en
+escritorio.
+
+> **Nota de trazabilidad (v7.6.2):** la primera corrección (v7.6.1, commit `58e36af`) fue
+> **misdirigida**: se editó `apps/pos/RepartoPanGrandezaUI.jsx` creyendo que el velo vivía en la
+> landing. El usuario reportó que el velo **persistía** y que además "aparecía encima de todo",
+> lo que probó que la causa estaba en el **shell** (`apps/ExperimentCenterUI.jsx`), no en la
+> landing. La sección 19 se reescribe aquí con la causa raíz real.
+
+### 19.2 Causa Raíz (real)
+
+El **shell del ERP** (`apps/ExperimentCenterUI.jsx`) pintaba la textura de madera como
+`backgroundImage` **directamente sobre el contenedor de scroll** `<main>`:
+
+```jsx
+<main
+    className="flex-1 overflow-y-auto relative custom-scrollbar bg-cover bg-center transition-all duration-700"
+    style={{
+        backgroundImage: activeModule === 'settings' ? '...' : 'url("/assets/wood_bg.jpg")',
+        backgroundColor: activeModule === 'settings' ? '#050505' : 'transparent',
+        backgroundSize: activeModule === 'settings' ? '...' : 'cover'
+    }}
+>
+```
+
+El `<main>` es el **contenedor con `overflow-y-auto`** (el que realmente scrollea). Cuando una
+imagen de fondo `bg-cover` se pinta sobre un contenedor de scroll, el navegador la ancla al
+**padding-box del contenedor**, no al *viewport*. En móvil —donde el contenido es más alto que la
+pantalla y el scroll es real— al desplazarse la imagen se re-renderiza en bandas y, combinada con
+el `backdrop-blur-3xl` del sidebar (`position: fixed`, `zIndex: 999990`), producía una **banda
+translúcida que parecía estar "encima de todo"**. En escritorio el contenido cabe en una sola
+pantalla, por lo que el scroll no se activaba y el defecto no se percibía.
+
+### 19.3 Corrección
+
+Se movió la textura de madera a una **capa `fixed inset-0` independiente** (que **no scrollea**),
+situada **detrás** del contenido (`zIndex: 0`), y se dejó el `<main>` **transparente**:
+
+```jsx
+{/* Fondo de madera — capa FIJA (no scrollea) para evitar el "velo" */}
+{activeModule !== 'settings' && (
+    <div
+        aria-hidden="true"
+        className="fixed inset-0 pointer-events-none"
+        style={{
+            backgroundImage: 'url("/assets/wood_bg.jpg")',
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            zIndex: 0
+        }}
+    />
+)}
+
+<main
+    className="flex-1 overflow-y-auto relative custom-scrollbar transition-all duration-700"
+    style={{
+        backgroundImage: activeModule === 'settings' ? '...' : 'none',
+        backgroundColor: activeModule === 'settings' ? '#050505' : 'transparent',
+        backgroundSize: activeModule === 'settings' ? '...' : 'auto'
+    }}
+>
+```
+
+Además, en `apps/pos/RepartoPanGrandezaUI.jsx` se eliminó el **fondo opaco** (`#3a2e1e`) y el
+**scroll anidado** (`overflow-y-auto`) del contenedor raíz de la landing: el scroll lo maneja el
+`<main>` del shell, y la landing queda transparente para que la textura fija se vea a través.
+
+| Antes | Después |
+|-------|---------|
+| Textura en el `background` del `<main>` (contenedor de scroll) | Textura en una capa `fixed inset-0` independiente (no scrollea) |
+| La imagen se anclaba al padding-box del scroll → bandas translúcidas | La imagen queda anclada al *viewport*; nunca se desplaza |
+| Landing con fondo opaco `#3a2e1e` + `overflow-y-auto` anidado | Landing transparente, sin scroll propio (lo maneja el shell) |
+| Velo translúcido "encima de todo" al hacer scroll en móvil | Fondo estable; sin velo |
+
+### 19.4 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0, **1829 módulos**,
+  build en 21.12s.
+- **Commit:** Fase J (corrección real) `f091573` (2 archivos, 28 inserciones, 14 borrados).
+
+### 19.5 Lección de Diseño
+
+Una imagen de fondo decorativa **nunca** debe pintarse como `backgroundImage` sobre el
+**contenedor que scrollea** (`overflow-y-auto`): el navegador la ancla al padding-box del
+contenedor y, en móvil, produce bandas translúcidas que parecen un velo. La textura debe vivir en
+una **capa `fixed inset-0` independiente** detrás del contenido, o en un elemento que no scrollee.
+Regla complementaria: **un solo contenedor de scroll por vista** — no anidar `overflow-y-auto`
+dentro del `<main>` del shell.
