@@ -996,3 +996,75 @@ Con la corrección de la Fase C, los pedidos programados aparecen **con sus reng
 - **§7.7** — `CREATE TABLE IF NOT EXISTS` en el arranque (no se confía en `create_all`).
 - **§7.9** — Todas las URLs derivan de `CONFIG.API_BASE_URL`.
 - **§7.10** — No se usa `datetime.now()` directo; se usa `_now_mexico()`.
+
+---
+
+## 19. MEJORA DE CONTRASTE DE LA MATRIZ DE PEDIDOS (v7.6.3)
+
+### 19.1 Motivo
+
+El usuario reportó: *«LA MATRIZ DE PEDIDOS TIENE EL PROBLEMA DE FALTA DE CONTRASTE,
+LETRAS EN GRIS QUE NO SE VEN, TRANSPARENCIAS QUE DIFICULTAN LA LECTURA, HAY QUE
+MEJORAR EL CONTRASTE PRIORIZANDO LA FACIL LEGIBILIDAD»*.
+
+La matriz se renderiza sobre el **fondo de madera** (`wood_bg.jpg`) del shell
+(`ExperimentCenterUI.jsx`). Los estilos originales usaban transparencias
+(`bg-black/40`, `bg-white/5`, `text-gray-500`) que, sobre una textura clara y
+ruidosa, producían texto prácticamente invisible.
+
+### 19.2 Diagnóstico: elementos de bajo contraste
+
+| Elemento | Estilo anterior | Problema |
+|---|---|---|
+| Contenedor de la matriz | `bg-black/40 backdrop-blur-sm` | Translúcido: la madera se veía a través |
+| Encabezados de columna | `text-gray-500` | Gris medio sobre madera → ilegible |
+| Fila de encabezado | `border-white/10` | Separación imperceptible |
+| Hover de fila | `hover:bg-white/[0.02]` | 2 % de opacidad → invisible |
+| Teléfono del cliente | `text-gray-500` | Gris medio → ilegible |
+| Inputs de cantidad | `bg-white/5 border-white/10` | Casi invisibles sobre la madera |
+| Pie «clientes» | `text-gray-500` | Gris medio → ilegible |
+| Estado vacío | `text-gray-500` / `text-gray-600` | Gris medio → ilegible |
+| Resultado de despacho | `text-gray-300` | Contraste insuficiente |
+| «Cargando matriz…» | `text-gray-500` | Gris medio → ilegible |
+
+### 19.3 Solución aplicada (solo estilos, cero lógica)
+
+Se priorizó la **legibilidad** sobre la estética translúcida:
+
+| Elemento | Estilo nuevo | Razón |
+|---|---|---|
+| Contenedor de la matriz | `bg-[#0d0b09] border-2 border-amber-500/30 shadow-2xl` | Fondo **sólido** casi negro: aísla la tabla de la madera |
+| Encabezados de columna | `text-amber-300` | Ámbar vivo sobre negro → contraste alto |
+| Fila de encabezado | `bg-black/60 border-b-2 border-amber-500/40` | Banda de encabezado diferenciada |
+| Hover de fila | `hover:bg-amber-500/10` | Realce perceptible sin romper la lectura |
+| Teléfono del cliente | `text-gray-300` | Gris claro legible |
+| Inputs de cantidad | `bg-black/50 border-2 border-white/25` | Fondo sólido + borde grueso visible |
+| Pie «clientes» | `text-amber-300` | Consistente con los encabezados |
+| Estado vacío | `text-white` + `border-2 border-dashed border-amber-500/30` + `bg-black/30` | Mensaje claro y enmarcado |
+| Resultado de despacho | `text-white font-semibold` | Lectura directa |
+| «Cargando matriz…» | `text-amber-300` | Visible durante la carga |
+
+> **Nota:** El panel de confirmación OCR (Fase B) **ya** usaba fondo sólido negro
+> (`bg-black border-2 border-purple-400`) con texto blanco puro; no requirió cambios.
+
+### 19.4 Archivos involucrados
+
+| Archivo | Tipo de Cambio |
+|---|---|
+| `apps/pos/GrandezaOrderRequestsTab.jsx` | Solo clases Tailwind de la matriz (contenedor, encabezados, filas, inputs, pie, estados) |
+| **POS (RetailVisionPOS.jsx)** | **CERO cambios** ✅ |
+| **Backend** | **CERO cambios** ✅ |
+
+### 19.5 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **20.11 s**.
+- **Commit:** `df722ae` — `fix(grandeza): mejorar contraste de la Matriz de Pedidos (K1)`.
+- **Diff:** 1 archivo, 18 inserciones, 15 eliminaciones.
+
+### 19.6 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle.
+- **§7.9** — No se modificaron URLs ni endpoints.
+- **Sin cambios de lógica:** el diff es exclusivamente de clases de presentación.
