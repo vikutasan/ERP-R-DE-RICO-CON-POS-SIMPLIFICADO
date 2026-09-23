@@ -1,6 +1,6 @@
 # DOCUMENTACIÓN — CENTRO DE IA (MÓDULO PARAGUAS)
 
-> **Versión:** v27.2 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Correcciones de efectividad OCR (v27.1, v27.2)
+> **Versión:** v27.3 — Centro de IA (4 capacidades) + Fine-tuning de Visión (v7 Fase 8) + OCR de Pedidos (v27) + Correcciones de efectividad OCR (v27.1, v27.2) + Selector de cliente y captura manual (v27.3)
 > **Estado:** Implementado, build verificado (`npm run build` exit 0)
 > **Última actualización:** 23 Sep 2026
 > **Documentos relacionados:**
@@ -1198,6 +1198,7 @@ El motor **nunca** tiene acceso a la base de datos ni a las credenciales del ERP
 | v26.2 | 22 Sep 2026 | Añadida la 4ª capacidad: OCR de pedidos (Parte III, sección 28) |
 | v27.1 | 23 Sep 2026 | Corrección de efectividad del OCR: tema oscuro, multi-PSM, respaldo determinista y panel de diagnóstico (sección 28.12) |
 | v27.2 | 23 Sep 2026 | 2ª corrección de efectividad: causa raíz real = `uvicorn` del `api` sin `--reload` (endpoint 404); limpieza del prefijo «Cliente:» y match de productos contra todo el catálogo (sección 28.13) |
+| v27.3 | 23 Sep 2026 | Corrección de usabilidad del panel OCR: el selector de cliente se llenaba de la matriz (solo clientes con pedido previo) → ahora usa el directorio completo; y se añade la **captura manual de pedido** que el mensaje de error prometía pero no existía (sección 28.14) |
 
 ---
 
@@ -1557,6 +1558,65 @@ Cambio en ai-local/app/  →  docker compose -f docker-compose.ai.yml build ia-l
 Cambio en apps/api/      →  docker compose restart api
                             (el uvicorn NO tiene --reload)
 ```
+
+### 28.14 Corrección de usabilidad del panel OCR (v27.3 — Fase H)
+
+**Síntoma reportado (dos defectos en el mismo panel):**
+
+1. «*Ya confirmé que funciona, probé con una captura, solo que no supo qué cliente y me dio un
+   selector para que yo decida qué cliente, solo que **el selector de cliente no funciona***».
+2. «*Cuando no detectaba nada en absoluto me decía: **agrega el pedido manualmente en la tabla
+   superior**, pero **no está habilitado** el agregar un pedido manualmente en la tabla*».
+
+Ambos defectos comparten una misma raíz conceptual: **la matriz superior solo contiene a los
+clientes que YA tienen un pedido registrado para esa fecha** (decisión **D-4**: los que no
+respondieron no aparecen). Por eso la matriz no sirve ni para elegir un cliente nuevo ni para dar
+de alta un pedido desde cero.
+
+**Causa raíz del defecto 1 (selector vacío):** el `<select>` de cliente del panel OCR se poblaba
+con `(matrix?.rows || []).map(r => r.client_name)`. Como `get_order_matrix()` construye `rows`
+**solo** a partir de los pedidos existentes, al capturar un pedido **nuevo** (el caso normal del
+OCR) el cliente no está en la matriz y el dropdown quedaba **vacío**. El operador no podía elegir
+nada.
+
+**Causa raíz del defecto 2 (captura manual inexistente):** el mensaje de error del panel OCR decía
+«*Puedes capturar el pedido a mano en la matriz de arriba*», pero la tabla de la matriz **solo
+renderiza `matrix.rows`** y **no tiene ningún botón para agregar un renglón**. La instrucción
+apuntaba a una capacidad que no existía.
+
+**Correcciones aplicadas** (todas en [`GrandezaOrderRequestsTab.jsx`](../../apps/pos/GrandezaOrderRequestsTab.jsx)):
+
+| # | Defecto | Corrección |
+|---|---|---|
+| 1 | Selector de cliente poblado desde `matrix.rows` (solo clientes con pedido previo) | Nuevo estado `clientesDirectorio` cargado una sola vez desde `GET /grandeza/clients?active_only=true` (48 clientes activos). El `<select>` ahora itera `clientesDirectorio` (`c.id`, `c.name`, `c.phone`). Se añade un aviso visible si el directorio está vacío. |
+| 2 | El match de cliente del OCR se hacía contra `matrix.rows` | `handleOcrUpload` ahora construye `clientes_catalogo` desde `clientesDirectorio.map(c => c.name)`, de modo que el match por nombre funciona aunque el cliente no tenga pedido previo. |
+| 3 | No existía captura manual de pedido | Nuevo estado `manualMode` + función `abrirManual()`. El panel OCR se reutiliza como **editor de captura manual** (cliente + renglones producto/cantidad), accesible desde un botón **«✍️ Pedido manual»** en la barra de herramientas y desde un botón **«✍️ Capturar pedido manualmente»** dentro del bloque de error. |
+| 4 | El mensaje de error apuntaba a una capacidad inexistente | El texto ahora dice «*Puedes capturar el pedido a mano con el botón de abajo*» y ofrece el botón que **sí** abre el editor manual. |
+
+**Detalles de implementación del modo manual:**
+
+- `abrirManual()` inicializa `ocrEdit` con un renglón vacío
+  (`{ producto_id: '', producto: '', cantidad: 0, ... }`) y `manualMode = true`.
+- El título del panel cambia a «✍️ Captura Manual de Pedido» y el párrafo introductorio explica el
+  flujo manual (elegir cliente + agregar renglones).
+- La columna de **vista previa de la captura** solo se muestra cuando hay `ocrPropuesta` (modo OCR);
+  en modo manual el editor ocupa el ancho completo (`lg:col-span-3`).
+- `cancelarOcr()` resetea `manualMode` a `false`.
+- **El contrato human-in-the-loop se mantiene intacto:** nada se registra hasta que el operador
+  presiona «Confirmar pedido». El motor de IA sigue sin decidir `client_id` ni `product_id`.
+
+**Verificación:**
+
+| Comprobación | Resultado |
+|---|---|
+| `npx vite build` | **1828 módulos**, exit 0 (~19 s) |
+| `npx eslint GrandezaOrderRequestsTab.jsx` | Sin errores |
+| `GET /grandeza/clients?active_only=true` | **48** clientes activos con campos `id`, `name`, `phone` |
+
+**Lección de diseño:** una instrucción de UI («hazlo a mano en la tabla de arriba») **debe**
+apuntar a una capacidad que exista y sea alcanzable. Si la matriz solo muestra pedidos ya
+registrados (D-4), entonces la captura manual **tiene que** vivir en el propio panel de captura,
+no en la matriz.
 
 ---
 
