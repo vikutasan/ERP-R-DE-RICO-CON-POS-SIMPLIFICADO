@@ -40,10 +40,79 @@ import REAL_PRODUCTS from '../importar_productos_AQUI.json';
 
 /**
  * R DE RICO - CENTRO DE EXPERIMENTACIÓN (DASHBOARD MAESTRO)
- * 
- * Este es el portal central para que el Socio Fundador experimente 
+ *
+ * Este es el portal central para que el Socio Fundador experimente
  * todo el ecosistema digital que hemos construido.
  */
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v19.4 — PERSISTENCIA DE SESIÓN (arreglo del logout en móvil)
+// ═══════════════════════════════════════════════════════════════════════════
+// PROBLEMA: `isAuthenticated` vivía SOLO en memoria de React. Cuando el SO del
+// móvil descarta la pestaña (al salir a WhatsApp, cámara, etc.) y el navegador
+// recarga la página, el estado volvía a `false` y el usuario tenía que
+// re-loguearse. En PC no pasaba porque la pestaña nunca se descarta.
+//
+// SOLUCIÓN: persistir la sesión en `localStorage` y restaurarla al arrancar.
+// Se añade un TIMEOUT DE INACTIVIDAD de 12 h: si el usuario no interactúa en
+// ese lapso, la sesión se invalida y se exige el PIN de nuevo (mitiga el riesgo
+// de dejar el teléfono desbloqueado con sesión abierta).
+//
+// SEGURIDAD: se guarda el perfil/permisos, NO el PIN. El PIN nunca se persiste.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SESSION_STORAGE_KEY = 'erp_session_v1';
+const SESSION_INACTIVITY_MS = 12 * 60 * 60 * 1000; // 12 horas
+
+/**
+ * Lee la sesión persistida. Devuelve `null` si no existe, está corrupta o
+ * superó el timeout de inactividad. Nunca lanza (localStorage puede estar
+ * bloqueado en modo privado o con la cuota llena).
+ */
+const leerSesionPersistida = () => {
+    try {
+        const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== 'object' || !data.user) return null;
+        // Timeout de inactividad: `lastActivity` se refresca con cada interacción.
+        const last = Number(data.lastActivity) || 0;
+        if (!last || (Date.now() - last) > SESSION_INACTIVITY_MS) {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+            return null;
+        }
+        return data.user;
+    } catch (e) {
+        return null;
+    }
+};
+
+/** Persiste la sesión (usuario + marca de actividad). Falla en silencio. */
+const guardarSesionPersistida = (user) => {
+    try {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+            user,
+            lastActivity: Date.now(),
+        }));
+    } catch (e) { /* localStorage lleno o bloqueado — degradación elegante */ }
+};
+
+/** Refresca SOLO la marca de actividad, conservando el usuario. */
+const refrescarActividadSesion = () => {
+    try {
+        const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data || !data.user) return;
+        data.lastActivity = Date.now();
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data));
+    } catch (e) { /* degradación elegante */ }
+};
+
+/** Borra la sesión persistida (logout explícito o por inactividad). */
+const borrarSesionPersistida = () => {
+    try { localStorage.removeItem(SESSION_STORAGE_KEY); } catch (e) { /* no-op */ }
+};
 
 const INITIAL_CATEGORIES = [
     { name: "1.-EMPAQUE Y PAN BLANCO", visionEnabled: true },
@@ -76,14 +145,19 @@ export const ExperimentCenterUI = () => {
         : (initialModuleParam === 'heladeria' ? 'heladeria' : 'overview');
     const defaultSidebar = initialTerminal === 'DRIVER' || window.innerWidth < 768;
 
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    // v19.4: la sesión se RESTAURA desde localStorage al arrancar. Si existe y
+    // no superó el timeout de inactividad, el usuario entra directo sin PIN.
+    // Esto es lo que arregla el logout al cambiar de app en el móvil.
+    const [sesionInicial] = useState(() => leerSesionPersistida());
+
+    const [isAuthenticated, setIsAuthenticated] = useState(() => !!sesionInicial);
     const [categories, setCategories] = useState(INITIAL_CATEGORIES);
-    const [userRole, setUserRole] = useState('ADMIN'); 
-    const [userName, setUserName] = useState('');
-    const [userId, setUserId] = useState(null);
+    const [userRole, setUserRole] = useState(() => sesionInicial?.role || 'ADMIN');
+    const [userName, setUserName] = useState(() => sesionInicial?.name || '');
+    const [userId, setUserId] = useState(() => sesionInicial?.id ?? null);
     const [activeModule, setActiveModule] = useState(defaultModule);
-    const [userPermissions, setUserPermissions] = useState({});
-    const [userProfileId, setUserProfileId] = useState(null);
+    const [userPermissions, setUserPermissions] = useState(() => sesionInicial?.permissions || {});
+    const [userProfileId, setUserProfileId] = useState(() => sesionInicial?.profile_id ?? null);
 
     // Memoizar currentUser para evitar que useEffect cleanups espurios
     // destruyan los terminal_locks en cada re-render (Bug Terminal Fantasma v2)
@@ -150,6 +224,16 @@ export const ExperimentCenterUI = () => {
         setUserPermissions(user.permissions || {});
         setIsAuthenticated(true);
 
+        // v19.4: persistir la sesión para sobrevivir recargas y cambios de app
+        // en el móvil. Se guarda el perfil/permisos, NUNCA el PIN.
+        guardarSesionPersistida({
+            id: user.id,
+            name: user.name || '',
+            role: user.role,
+            profile_id: user.profile_id,
+            permissions: user.permissions || {},
+        });
+
         // 2. Check-in HR (si falla, no pasa nada — el ERP funciona igual)
         try {
             const result = await hrService.checkIn(user.id);
@@ -167,8 +251,44 @@ export const ExperimentCenterUI = () => {
         if (updatedProfile.id === userProfileId) {
             console.log("Sincronizando permisos en vivo para:", updatedProfile.name);
             setUserPermissions(updatedProfile.permissions);
+            // v19.4: reflejar el cambio de permisos en la sesión persistida.
+            guardarSesionPersistida({
+                id: userId,
+                name: userName,
+                role: userRole,
+                profile_id: userProfileId,
+                permissions: updatedProfile.permissions,
+            });
         }
     };
+
+    // v19.4: logout centralizado — limpia el estado Y la sesión persistida.
+    // Se usa en los 2 puntos de salida (botón lateral, force-logout del POS).
+    const handleLogout = () => {
+        borrarSesionPersistida();
+        setIsAuthenticated(false);
+    };
+
+    // v19.4: refrescar la marca de actividad con cada interacción del usuario.
+    // Así el timeout de 12 h cuenta desde la ÚLTIMA interacción real, no desde
+    // el login. Se registra una sola vez (depende de isAuthenticated).
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        // Refresco inmediato al montar/autenticar.
+        refrescarActividadSesion();
+
+        const eventos = ['click', 'keydown', 'touchstart', 'visibilitychange'];
+        // Throttle: no escribir en localStorage en cada píxel de scroll.
+        let ultimo = 0;
+        const onActividad = () => {
+            const ahora = Date.now();
+            if (ahora - ultimo < 60000) return; // máx. 1 escritura por minuto
+            ultimo = ahora;
+            refrescarActividadSesion();
+        };
+        eventos.forEach(ev => window.addEventListener(ev, onActividad, { passive: true }));
+        return () => eventos.forEach(ev => window.removeEventListener(ev, onActividad));
+    }, [isAuthenticated]);
 
     if (!isAuthenticated) return <LoginUI onLogin={handleLogin} />;
 
@@ -343,7 +463,7 @@ export const ExperimentCenterUI = () => {
 
                 <div className="mt-2 px-4 pb-4">
                     <button
-                        onClick={() => attemptNavigation(() => setIsAuthenticated(false))}
+                        onClick={() => attemptNavigation(() => handleLogout())}
                         className={`w-full p-4 font-black uppercase tracking-widest transition-all rounded-2xl flex items-center justify-center gap-2 border 
                             ${isSidebarCollapsed 
                                 ? 'bg-red-500/10 text-red-500 border-red-500/20 hover:bg-red-500 hover:text-white text-lg' 
@@ -519,7 +639,7 @@ export const ExperimentCenterUI = () => {
                                     initialCategories={categories} 
                                     initialProducts={REAL_PRODUCTS}
                                     currentUser={currentUser}
-                                    onForceLogout={() => setIsAuthenticated(false)}
+                                    onForceLogout={() => handleLogout()}
                                     assignedTerminal={new URLSearchParams(window.location.search).get('terminal')}
                                 />
                             </div>
