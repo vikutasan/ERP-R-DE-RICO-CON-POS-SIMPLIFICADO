@@ -1412,3 +1412,67 @@ Tras esta corrección queda **una sola** zona fija (antes tres):
 - **§7.9** — No se modificaron URLs ni endpoints.
 - **Sin cambios de lógica de negocio ni de backend:** el diff es exclusivamente de
   presentación (CSS + clases de layout).
+
+---
+
+## 24. COMPARTIR LA MATRIZ POR WHATSAPP (v7.6.9)
+
+### 24.1 Petición del usuario
+
+> *«Quiero un botón para enviar por WhatsApp la matriz.»*
+
+**Interpretación:** un botón en la barra de acciones de la Matriz que abra
+WhatsApp con **el contenido completo de la matriz** ya redactado, para que el
+operador elija el destinatario y confirme el envío.
+
+### 24.2 Diseño (humano-en-el-bucle)
+
+El botón **NO envía nada por sí solo**. Construye el texto y abre el deep link
+`https://wa.me/?text=...` **sin destinatario fijo**: WhatsApp muestra el selector
+de contacto y el operador decide a quién enviarlo. Esto respeta el contrato
+humano-en-el-bucle del módulo (la máquina propone, el humano confirma) y evita
+enviar información a un número equivocado.
+
+### 24.3 Cambios aplicados
+
+| Archivo | Cambio |
+|---|---|
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:194) | Nueva función `buildMatrixWhatsAppText()`: arma un texto monoespaciado con el encabezado de productos (abreviado a 4 letras), una línea por cliente con sus cantidades, la fila de totales por producto y el gran total + conteo de clientes |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:230) | Nueva función `enviarMatrizWhatsApp()`: abre `https://wa.me/?text=...` con el texto codificado; si no hay matriz, avisa con `notify()` |
+| [`GrandezaOrderRequestsTab.jsx`](apps/pos/GrandezaOrderRequestsTab.jsx:675) | Botón verde **«🟢 Enviar por WhatsApp»** en la barra de acciones de la Matriz, deshabilitado si no hay filas |
+
+### 24.4 Formato del mensaje
+
+```
+📋 *MATRIZ DE PEDIDOS* — 2026-09-24
+
+CLIENTE | NUEZ | HIGO | PASA | ESPO | MINI | TOTAL
+--------------------------------------------------
+Panadería X | 10 | 5 | 0 | 2 | 0 | 17
+...
+--------------------------------------------------
+TOTAL | 120 | 80 | 40 | 25 | 10 | 275
+
+👥 12 clientes · 🧮 275 piezas
+```
+
+Los nombres de producto se abrevian a 4 letras para que la tabla quepa en el
+ancho de un mensaje de WhatsApp sin romperse.
+
+### 24.5 Verificación
+
+- **Frontend:** `docker compose exec -T pos npx vite build` → exit code 0,
+  **1829 módulos** transformados, build en **20.95 s**.
+- **Backend:** **sin cambios** — el botón es 100 % frontend (deep link `wa.me`).
+- **Commit:** `f87af20` — `v7.6.9 (Ergonomia): boton 'Enviar por WhatsApp' para compartir la Matriz de Pedidos`.
+- **Diff:** 1 archivo, 58 inserciones.
+
+### 24.6 Cumplimiento de las directivas (§7)
+
+- **§7.1** — No se tocó el POS: `RetailVisionPOS.jsx` tiene **cero cambios**.
+- **§7.4** — No se alteró la lógica de captura ni el flujo humano-en-el-bucle; al
+  contrario, se refuerza (el operador elige destinatario y confirma).
+- **§7.9** — No se modificaron URLs ni endpoints del ERP; el deep link `wa.me` es
+  externo y no depende de `CONFIG.API_BASE_URL`.
+- **Sin cambios de lógica de negocio ni de backend:** el diff es exclusivamente
+  frontend (una función de formato y un botón).
