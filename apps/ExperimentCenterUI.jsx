@@ -525,8 +525,8 @@ export const ExperimentCenterUI = () => {
             </aside>
 
             {/* Area de Experiencia */}
-            <main 
-                className="flex-1 overflow-y-auto relative custom-scrollbar bg-cover bg-center transition-all duration-700" 
+            <main
+                className={`flex-1 relative custom-scrollbar bg-cover bg-center transition-all duration-700 ${activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'}`}
                 style={{ 
                     backgroundImage: activeModule === 'settings' 
                         ? `radial-gradient(circle at 50% 50%, rgba(249, 115, 22, 0.03), transparent 70%),
@@ -549,9 +549,9 @@ export const ExperimentCenterUI = () => {
                         const numSemana = Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
 
                         return (
-                        <div className="animate-in fade-in zoom-in-95 duration-700 h-full flex flex-col">
+                        <div className="animate-in fade-in zoom-in-95 duration-700 h-full flex flex-col overflow-hidden">
 
-                            <div className="w-full bg-black py-5 px-4 sm:py-8 sm:px-10 text-center space-y-2 sm:space-y-3 relative">
+                            <div className="w-full bg-black py-3 px-4 sm:py-8 sm:px-10 text-center space-y-1.5 sm:space-y-3 relative shrink-0">
                                 <h2 className="text-3xl sm:text-5xl lg:text-7xl xl:text-8xl font-black uppercase tracking-tighter leading-none text-white break-words">{bizInfo.business_name}</h2>
                                 <p className="text-sm sm:text-lg lg:text-xl text-white font-black uppercase tracking-[0.2em] sm:tracking-[0.3em] break-words">{bizInfo.branch_name}</p>
                                 <div className="h-[2px] bg-gray-500 max-w-xl mx-auto my-2"></div>
@@ -562,14 +562,14 @@ export const ExperimentCenterUI = () => {
                                 )}
                             </div>
 
-                            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 lg:p-12">
-                                <div className="flex flex-col items-center gap-4 sm:gap-6 bg-black/60 backdrop-blur-sm rounded-[30px] sm:rounded-[40px] p-6 sm:p-10 lg:p-12 border border-gray-700/30 w-full max-w-3xl">
+                            <div className="flex-1 min-h-0 flex flex-col items-center justify-center p-3 sm:p-8 lg:p-12">
+                                <div className="flex flex-col items-center gap-2 sm:gap-6 bg-black/60 backdrop-blur-sm rounded-[24px] sm:rounded-[40px] p-4 sm:p-10 lg:p-12 border border-gray-700/30 w-full max-w-3xl">
                                     <div className="text-center w-full">
-                                        <p className="text-6xl sm:text-8xl lg:text-[10rem] font-black leading-none tracking-tighter text-white" style={{fontVariantNumeric: 'tabular-nums'}}>{horaStr}</p>
+                                        <p className="text-5xl sm:text-8xl lg:text-[10rem] font-black leading-none tracking-tighter text-white" style={{fontVariantNumeric: 'tabular-nums'}}>{horaStr}</p>
                                     </div>
-                                    <div className="text-center space-y-2 sm:space-y-3">
-                                        <p className="text-lg sm:text-2xl lg:text-3xl font-bold text-white capitalize">{fechaLarga}</p>
-                                        <p className="text-3xl sm:text-5xl lg:text-6xl font-black uppercase tracking-[0.15em] sm:tracking-[0.2em] text-orange-500 mt-2 sm:mt-4">Semana {numSemana}</p>
+                                    <div className="text-center space-y-1 sm:space-y-3">
+                                        <p className="text-base sm:text-2xl lg:text-3xl font-bold text-white capitalize">{fechaLarga}</p>
+                                        <p className="text-2xl sm:text-5xl lg:text-6xl font-black uppercase tracking-[0.15em] sm:tracking-[0.2em] text-orange-500 mt-1 sm:mt-4">Semana {numSemana}</p>
                                     </div>
                                 </div>
                             </div>

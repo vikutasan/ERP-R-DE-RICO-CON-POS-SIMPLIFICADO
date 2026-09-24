@@ -1468,6 +1468,34 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.18 Vista General Sin Scroll: Pantalla Kiosco (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** Ajuste de layout (scroll condicional por mÃ³dulo)
+**Motivo:** La Vista General mostraba barra de desplazamiento vertical sin propÃ³sito. Es una pantalla tipo *kiosco* (encabezado + reloj) que debe caber exacta en el viewport; no hay contenido oculto que descubrir.
+
+**Causa raÃ­z:** El scroll lo generaba `<main>` (`overflow-y-auto`), contenedor **compartido por los 24 mÃ³dulos**. El contenido de Vista General (`h-full`) excedÃ­a el alto disponible en pantallas cortas.
+
+**Cambio aplicado** (`apps/ExperimentCenterUI.jsx`):
+
+| Elemento | Antes | DespuÃ©s |
+|---|---|---|
+| `<main>` | `overflow-y-auto` (siempre) | `activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'` |
+| Contenedor overview | `h-full flex flex-col` | `h-full flex flex-col overflow-hidden` |
+| Encabezado del negocio | sin `shrink` | `shrink-0` (nunca se comprime) |
+| Bloque del reloj | `flex-1` | `flex-1 min-h-0` (permite encoger al hijo) |
+| Tarjeta del reloj (mÃ³vil) | `p-6`, hora `text-6xl`, fecha `text-lg`, semana `text-3xl`, `rounded-[30px]` | `p-4`, hora `text-5xl`, fecha `text-base`, semana `text-2xl`, `rounded-[24px]` |
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que el scroll de `<main>` sea **condicional al mÃ³dulo**. Los mÃ³dulos de contenido largo (EstadÃ­sticas, RRHH, Almacenes) conservan `overflow-y-auto`; los de pantalla fija (Vista General, POS, tableros) usan `overflow-hidden`.
+- **OBLIGATORIO** que todo contenedor flex con `overflow-hidden` declare `min-h-0` en el hijo que debe encoger. Sin `min-h-0`, un hijo flex no puede reducirse por debajo de su tamaÃ±o de contenido y el `overflow-hidden` no tiene efecto.
+- **OBLIGATORIO** usar `shrink-0` en encabezados/barras que no deben comprimirse cuando el espacio vertical es escaso.
+- **PROHIBIDO** quitar `overflow-y-auto` de `<main>` de forma global: romperÃ­a el desplazamiento de los 23 mÃ³dulos restantes.
+
+**VerificaciÃ³n:** `npx vite build` â†’ 1829 mÃ³dulos, exit 0.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:

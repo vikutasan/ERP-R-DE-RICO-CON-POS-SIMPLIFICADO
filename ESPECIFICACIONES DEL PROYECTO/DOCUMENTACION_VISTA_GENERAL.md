@@ -1,6 +1,6 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.5.0
+> **Version:** 1.6.0
 > **Ultima actualizacion:** 24 de septiembre de 2026
 > **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py, router.py)
 
@@ -488,9 +488,40 @@ Ambos modales comparten el mismo patron responsivo:
 - **Commit:** `d377fc9` — `feat(ui): hacer responsivo el modulo Vista General (encabezado, reloj y modales)`.
 - **Archivo:** `apps/ExperimentCenterUI.jsx`, bloque `activeModule === 'overview'` (lineas ~542-675).
 
+### 10.6 Sin Scroll: Vista General es una Pantalla Kiosco (24 Sep 2026)
+
+**Decision de diseno:** La Vista General **NO debe tener scroll**. Es una pantalla tipo *kiosco* (encabezado
+del negocio + reloj) que debe caber **exacta** en el viewport. El scroll no aporta nada aqui: no hay
+contenido oculto que el usuario necesite descubrir.
+
+**El problema:** El scroll lo generaba `<main>` (`overflow-y-auto`), que es el contenedor **compartido por
+los 24 modulos**. El contenido de Vista General (`h-full`) excedia el alto disponible en pantallas cortas,
+por lo que `<main>` mostraba barra de desplazamiento.
+
+**La solucion (sin romper los demas modulos):**
+
+| Cambio | Detalle |
+|---|---|
+| `<main>` condicional | `activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'` — solo Vista General pierde el scroll; los otros 23 modulos lo conservan |
+| Contenedor overview | `h-full flex flex-col overflow-hidden` — el contenido se auto-ajusta al alto del viewport |
+| Encabezado | `shrink-0` — nunca se comprime; mantiene su altura natural |
+| Bloque del reloj | `flex-1 min-h-0` — absorbe el espacio restante y permite que el hijo encoja |
+| Tarjeta del reloj | Escalas reducidas en movil: hora `text-5xl`, fecha `text-base`, semana `text-2xl`, padding `p-4`, radio `rounded-[24px]` |
+
+> **REGLA:** El scroll de `<main>` es **condicional al modulo**. Cualquier modulo que se disene como
+> pantalla fija (kiosco, tablero, POS a pantalla completa) debe agregarse a la condicion `overflow-hidden`.
+> Los modulos de contenido largo (Estadisticas, RRHH, Almacenes) conservan `overflow-y-auto`.
+
+> **IMPORTANTE:** El `min-h-0` en el contenedor flex es **obligatorio**. Sin el, un hijo flex no puede
+> encogerse por debajo de su tamano de contenido y el `overflow-hidden` no tendria efecto (el contenido
+> se desbordaria igual).
+
+**Verificacion:** `npx vite build` → 1829 modulos, exit 0.
+
 ---
 
 > **Esta documentacion refleja el estado del sistema al 24 de septiembre de 2026.**
 > **V19 (Plan Transversal) — COMPLETO.** Bloques 1-5 cerrados. `grandeza` diferido a V20 Bloque 9.c.
 > **V23 (Dinero Decimal + Selector de Moneda) — COMPLETO.** 36 columnas migradas a `Numeric(12,2)`.
 > **Responsividad Vista General — COMPLETO (24 Sep 2026).** Encabezado, reloj y modales adaptados a movil.
+> **Vista General sin scroll — COMPLETO (24 Sep 2026).** Pantalla kiosco que cabe exacta en el viewport.
