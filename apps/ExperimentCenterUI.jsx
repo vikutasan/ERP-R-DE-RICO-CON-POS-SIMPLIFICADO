@@ -415,8 +415,8 @@ export const ExperimentCenterUI = () => {
 
             {/* Sidebar de Control */}
             <aside className={`
-                ${isSidebarCollapsed ? 'md:w-20 pointer-events-none md:pointer-events-auto' : 'w-80 pointer-events-auto'} 
-                md:relative h-full bg-[#050505] md:bg-black/40 border-r border-gray-800 p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
+                ${isSidebarCollapsed ? 'md:w-20 pointer-events-none md:pointer-events-auto' : 'md:w-80 pointer-events-auto'}
+                w-0 md:relative h-full bg-[#050505] md:bg-black/40 border-r border-gray-800 p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
             `}
             style={{
                 position: window.innerWidth < 768 ? 'fixed' : 'relative',
@@ -526,7 +526,7 @@ export const ExperimentCenterUI = () => {
 
             {/* Area de Experiencia */}
             <main
-                className={`flex-1 relative custom-scrollbar bg-cover bg-center transition-all duration-700 ${activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+                className={`flex-1 w-full min-w-0 relative custom-scrollbar bg-cover bg-center transition-all duration-700 ${activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'}`}
                 style={{ 
                     backgroundImage: activeModule === 'settings' 
                         ? `radial-gradient(circle at 50% 50%, rgba(249, 115, 22, 0.03), transparent 70%),
