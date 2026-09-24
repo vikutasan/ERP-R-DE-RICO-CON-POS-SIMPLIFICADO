@@ -1383,11 +1383,23 @@ allowedHosts: [
 ```
 **`api.rdericotoluca.com` NO se toca:** `apps/shared/config.js` deriva la URL del API desde el hostname y el tÃºnel Cloudflare enruta ese host a `:5001`. Cambiarlo romperÃ­a el acceso por internet (ver Incidente 16.6 â€” Error G).
 
+**SoluciÃ³n 3 â€” ConfiguraciÃ³n del tÃºnel Cloudflare (paso manual del dueÃ±o):**
+El subdominio `erp` se publica en el panel de Cloudflare Zero Trust. **ATENCIÃ“N (lecciÃ³n aprendida):** en este tÃºnel, la tabla con `reparto` y `api` vive en la pestaÃ±a **"Rutas de aplicaciÃ³n publicadas"** (*Published application routes*), **NO** en "Rutas de nombre de host" (*Public Hostname*). La UI de Cloudflare estÃ¡ en **espaÃ±ol** y las pestaÃ±as son:
+- **DescripciÃ³n general** (*Overview*)
+- **Rutas CIDR** (*CIDR routes*) â€” rutas privadas
+- **Rutas de nombre de host** (*Public Hostname*) â€” vacÃ­a en este tÃºnel
+- **Rutas de aplicaciÃ³n publicadas** (*Published application routes*) â€” **aquÃ­ estÃ¡n `reparto` y `api`** â† agregar `erp` aquÃ­
+- **Registros en vivo** (*Live logs*)
+
+Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.com`, Ruta vacÃ­a, Tipo `HTTP`, URL `localhost:5000`. **NO** se modificaron `reparto` ni `api`.
+
 **Evidencia de AceptaciÃ³n:**
 - **Build:** `npx vite build` â†’ 1829 mÃ³dulos transformados, `built in 8.62s`, exit 0.
 - **Commit:** `413fa99` (2 archivos, 60 inserciones, 2 eliminaciones), pusheado a `main`.
 - **Enlace limpio:** `erp.rdericotoluca.com/?logout=1` purga la sesiÃ³n y muestra el `LoginUI`.
 - **Enlace normal:** `erp.rdericotoluca.com/` respeta la sesiÃ³n persistida (12 h).
+- **DNS (verificado post-configuraciÃ³n):** `nslookup erp.rdericotoluca.com` â†’ resuelve a Cloudflare (`2606:4700:3036::ac43:a687`).
+- **HTTP (verificado post-configuraciÃ³n):** `https://erp.rdericotoluca.com/` â†’ `HTTP/1.1 200 OK`; `https://erp.rdericotoluca.com/?logout=1` â†’ `HTTP/1.1 200 OK`; `https://api.rdericotoluca.com/api/v1/settings` â†’ `HTTP/1.1 307` (redirecciÃ³n normal de FastAPI); `https://reparto.rdericotoluca.com/` â†’ `HTTP/1.1 200 OK` (transiciÃ³n intacta).
 
 **Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
 - **OBLIGATORIO** que cualquier enlace destinado a colaboradores use `?logout=1` para garantizar la pantalla de PIN, dado que la sesiÃ³n persiste 12 h (Â§16.13).
