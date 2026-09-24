@@ -1578,6 +1578,46 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.22 `md:w-auto` Rompe el Ancho del Sidebar (RegresiÃ³n del Fix 16.21) (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** CorrecciÃ³n de regresiÃ³n introducida por el fix 16.21
+**Motivo:** El fix 16.21 sustituyÃ³ el ancho del `<aside>` por `w-0 md:w-auto max-w-[85vw] md:max-w-none`. Eso introdujo **dos defectos** que rompieron la **barra selectora de mÃ³dulos** (el sidebar de navegaciÃ³n):
+
+1. **`md:w-auto` anulaba los anchos de escritorio.** El `<aside>` tenÃ­a `md:w-80` (abierto) y `md:w-20` (colapsado) en la rama condicional, pero `md:w-auto` en la clase base los **sobreescribÃ­a** por orden de cascada. En escritorio el sidebar quedaba con ancho automÃ¡tico (dictado por el contenido), deformando la barra selectora.
+2. **El sidebar abierto en mÃ³vil medÃ­a `w-0`.** La clase base `w-0` se aplicaba en **todos** los estados; la rama `isSidebarCollapsed === false` no la anulaba. Resultado: al abrir el sidebar en mÃ³vil, este no tenÃ­a ancho y la barra selectora se veÃ­a colapsada/vacÃ­a.
+
+**Causa raÃz:** se mezclÃ³ el ancho **base** (`w-0`, para el estado colapsado) con el ancho **responsive** (`md:w-auto`), en lugar de declarar el ancho **explÃ­cito por estado** en cada rama del condicional.
+
+**Cambio aplicado** (`apps/ExperimentCenterUI.jsx`, `<aside>`):
+
+| Estado | Antes (roto) | DespuÃ©s (correcto) |
+|---|---|---|
+| Colapsado mÃ³vil | `w-0` (base) | `w-0` |
+| Abierto mÃ³vil | `w-0` (heredado, sin ancho) | `w-72` |
+| Colapsado escritorio | `md:w-auto` (anulaba `md:w-20`) | `md:w-20` |
+| Abierto escritorio | `md:w-auto` (anulaba `md:w-80`) | `md:w-80` |
+
+Clase final del `<aside>`:
+```
+fixed md:relative top-0 h-full max-w-[85vw] md:max-w-none
+bg-[#050505] md:bg-black/40 border-r border-gray-800
+p-0 md:p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
+${isSidebarCollapsed
+    ? 'w-0 -left-full md:left-auto md:w-20 pointer-events-none md:pointer-events-auto'
+    : 'w-72 left-0 md:left-auto md:w-80 pointer-events-auto'}
+```
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** declarar el ancho de un panel off-canvas de forma **explÃ­cita en cada rama del condicional de estado** (`w-0`/`w-72` mÃ³vil, `md:w-20`/`md:w-80` escritorio). **NUNCA** usar `md:w-auto` como ancho base: `auto` se resuelve por contenido y **sobreescribe** cualquier `md:w-<n>` declarado en la rama condicional.
+- **OBLIGATORIO** que la clase base de ancho (`w-0`) **no** se aplique al estado abierto. Si el ancho base es `w-0`, la rama "abierto" **debe** declarar su propio ancho (`w-72`), no heredar el base.
+- **REGLA DE DIAGNÃ“STICO (regresiÃ³n):** si tras un fix de responsividad "se rompe la barra selectora de mÃ³dulos", revisar si el ancho del `<aside>` quedÃ³ en `auto` o en `w-0` en el estado abierto. Ambos sÃ­ntomas (barra deformada en escritorio / barra vacÃ­a en mÃ³vil) apuntan a la misma causa: ancho no declarado por estado.
+- **REGLA DE PROCESO:** un fix de layout debe **verificarse en los cuatro estados** (mÃ³vil cerrado, mÃ³vil abierto, escritorio cerrado, escritorio abierto) antes de darlo por bueno. El fix 16.21 solo se validÃ³ en "mÃ³vil cerrado".
+
+**VerificaciÃ³n:** `docker compose exec -T pos npx vite build` â†’ 1829 mÃ³dulos, exit 0. Commit `a1686a4`.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
