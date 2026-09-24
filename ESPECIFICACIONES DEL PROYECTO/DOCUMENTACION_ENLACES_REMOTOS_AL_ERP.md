@@ -121,16 +121,153 @@ su backend sin cambiar una sola línea de código de negocio.
 
 ---
 
-## 4. EL ENLACE DE ACCESO LIMPIO (`?logout=1`)
+## 4. LA INFRAESTRUCTURA DE ACCESO REMOTO: CLOUDFLARE
 
-### 4.1 El problema que resuelve
+### 4.1 ¿Qué servicio usamos?
+
+El acceso remoto al ERP se presta con **Cloudflare Tunnel** (producto de **Cloudflare Zero
+Trust**, plan de pago). **No** se usa:
+
+- ❌ **Apertura de puertos en el módem/router** (port forwarding) — expondría el servidor
+  de la panadería directamente a internet.
+- ❌ **IP pública fija** — el proveedor de internet no la garantiza y es un blanco de ataque.
+- ❌ **VPN tradicional** — obligaría a instalar y configurar un cliente en cada dispositivo.
+- ❌ **Servicios de DNS dinámico (No-IP, DuckDNS)** — no ofrecen túnel cifrado ni control de acceso.
+
+### 4.2 ¿Por qué Cloudflare y no otra opción?
+
+| Criterio | Cloudflare Tunnel | Port Forwarding | VPN tradicional |
+|---|---|---|---|
+| **Expone el servidor a internet** | ❌ No — el túnel es **saliente** | ✅ Sí — puerto abierto | ⚠️ Parcial |
+| **Certificado HTTPS** | ✅ Automático y gratuito | ❌ Manual (Let's Encrypt) | ❌ Manual |
+| **Oculta la IP real de la panadería** | ✅ Sí | ❌ No | ⚠️ Parcial |
+| **Instalación en el cliente** | ✅ Ninguna (es un navegador) | ✅ Ninguna | ❌ Cliente VPN por dispositivo |
+| **Protección DDoS** | ✅ Incluida | ❌ Ninguna | ❌ Ninguna |
+| **Costo** | 💰 Plan de pago (ya contratado) | Gratis | Gratis o de pago |
+
+**La razón principal:** el túnel es **saliente**. El servidor de la panadería **abre la
+conexión hacia Cloudflare**, no al revés. Eso significa que **no hay ningún puerto abierto
+en el módem** y la IP real de la panadería **nunca queda expuesta**. Un atacante no puede
+"encontrar" el servidor porque, desde internet, el servidor no existe: solo existe
+Cloudflare.
+
+### 4.3 Cómo funciona el túnel (diagrama)
+
+```
+┌─────────────────────┐
+│  COLABORADOR        │
+│  (celular/tablet)   │
+│  Abre:              │
+│  erp.rdericotoluca  │
+│  .com               │
+└──────────┬──────────┘
+           │  HTTPS (443)
+           ▼
+┌─────────────────────────────────────────┐
+│           CLOUDFLARE (nube)              │
+│  • Termina el certificado HTTPS          │
+│  • Aplica protección DDoS                │
+│  • Lee la tabla de rutas del túnel:      │
+│      erp.*     → localhost:3000          │
+│      api.*     → localhost:5001          │
+│      reparto.* → localhost:3000          │
+└──────────┬──────────────────────────────┘
+           │  Túnel cifrado SALIENTE
+           │  (el servidor inicia la conexión)
+           ▼
+┌─────────────────────────────────────────┐
+│      SERVIDOR DE LA PANADERÍA            │
+│  (Windows + Docker)                      │
+│  ┌───────────────────────────────────┐   │
+│  │ cloudflared (servicio del túnel)  │   │
+│  └───────────────┬───────────────────┘   │
+│                  │                        │
+│      ┌───────────┴───────────┐            │
+│      ▼                       ▼            │
+│  ┌─────────┐            ┌─────────┐       │
+│  │  pos    │            │   api   │       │
+│  │  :3000  │            │  :5001  │       │
+│  │ (Vite)  │            │(FastAPI)│       │
+│  └─────────┘            └─────────┘       │
+└─────────────────────────────────────────┘
+```
+
+**Puntos clave del diagrama:**
+
+1. El colaborador **nunca toca el servidor de la panadería** directamente.
+2. El tráfico pasa **siempre por Cloudflare**, que aplica HTTPS y DDoS.
+3. La conexión entre Cloudflare y el servidor es **iniciada por el servidor**
+   (`cloudflared`), por eso se llama túnel **saliente**.
+4. El túnel enruta cada subdominio al **puerto interno** correcto.
+
+### 4.4 La tabla de rutas del túnel
+
+El túnel tiene una tabla que asocia **cada subdominio público** con un **puerto interno**:
+
+| Subdominio público | Servicio destino | Puerto interno |
+|---|---|---|
+| `erp.rdericotoluca.com` | Contenedor `pos` (Vite) | `http://localhost:3000` |
+| `api.rdericotoluca.com` | Contenedor `api` (FastAPI) | `http://localhost:5001` |
+| `reparto.rdericotoluca.com` | Contenedor `pos` (Vite) | `http://localhost:3000` |
+
+> ⚠️ **Dónde vive esta tabla en la UI de Cloudflare (en español):**
+> En **"Rutas de aplicación publicadas"** (*Published application routes*),
+> **NO** en "Rutas de nombre de host" (*Public Hostname*).
+> Ver [`CONTEXTO_SISTEMA_IA.md`](CONTEXTO_SISTEMA_IA.md:1329) §16.15 para el detalle
+> del incidente donde se descubrió esta diferencia.
+
+### 4.5 Cómo agregar un subdominio nuevo (procedimiento)
+
+Si en el futuro se necesita un cuarto subdominio (por ejemplo `reportes.rdericotoluca.com`):
+
+1. **En Cloudflare Zero Trust** → Túneles → el túnel del ERP → pestaña
+   **"Rutas de aplicación publicadas"** → **"Agregar una ruta"**.
+2. Llenar el formulario:
+   - **Subdominio:** `reportes`
+   - **Dominio:** `rdericotoluca.com`
+   - **Tipo:** `HTTP`
+   - **URL:** `localhost:3000` (o el puerto que corresponda)
+3. **Guardar** (*Save hostname*).
+4. **En el código:** agregar el host a `allowedHosts` en
+   [`vite.config.js`](../../vite.config.js:20).
+5. **Reiniciar Vite** para que tome el nuevo `allowedHosts`.
+6. **Verificar** con `nslookup` y `curl` (ver sección 10).
+
+> **Regla:** un subdominio nuevo **siempre** requiere **dos** cambios: uno en Cloudflare
+> (la ruta) y uno en el código (`allowedHosts`). Si falta cualquiera de los dos, el
+> subdominio no funciona.
+
+### 4.6 Qué NO se debe hacer con Cloudflare
+
+| ❌ Prohibido | Por qué |
+|---|---|
+| **Abrir puertos en el módem** | Anula el beneficio del túnel y expone la IP real |
+| **Compartir las credenciales de Cloudflare** | Quien las tenga puede redirigir el tráfico del ERP |
+| **Desactivar el túnel "para probar"** | Todos los colaboradores remotos pierden acceso al instante |
+| **Cambiar la tabla de rutas sin actualizar `allowedHosts`** | El ERP responde "Blocked request. This host is not allowed" |
+| **Apagar el servicio `cloudflared`** | El túnel muere; el ERP deja de ser accesible desde internet |
+
+### 4.7 Dependencia operativa
+
+> **El ERP remoto depende de dos servicios que deben estar vivos:**
+> 1. **`cloudflared`** en el servidor de la panadería (el túnel).
+> 2. **Los contenedores Docker** `pos` y `api`.
+>
+> Si cualquiera de los dos falla, **el acceso remoto se cae**, aunque la red local siga
+> funcionando. El monitoreo de estos servicios es responsabilidad del administrador.
+
+---
+
+## 5. EL ENLACE DE ACCESO LIMPIO (`?logout=1`)
+
+### 5.1 El problema que resuelve
 
 La sesión del ERP **persiste 12 horas** para no obligar al colaborador a teclear su PIN
-cada vez que cambia de pantalla (ver sección 5). Eso es cómodo en un dispositivo personal,
+cada vez que cambia de pantalla (ver sección 6). Eso es cómodo en un dispositivo personal,
 pero en un **equipo compartido** (la tablet del mostrador, la computadora de la oficina)
 significa que el siguiente usuario podría encontrar la sesión del anterior abierta.
 
-### 4.2 La solución
+### 5.2 La solución
 
 Existe un enlace especial que **fuerza el cierre de sesión al abrirse**:
 
@@ -145,7 +282,7 @@ Al abrir ese enlace, el ERP:
 3. **Limpia** el parámetro de la barra de direcciones (`history.replaceState`)
 4. **Muestra** la pantalla de PIN, siempre limpia
 
-### 4.3 Cuándo usar cada enlace
+### 5.3 Cuándo usar cada enlace
 
 | Escenario | Enlace recomendado |
 |---|---|
@@ -159,9 +296,9 @@ Al abrir ese enlace, el ERP:
 
 ---
 
-## 5. LA SESIÓN PERSISTIDA (12 HORAS)
+## 6. LA SESIÓN PERSISTIDA (12 HORAS)
 
-### 5.1 Cómo funciona
+### 6.1 Cómo funciona
 
 | Aspecto | Detalle |
 |---|---|
@@ -171,7 +308,7 @@ Al abrir ese enlace, el ERP:
 | **Renovación** | Cada interacción del usuario refresca `lastActivity` |
 | **Expiración** | Al superar 12 h sin actividad, la sesión se descarta y se pide PIN |
 
-### 5.2 Qué pasa al cerrar sesión
+### 6.2 Qué pasa al cerrar sesión
 
 Cuando el colaborador oprime **"Salir del sistema"**,
 [`handleLogout()`](../../apps/ExperimentCenterUI.jsx:315) ejecuta:
@@ -185,7 +322,7 @@ const handleLogout = () => {
 
 **Resultado:** la próxima vez que se abra el enlace, **el ERP pedirá la clave**.
 
-### 5.3 La única excepción
+### 6.3 La única excepción
 
 Si el colaborador **NO** oprime "Salir del sistema" y simplemente cierra la pestaña o
 apaga el equipo, la sesión **sigue viva hasta 12 horas**. Al reabrir el enlace dentro de
@@ -196,9 +333,9 @@ ese plazo, el ERP **no pedirá PIN**.
 
 ---
 
-## 6. POLÍTICA DE RESPONSABILIDAD PERSONAL
+## 7. POLÍTICA DE RESPONSABILIDAD PERSONAL
 
-### 6.1 La regla
+### 7.1 La regla
 
 > **Cada colaborador es responsable de todo lo que se haga dentro del ERP mientras esté
 > logueado con su clave.**
@@ -207,7 +344,7 @@ El sistema registra las acciones **a nombre del usuario autenticado**. Si alguie
 su clave, o deja su sesión abierta, **las acciones que ocurran después quedan a su
 nombre**. No hay forma de "despersonalizar" una operación hecha con una sesión activa.
 
-### 6.2 Por qué esta política funciona
+### 7.2 Por qué esta política funciona
 
 Esta regla convierte al colaborador en el **primer guardián de su propia clave**:
 
@@ -219,7 +356,7 @@ Esta regla convierte al colaborador en el **primer guardián de su propia clave*
 Es un modelo de **seguridad distribuida**: en lugar de depender de que un administrador
 vigile a todos, **cada quien vigila su propia puerta**.
 
-### 6.3 El único punto débil: el olvido
+### 7.3 El único punto débil: el olvido
 
 La política depende de la **disciplina humana**. El eslabón más frágil es el olvido:
 el colaborador termina su turno, se distrae y **no oprime "Salir del sistema"**.
@@ -235,30 +372,30 @@ el colaborador termina su turno, se distrae y **no oprime "Salir del sistema"**.
 
 ---
 
-## 7. PROTOCOLO DE EQUIPOS COMPARTIDOS
+## 8. PROTOCOLO DE EQUIPOS COMPARTIDOS
 
-### 7.1 Reglas para el colaborador
+### 8.1 Reglas para el colaborador
 
 1. **Al terminar tu turno, oprime "Salir del sistema".** No basta con cerrar la pestaña.
 2. **Nunca prestes tu clave.** Si alguien necesita entrar, que use la suya.
 3. **Si usas un equipo compartido, abre el enlace con `?logout=1`.**
 4. **Si sospechas que alguien vio tu clave, repórtalo de inmediato** para que se cambie.
 
-### 7.2 Reglas para el administrador
+### 8.2 Reglas para el administrador
 
 | Acción | Cuándo | Herramienta |
 |---|---|---|
 | **PIN único por empleado** | Al dar de alta a un colaborador | Módulo de Seguridad |
 | **Desactivar al empleado** | Al terminar la relación laboral | `deactivateEmployee` ([`securityService.js`](../../apps/pos/services/securityService.js:42)) |
 | **Revisar perfiles** | Al cambiar de puesto a alguien | Módulo de Gestión de Perfiles |
-| **Difundir el enlace correcto** | Al incorporar a alguien | Este documento (sección 4.3) |
+| **Difundir el enlace correcto** | Al incorporar a alguien | Este documento (sección 5.3) |
 
 > **Regla de oro administrativa:** un empleado que ya no trabaja **debe ser desactivado
 > el mismo día**. Un PIN activo de alguien que ya no está es una puerta abierta.
 
 ---
 
-## 8. REGLAS DE ORO (NO ROMPER)
+## 9. REGLAS DE ORO (NO ROMPER)
 
 1. **Un solo enlace público:** `https://erp.rdericotoluca.com`. No crear enlaces por puesto.
 2. **El acceso se controla por PIN y perfil, nunca por URL.** La URL no otorga permisos.
@@ -271,9 +408,9 @@ el colaborador termina su turno, se distrae y **no oprime "Salir del sistema"**.
 
 ---
 
-## 9. VERIFICACIÓN DEL ACCESO REMOTO
+## 10. VERIFICACIÓN DEL ACCESO REMOTO
 
-### 9.1 Comandos de diagnóstico
+### 10.1 Comandos de diagnóstico
 
 Desde cualquier equipo con acceso a internet:
 
@@ -284,7 +421,7 @@ curl -s -I -m 20 https://erp.rdericotoluca.com/?logout=1 | findstr /I "HTTP"
 curl -s -I -m 20 https://api.rdericotoluca.com/api/v1/settings | findstr /I "HTTP"
 ```
 
-### 9.2 Resultados esperados (verificados el 23/Septiembre/2026)
+### 10.2 Resultados esperados (verificados el 23/Septiembre/2026)
 
 | Comprobación | Resultado esperado | Resultado obtenido |
 |---|---|---|
@@ -294,7 +431,7 @@ curl -s -I -m 20 https://api.rdericotoluca.com/api/v1/settings | findstr /I "HTT
 | HTTP de `api.rdericotoluca.com/api/v1/settings` | `307` (redirección del API) | `HTTP/1.1 307` ✅ |
 | HTTP de `reparto.rdericotoluca.com/` | `200 OK` (alias heredado) | `HTTP/1.1 200 OK` ✅ |
 
-### 9.3 Si el enlace no responde
+### 10.3 Si el enlace no responde
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
@@ -310,7 +447,7 @@ curl -s -I -m 20 https://api.rdericotoluca.com/api/v1/settings | findstr /I "HTT
 
 ---
 
-## 10. PREGUNTAS FRECUENTES
+## 11. PREGUNTAS FRECUENTES
 
 **¿Puedo quedarme solo con el enlace `erp.rdericotoluca.com` y serviría para todos?**
 Sí. Es exactamente el diseño: un enlace, y cada quien entra con su clave y ve lo que su
@@ -337,11 +474,12 @@ administrador que **desactive tu empleado**; al reactivarlo, se te asigna un PIN
 
 ---
 
-## 11. HISTORIAL DE CAMBIOS
+## 12. HISTORIAL DE CAMBIOS
 
 | Versión | Fecha | Cambio |
 |---|---|---|
 | **v19.5** | 23/Sept/2026 | Creación del documento. Subdominio oficial `erp.rdericotoluca.com`, enlace de acceso limpio `?logout=1`, política de responsabilidad personal y protocolo de equipos compartidos. |
+| **v19.5.1** | 23/Sept/2026 | Se agrega la **sección 4 completa sobre Cloudflare** (servicio usado, comparativa, diagrama del túnel saliente, tabla de rutas, procedimiento para agregar subdominios, prohibiciones y dependencia operativa). Se renumera el resto de secciones. |
 
 ---
 
