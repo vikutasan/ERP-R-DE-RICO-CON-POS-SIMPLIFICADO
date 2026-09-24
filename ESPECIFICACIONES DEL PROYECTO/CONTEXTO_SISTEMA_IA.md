@@ -1527,6 +1527,28 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.20 El Sidebar del Shell Debe Ser Off-Canvas en MÃ³vil (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** CorrecciÃ³n de bug de layout (regresiÃ³n de responsividad)
+**Motivo:** Tras el ajuste 16.19, el mÃ³dulo "GestiÃ³n de Productos" seguÃ­a viÃ©ndose NO responsivo en el telÃ©fono. La causa NO estaba en el mÃ³dulo, sino en el shell: el `<aside>` del sidebar tenÃ­a la clase base `w-80` (320px) SIN override mÃ³vil. En mÃ³vil el sidebar se vuelve `position: fixed` y se desliza fuera de pantalla con `left: -100%`, pero al seguir siendo hijo flex con `w-80` **reservaba 320px** en la fila flex y aplastaba `<main>` a un sliver de ~55px en un telÃ©fono de 375px. El mÃ³dulo, aunque tenÃ­a sus clases responsivas correctas, no tenÃ­a ancho donde aplicarlas.
+
+**Cambio aplicado** (`apps/ExperimentCenterUI.jsx`):
+
+| Elemento | Antes | DespuÃ©s |
+|---|---|---|
+| `<aside>` (sidebar) | `w-80` (base) / `md:w-20` colapsado | `w-0` (base, off-canvas) / `md:w-80` expandido / `md:w-20` colapsado |
+| `<main>` (Ã¡rea de contenido) | `flex-1 relative ...` | `flex-1 w-full min-w-0 relative ...` |
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo panel lateral off-canvas (sidebar, drawer) use `w-0` como ancho base en mÃ³vil y `md:w-<n>` para el ancho real. Un panel `position: fixed` con `left: -100%` que conserva su ancho en el flujo flex sigue reservando espacio y aplasta el contenido.
+- **OBLIGATORIO** que el contenedor de contenido principal (`<main>`) declare `w-full min-w-0`. `min-w-0` es imprescindible para que un hijo flex pueda encogerse por debajo de su ancho de contenido y no desborde.
+- **REGLA DE DIAGNÃ“STICO:** si un mÃ³dulo "sigue sin ser responsivo" pese a tener sus clases `sm:`/`md:`/`lg:` correctas, el problema estÃ¡ en el **contenedor padre** (shell), no en el mÃ³dulo. Revisar primero el layout del shell.
+
+**VerificaciÃ³n:** `npx vite build` â†’ 1829 mÃ³dulos, exit 0. Commit `4d98ec0`.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
