@@ -415,14 +415,15 @@ export const ExperimentCenterUI = () => {
 
             {/* Sidebar de Control */}
             <aside className={`
-                fixed md:relative top-0 h-full max-w-[85vw] md:max-w-none
-                bg-[#050505] md:bg-black/40 border-r border-gray-800
-                p-0 md:p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
-                ${isSidebarCollapsed
-                    ? 'w-0 -left-full md:left-auto md:w-20 pointer-events-none md:pointer-events-auto'
-                    : 'w-72 left-0 md:left-auto md:w-80 pointer-events-auto'}
+                ${isSidebarCollapsed ? 'md:w-20 pointer-events-none md:pointer-events-auto' : 'w-80 pointer-events-auto'} 
+                md:relative h-full bg-[#050505] md:bg-black/40 border-r border-gray-800 p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
             `}
-            style={{ zIndex: 999990 }}>
+            style={{
+                position: window.innerWidth < 768 ? 'fixed' : 'relative',
+                top: 0,
+                left: window.innerWidth < 768 ? (isSidebarCollapsed ? '-100%' : '0') : 'auto',
+                zIndex: 999990
+            }}>
 
                 {/* Botón para Cerrar en MÓVIL */}
                 <button
@@ -444,7 +445,7 @@ export const ExperimentCenterUI = () => {
                     </button>
                 </div>
 
-                <div className="mb-12 flex items-center gap-4 group/logo cursor-pointer overflow-hidden px-6 pt-8 md:px-0 md:pt-0">
+                <div className="mb-12 flex items-center gap-4 group/logo cursor-pointer overflow-hidden">
                     <div className="w-16 h-16 bg-transparent flex items-center justify-center overflow-hidden transition-all group-hover/logo:scale-110 shrink-0">
                         <img src="/assets/logo.png" alt="R de Rico Logo" className="w-16 h-16 object-contain" />
                     </div>
@@ -456,7 +457,7 @@ export const ExperimentCenterUI = () => {
                     )}
                 </div>
 
-                <nav className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-6 md:px-0 md:pr-2 custom-scrollbar">
+                <nav className="flex-1 space-y-2 overflow-y-auto overflow-x-hidden pr-2 custom-scrollbar">
                     <button
                         onClick={() => attemptNavigation(() => setActiveModule('overview'))}
                         className={`w-full text-left p-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all overflow-hidden ${activeModule === 'overview' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20 shadow-2xl shadow-orange-500/10' : 'text-gray-500 hover:text-white'}`}
@@ -487,7 +488,7 @@ export const ExperimentCenterUI = () => {
 
                 </nav>
 
-                <div className={`mt-auto px-6 md:px-0 transition-all duration-500 ${isSidebarCollapsed ? 'opacity-0 scale-0 h-0 overflow-hidden' : 'opacity-100 scale-100'}`}>
+                <div className={`mt-auto transition-all duration-500 ${isSidebarCollapsed ? 'opacity-0 scale-0 h-0 overflow-hidden' : 'opacity-100 scale-100'}`}>
                     <div className="p-6 bg-orange-600/10 border border-orange-500/20 rounded-[30px] relative overflow-hidden group">
                         <div className="absolute -top-10 -right-10 w-32 h-32 bg-orange-500/10 rounded-full" />
                         <p className="text-[10px] font-black uppercase text-orange-400 mb-2 tracking-widest">Usuario</p>
@@ -508,7 +509,7 @@ export const ExperimentCenterUI = () => {
                     </div>
                 )}
 
-                <div className="mt-2 px-6 md:px-4 pb-4">
+                <div className="mt-2 px-4 pb-4">
                     <button
                         onClick={() => attemptNavigation(() => handleLogout())}
                         className={`w-full p-4 font-black uppercase tracking-widest transition-all rounded-2xl flex items-center justify-center gap-2 border 
@@ -525,7 +526,7 @@ export const ExperimentCenterUI = () => {
 
             {/* Area de Experiencia */}
             <main
-                className={`flex-1 w-full min-w-0 relative custom-scrollbar bg-cover bg-center transition-all duration-700 ${activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'}`}
+                className={`flex-1 relative custom-scrollbar bg-cover bg-center transition-all duration-700 ${activeModule === 'overview' ? 'overflow-hidden' : 'overflow-y-auto'}`}
                 style={{ 
                     backgroundImage: activeModule === 'settings' 
                         ? `radial-gradient(circle at 50% 50%, rgba(249, 115, 22, 0.03), transparent 70%),
@@ -734,17 +735,17 @@ export const ExperimentCenterUI = () => {
                 </div>
             </main>
 
-            {/* Pestañita flotante para móviles cuando está cerrado */}
+            {/* Pestañita flotante para móviles cuando está cerrado - DIAGNÓSTICO */}
             {isSidebarCollapsed && (
                 <button
                     onClick={() => setIsSidebarCollapsed(false)}
-                    className="md:hidden flex items-center justify-center bg-orange-600 text-white text-lg border border-l-0 border-white/20 shadow-[0_0_30px_rgba(234,88,12,0.8)] outline-none focus:outline-none"
-                    style={{
+                    className="flex items-center justify-center bg-orange-600 text-white text-lg border border-l-0 border-white/20 shadow-[0_0_30px_rgba(234,88,12,0.8)] outline-none focus:outline-none"
+                    style={{ 
                         position: 'fixed',
-                        left: '0px',
-                        top: '40px',
-                        width: '25px',
-                        height: '50px',
+                        left: '0px', 
+                        top: '40px', 
+                        width: '25px', 
+                        height: '50px', 
                         borderTopRightRadius: '25px',
                         borderBottomRightRadius: '25px',
                         zIndex: 2147483647,
@@ -753,14 +754,6 @@ export const ExperimentCenterUI = () => {
                 >
                     <span className="pr-1">▶</span>
                 </button>
-            )}
-
-            {/* Backdrop móvil: cierra el sidebar al tocar fuera */}
-            {!isSidebarCollapsed && (
-                <div
-                    onClick={() => setIsSidebarCollapsed(true)}
-                    className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[999980]"
-                />
             )}
 
             {/* Modals de HR (check-in / check-out) */}

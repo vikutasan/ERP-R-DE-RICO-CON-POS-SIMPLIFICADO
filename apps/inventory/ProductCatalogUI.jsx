@@ -742,12 +742,12 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
     };
 
     return (
-        <div className="min-h-screen text-white p-4 sm:p-8 font-sans flex flex-col lg:flex-row gap-4 lg:gap-8">
+        <div className="min-h-screen text-white p-8 font-sans flex gap-8">
             {/* Modal de Eliminación de Categoría */}
             {categoryToDelete && ReactDOM.createPortal(
-                <div className="fixed inset-0 z-[200] flex items-start justify-center p-4 sm:p-6 pt-10 sm:pt-20 overflow-y-auto custom-scrollbar">
+                <div className="fixed inset-0 z-[200] flex items-start justify-center p-6 pt-20">
                     <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={() => setCategoryToDelete(null)} />
-                    <div className="relative w-full max-w-lg bg-gray-900 border border-red-900/30 rounded-[24px] sm:rounded-[40px] p-6 sm:p-10 shadow-2xl my-auto">
+                    <div className="relative w-full max-w-lg bg-gray-900 border border-red-900/30 rounded-[40px] p-10 shadow-2xl">
                         <h3 className="text-3xl font-black uppercase italic tracking-tighter text-red-500 mb-2 text-center">¿Eliminar Categoría?</h3>
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-10 text-center">
                             Esta acción es irreversible y afectará el catálogo.
@@ -773,9 +773,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
 
             {/* Modal de Opciones de Categoría */}
             {renamingCategory && ReactDOM.createPortal(
-                <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 sm:p-6 overflow-y-auto custom-scrollbar">
+                <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
                     <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={() => setRenamingCategory(null)} />
-                    <div className="relative w-full max-w-md bg-gray-900 border border-indigo-900/30 rounded-[24px] sm:rounded-[40px] p-6 sm:p-10 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar my-auto">
+                    <div className="relative w-full max-w-md bg-gray-900 border border-indigo-900/30 rounded-[40px] p-10 shadow-2xl">
                         <h3 className="text-3xl font-black uppercase italic tracking-tighter text-indigo-400 mb-2 text-center">Opciones de Categoría</h3>
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-8 text-center">
                             Modifica el nombre, visibilidad o elimina la categoría.
@@ -821,7 +821,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                 <p className="text-[8px] font-bold text-gray-500 uppercase mb-3">
                                     Los productos que arrastres aquí heredan este destino.
                                 </p>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                <div className="grid grid-cols-3 gap-2">
                                     {[
                                         { key: 'PANADERIA', label: 'Panadería', icon: '🥖' },
                                         { key: 'HELADERIA', label: 'Heladería', icon: '🍦' },
@@ -858,7 +858,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                     <p className="text-[8px] font-bold text-gray-500 uppercase mb-3">
                                         Cómo se proyectan sus productos en el menú de Heladería.
                                     </p>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    <div className="grid grid-cols-3 gap-2">
                                         {[
                                             { key: 'SABOR', label: 'Sabor' },
                                             { key: 'RECIPIENTE', label: 'Recipiente' },
@@ -918,9 +918,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 document.body
             )}
             {showDeleteConfirm && ReactDOM.createPortal(
-                <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 sm:p-6 overflow-y-auto custom-scrollbar">
+                <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
                     <div className="absolute inset-0 bg-black/95 backdrop-blur-2xl" onClick={() => setShowDeleteConfirm(false)} />
-                    <div className="relative w-full max-w-md bg-[#0a0a0a] border border-red-900/50 rounded-[24px] sm:rounded-[40px] p-6 sm:p-10 shadow-[0_0_100px_-20px_rgba(220,38,38,0.3)] text-center animate-in zoom-in-95 duration-500 max-h-[92vh] overflow-y-auto custom-scrollbar my-auto">
+                    <div className="relative w-full max-w-md bg-[#0a0a0a] border border-red-900/50 rounded-[40px] p-10 shadow-[0_0_100px_-20px_rgba(220,38,38,0.3)] text-center animate-in zoom-in-95 duration-500">
                         <div className="w-20 h-20 bg-red-600/20 border-2 border-red-600 rounded-3xl mx-auto mb-8 flex items-center justify-center text-5xl animate-pulse">
                             ⚠️
                         </div>
@@ -951,9 +951,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
 
             {/* Modal de Error: Categoría No Vacía */}
             {showCategoryNotEmptyModal && ReactDOM.createPortal(
-                <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 sm:p-6 overflow-y-auto custom-scrollbar">
+                <div className="fixed inset-0 z-[400] flex items-center justify-center p-6">
                     <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setShowCategoryNotEmptyModal(false)} />
-                    <div className="relative w-full max-w-md bg-gray-900 border border-orange-900/40 rounded-[24px] sm:rounded-[40px] p-6 sm:p-10 shadow-2xl text-center max-h-[92vh] overflow-y-auto custom-scrollbar my-auto">
+                    <div className="relative w-full max-w-md bg-gray-900 border border-orange-900/40 rounded-[40px] p-10 shadow-2xl text-center">
                         <div className="w-20 h-20 bg-orange-600/10 border-2 border-orange-600 rounded-3xl mx-auto mb-6 flex items-center justify-center text-4xl">
                             🚫
                         </div>
@@ -974,9 +974,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                 document.body
             )}
             {editingProduct && ReactDOM.createPortal(
-                <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 overflow-y-auto custom-scrollbar">
+                <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
                     <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={() => setEditingProduct(null)} />
-                    <div className="relative w-full max-w-xl bg-gray-900 border border-indigo-900/30 rounded-[24px] sm:rounded-[40px] p-6 sm:p-10 shadow-2xl max-h-[92vh] overflow-y-auto custom-scrollbar my-auto">
+                    <div className="relative w-full max-w-xl bg-gray-900 border border-indigo-900/30 rounded-[40px] p-10 shadow-2xl">
                         <header className="mb-8 border-b border-gray-800 pb-6 flex gap-6 items-center">
                             {editingProduct.image_url ? (
                                 <img src={resolveImageUrl(editingProduct.image_url)} alt="Preview" className="w-24 h-24 object-cover rounded-2xl border-2 border-indigo-500/50 shadow-xl shadow-indigo-500/10" />
@@ -992,8 +992,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                         </header>
 
                         <div className="space-y-6 mb-10 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 pb-6 border-b border-gray-800">
-                                <div className="col-span-1 sm:col-span-2">
+                            <div className="grid grid-cols-2 gap-6 pb-6 border-b border-gray-800">
+                                <div className="col-span-2">
                                     <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest block mb-2">Naturaleza del Artículo</label>
                                     <select 
                                         className="w-full bg-indigo-900/20 border border-indigo-500/50 p-4 rounded-2xl text-sm font-black text-indigo-300 outline-none focus:border-indigo-400 appearance-none cursor-pointer"
@@ -1006,7 +1006,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         <option value="EMPAQUE">📦 EMPAQUE</option>
                                     </select>
                                 </div>
-                                <div className="col-span-1 sm:col-span-2">
+                                <div className="col-span-2">
                                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Nombre Comercial</label>
                                     <input 
                                         className="w-full bg-black/40 border border-gray-800 p-4 rounded-2xl text-lg font-bold outline-none focus:border-[#c1d72e] transition-all"
@@ -1072,9 +1072,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         onChange={(e) => setEditingProduct({...editingProduct, warehouse: e.target.value})}
                                     />
                                 </div>
-                                <div className="col-span-1 sm:col-span-2">
+                                <div className="col-span-2">
                                     <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Fotografía del Producto</label>
-                                    <div className="flex flex-col sm:flex-row gap-4">
+                                    <div className="flex gap-4">
                                         <input 
                                             type="text"
                                             placeholder="URL o sube una imagen..."
@@ -1234,7 +1234,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         <h4 className="text-xs font-black uppercase tracking-widest flex items-center gap-2 text-emerald-400 mb-4">
                                             <span>📍</span> Dónde se muestra
                                         </h4>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div className="grid grid-cols-2 gap-3">
                                             <div className={`p-4 rounded-2xl border ${enPanaderia ? 'bg-emerald-900/10 border-emerald-500/30' : 'bg-black/40 border-gray-800 opacity-40'}`}>
                                                 <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400 mb-1">🥖 POS Panadería</div>
                                                 <div className="text-[9px] font-bold text-gray-400 uppercase">
@@ -1273,8 +1273,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                     
                                     <div className="bg-gray-800/20 p-6 rounded-[32px] border border-gray-800 space-y-6">
                                         {/* Masa Primaria */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 items-end">
-                                            <div className="sm:col-span-3">
+                                        <div className="grid grid-cols-5 gap-4 items-end">
+                                            <div className="col-span-3">
                                                 <label className="text-[10px] font-black text-[#c1d72e] uppercase block mb-2">Masa Primaria (Base)</label>
                                                 <select 
                                                     className="w-full bg-black/60 border border-gray-700 p-3 rounded-xl text-xs font-bold outline-none focus:border-[#c1d72e]"
@@ -1290,10 +1290,10 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                                     ))}
                                                 </select>
                                             </div>
-                                            <div className="sm:col-span-2">
+                                            <div className="col-span-2">
                                                 <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Gramos</label>
                                                 <div className="flex items-center gap-2 bg-black/40 border border-gray-700 p-3 rounded-xl">
-                                                    <input
+                                                    <input 
                                                         type="number"
                                                         placeholder="0"
                                                         className="bg-transparent w-full text-sm font-bold outline-none text-center"
@@ -1309,8 +1309,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         </div>
 
                                         {/* Masa Secundaria */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 items-end pt-4 border-t border-gray-800/50">
-                                            <div className="sm:col-span-3">
+                                        <div className="grid grid-cols-5 gap-4 items-end pt-4 border-t border-gray-800/50">
+                                            <div className="col-span-3">
                                                 <label className="text-[10px] font-black text-indigo-400 uppercase block mb-2">Masa Secundaria</label>
                                                 <select 
                                                     className="w-full bg-black/60 border border-gray-700 p-3 rounded-xl text-xs font-bold outline-none focus:border-indigo-400"
@@ -1326,10 +1326,10 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                                     ))}
                                                 </select>
                                             </div>
-                                            <div className="sm:col-span-2">
+                                            <div className="col-span-2">
                                                 <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Gramos</label>
                                                 <div className="flex items-center gap-2 bg-black/40 border border-gray-700 p-3 rounded-xl">
-                                                    <input
+                                                    <input 
                                                         type="number"
                                                         placeholder="0"
                                                         className="bg-transparent w-full text-sm font-bold outline-none text-center"
@@ -1345,8 +1345,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         </div>
 
                                         {/* Masa Terciaria */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 items-end pt-4 border-t border-gray-800/50">
-                                            <div className="sm:col-span-3">
+                                        <div className="grid grid-cols-5 gap-4 items-end pt-4 border-t border-gray-800/50">
+                                            <div className="col-span-3">
                                                 <label className="text-[10px] font-black text-orange-400 uppercase block mb-2">Masa Terciaria</label>
                                                 <select 
                                                     className="w-full bg-black/60 border border-gray-700 p-3 rounded-xl text-xs font-bold outline-none focus:border-orange-400"
@@ -1362,10 +1362,10 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                                     ))}
                                                 </select>
                                             </div>
-                                            <div className="sm:col-span-2">
+                                            <div className="col-span-2">
                                                 <label className="text-[10px] font-black text-gray-500 uppercase block mb-2">Gramos</label>
                                                 <div className="flex items-center gap-2 bg-black/40 border border-gray-700 p-3 rounded-xl">
-                                                    <input
+                                                    <input 
                                                         type="number"
                                                         placeholder="0"
                                                         className="bg-transparent w-full text-sm font-bold outline-none text-center"
@@ -1380,7 +1380,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                             </div>
                                         </div>
 
-                                        <div className="pt-4 border-t border-gray-800 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                                        <div className="pt-4 border-t border-gray-800 flex justify-between items-center">
                                             <label className="text-[10px] font-black text-gray-400 uppercase">Peso Total Final en Ficha</label>
                                             <div className="flex items-center gap-4">
                                                 <input 
@@ -1398,7 +1398,7 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-orange-900/10 p-5 rounded-[24px] border border-orange-900/30">
+                                    <div className="grid grid-cols-3 gap-4 bg-orange-900/10 p-5 rounded-[24px] border border-orange-900/30">
                                         <div>
                                             <label className="text-[9px] font-black text-orange-500 uppercase block mb-2">Temp Bóveda (°C)</label>
                                             <input type="number" className="w-full bg-black/40 border border-orange-900/50 p-3 rounded-xl text-sm text-center font-bold text-orange-200 outline-none"
@@ -1478,8 +1478,8 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
                                     <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest flex items-center gap-2">
                                         <span>🏷️</span> Datos de Reventa y Proveeduría
                                     </h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
-                                        <div className="sm:col-span-2">
+                                    <div className="grid grid-cols-2 gap-6">
+                                        <div className="col-span-2">
                                             <label className="text-[10px] font-black text-emerald-500 uppercase block mb-2">Proveedor / Marca</label>
                                             <input 
                                                 className="w-full bg-black/40 border border-emerald-900/50 p-3 rounded-xl text-sm font-bold text-emerald-200 outline-none focus:border-emerald-400"
@@ -1566,13 +1566,13 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
 
             {/* Area Principal */}
             <div className="flex-1 flex flex-col min-w-0">
-                <header className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
+                <header className="mb-8 flex justify-between items-start">
                     <div>
-                        <h1 className="text-2xl sm:text-4xl font-black uppercase italic tracking-tighter text-indigo-500">Maestro de Productos</h1>
+                        <h1 className="text-4xl font-black uppercase italic tracking-tighter text-indigo-500">Maestro de Productos</h1>
                         <p className="text-[10px] font-black text-gray-500 uppercase tracking-[0.4em] mt-2">MODO SEGURO | SINCRO API LIVE</p>
                     </div>
                     
-                    <div className="flex flex-wrap gap-3">
+                    <div className="flex gap-3">
                         {/* Botón Importar JSON */}
                         <label className="cursor-pointer bg-gray-900 border border-gray-800 px-6 py-4 rounded-2xl flex items-center gap-3 hover:border-indigo-500 transition-all group">
                             <span className="text-lg">📥</span>
@@ -1724,9 +1724,9 @@ export const ProductMasterUI = ({ userPermissions = {} }) => {
 
                 {/* Botón Flotante de Registro - Garantizado mediante Portal */}
                 {ReactDOM.createPortal(
-                    <button
+                    <button 
                         onClick={handleCreateProduct}
-                        className="fixed bottom-4 right-4 sm:bottom-10 sm:right-10 z-[1000] bg-indigo-600 text-white px-5 py-3 sm:px-8 sm:py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5),0_0_20px_rgba(79,70,229,0.3)] border border-indigo-400/20"
+                        className="fixed bottom-10 right-10 z-[1000] bg-indigo-600 text-white px-8 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-[0_20px_40px_-10px_rgba(0,0,0,0.5),0_0_20px_rgba(79,70,229,0.3)] border border-indigo-400/20"
                     >
                         + Registrar Producto
                     </button>,

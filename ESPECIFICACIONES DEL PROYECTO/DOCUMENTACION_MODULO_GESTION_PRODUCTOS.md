@@ -1,7 +1,7 @@
 # 📦 MÓDULO: GESTIÓN DE PRODUCTOS (Maestro de Productos)
 
-> **Versión:** 1.2
-> **Última actualización:** 24 de Septiembre 2026 (Responsividad móvil: layout, modales y grids)
+> **Versión:** 1.1
+> **Última actualización:** 17 de Septiembre 2026 (Selector de POS por Categoría + Rol de Heladería + Proyección)
 > **Componente Frontend:** `apps/inventory/ProductCatalogUI.jsx`
 > **Servicio Backend:** `apps/api/modules/catalog/service.py`
 > **Router API:** `apps/api/modules/catalog/router.py`
@@ -507,69 +507,3 @@ Las categorías `Heladería` (id 19) y `Heladería Extras` (id 20) y sus product
 
 > [!NOTE]
 > **Lección:** el módulo de Heladería ya no siembra catálogo. El catálogo lo define el usuario desde este módulo.
-
----
-
-## 14. RESPONSIVIDAD (Implementado 24 Sep 2026)
-
-### 14.1 Principio: "Escritorio intacto, móvil usable"
-
-Todas las clases responsivas usan **valores base móviles** y **prefijos `sm:`/`lg:`** para restaurar el diseño de escritorio. En pantallas grandes el módulo se ve **idéntico** a antes; en móvil se apila y se hace scrollable.
-
-### 14.2 Contenedor principal
-
-| Elemento | Antes | Después |
-|---|---|---|
-| Contenedor raíz | `p-8 flex gap-8` | `p-4 sm:p-8 flex flex-col lg:flex-row gap-4 lg:gap-8` |
-
-En móvil/tablet las dos columnas (sidebar de categorías + área de productos) se **apilan verticalmente**; en `lg:` recuperan el layout horizontal.
-
-### 14.3 Encabezado "Maestro de Productos"
-
-| Elemento | Antes | Después |
-|---|---|---|
-| `<header>` | `flex justify-between items-start` | `flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4` |
-| Título `<h1>` | `text-4xl` | `text-2xl sm:text-4xl` |
-| Botones Importar/Exportar | `flex gap-3` | `flex flex-wrap gap-3` |
-
-### 14.4 Modales (5 en total)
-
-Todos los modales (Eliminar Categoría, Opciones de Categoría, Confirmación de Destrucción, Categoría No Vacía, Editar Producto) recibieron el mismo patrón:
-
-| Propiedad | Antes | Después |
-|---|---|---|
-| Padding del card | `p-10` | `p-6 sm:p-10` |
-| Radio del card | `rounded-[40px]` | `rounded-[24px] sm:rounded-[40px]` |
-| Alto máximo | (ninguno) | `max-h-[92vh] overflow-y-auto custom-scrollbar my-auto` |
-| Padding del overlay | `p-6` | `p-4 sm:p-6` |
-
-### 14.5 Grids internos del modal de producto
-
-| Bloque | Antes | Después |
-|---|---|---|
-| Datos generales | `grid-cols-2` | `grid-cols-1 sm:grid-cols-2` |
-| Masas (Primaria/Secundaria/Terciaria) | `grid-cols-5` | `grid-cols-1 sm:grid-cols-5` |
-| Temperaturas de horneado | `grid-cols-3` | `grid-cols-1 sm:grid-cols-3` |
-| Datos de Reventa | `grid-cols-2` | `grid-cols-1 sm:grid-cols-2` |
-| "Dónde se muestra" | `grid-cols-2` | `grid-cols-1 sm:grid-cols-2` |
-| Selector POS destino | `grid-cols-3` | `grid-cols-2 sm:grid-cols-3` |
-| Selector Rol Heladería | `grid-cols-3` | `grid-cols-2 sm:grid-cols-3` |
-| Fotografía (input + botón) | `flex gap-4` | `flex flex-col sm:flex-row gap-4` |
-
-### 14.6 Botón flotante "+ Registrar Producto"
-
-| Propiedad | Antes | Después |
-|---|---|---|
-| Posición | `bottom-10 right-10` | `bottom-4 right-4 sm:bottom-10 sm:right-10` |
-| Padding | `px-8 py-4` | `px-5 py-3 sm:px-8 sm:py-4` |
-
-### 14.7 Grid de tarjetas de producto
-
-Ya era responsivo (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`) — **sin cambios**.
-
-### 14.8 Verificación
-
-`npx vite build` → 1829 módulos, exit 0. Commit `9101658`.
-
-> [!IMPORTANT]
-> **Regla:** todo modal nuevo en este módulo DEBE incluir `max-h-[92vh] overflow-y-auto custom-scrollbar my-auto` para no desbordar en pantallas cortas (móvil horizontal).
