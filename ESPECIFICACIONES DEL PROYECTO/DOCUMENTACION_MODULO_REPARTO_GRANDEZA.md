@@ -246,7 +246,9 @@ El archivo `apps/pos/config.js` está diseñado para manejar conexiones híbrida
 - **Si es Público (ej. `reparto.rdericotoluca.com`):** Sustituye el subdominio por `api` (ej. `api.rdericotoluca.com`) y dirige el tráfico usando el puerto por defecto de HTTPS (443), saltándose el puerto local 5001 que no está expuesto a internet.
 
 **Instalación PWA (Progressive Web App)**
-Se recomienda que el repartidor abra el enlace (`reparto.rdericotoluca.com/?terminal=DRIVER`) en Google Chrome o Safari y utilice la opción "Agregar a la pantalla principal". Esto oculta la barra de navegación del navegador y permite que el sistema opere a pantalla completa como una aplicación nativa.
+Se recomienda que el repartidor abra el enlace (`erp.rdericotoluca.com/?terminal=DRIVER`) en Google Chrome o Safari y utilice la opción "Agregar a la pantalla principal". Esto oculta la barra de navegación del navegador y permite que el sistema opere a pantalla completa como una aplicación nativa.
+
+> **Nota v19.5:** el subdominio público del frontend cambió de `reparto.rdericotoluca.com` a **`erp.rdericotoluca.com`**, porque el ERP ya no es solo de reparto: sirve a todos los colaboradores con su nivel de acceso. `reparto.rdericotoluca.com` sigue funcionando temporalmente (está en `allowedHosts` de `vite.config.js`) para no romper enlaces ya compartidos. Para forzar la pantalla de PIN en un dispositivo con sesión guardada, usar `erp.rdericotoluca.com/?logout=1`.
 
 ---
 

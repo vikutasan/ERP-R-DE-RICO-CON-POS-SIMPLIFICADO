@@ -374,7 +374,8 @@ perfectamente. Los usuarios entraban en pánico y reiniciaban equipos innecesari
 const url = `http://${window.location.hostname}:5001/health`;
 ```
 
-Cuando el sistema se accedía desde internet (`reparto.rdericotoluca.com:5001`),
+Cuando el sistema se accedía desde internet (`reparto.rdericotoluca.com:5001`,
+hoy `erp.rdericotoluca.com:5001` tras el renombrado de subdominio de la v19.5),
 ese host **no existe** → el heartbeat fallaba → falso "SIN CONEXIÓN".
 
 **Solución:** usar siempre `CONFIG.API_BASE_URL` como única fuente de verdad:

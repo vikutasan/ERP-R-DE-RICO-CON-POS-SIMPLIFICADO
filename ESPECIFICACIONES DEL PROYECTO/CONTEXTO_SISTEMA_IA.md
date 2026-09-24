@@ -218,8 +218,10 @@ La regla es simple: **el servidor de sucursal gana sobre su propio dominio.**
 **Acceso remoto (Cloudflare Tunnels):** 
 Para exponer el sistema a internet de forma segura sin abrir puertos en el router, se utiliza el agente `cloudflared` instalado como servicio de sistema.
 El tÃºnel enruta dos dominios pÃºblicos hacia los contenedores locales:
-- `reparto.rdericotoluca.com` â†’ `localhost:5000` (Frontend - React/Vite)
+- `erp.rdericotoluca.com` â†’ `localhost:5000` (Frontend - React/Vite) â€” **subdominio oficial desde v19.5**
 - `api.rdericotoluca.com` â†’ `localhost:5001` (Backend - FastAPI)
+
+> **Nota v19.5 (renombrado de subdominio):** el frontend se servÃ­a en `reparto.rdericotoluca.com`, nombre heredado de cuando el ERP solo gestionaba el reparto. Al abrir el sistema a **todos los colaboradores con su nivel de acceso**, la etiqueta "reparto" dejÃ³ de describir el alcance. El subdominio oficial es ahora **`erp.rdericotoluca.com`**. `reparto.rdericotoluca.com` se conserva temporalmente en `vite.config.js` (`allowedHosts`) para no romper enlaces ya compartidos. **`api.rdericotoluca.com` NO cambia**, porque `apps/shared/config.js` deriva la URL del API desde el hostname y el tÃºnel enruta ese host a `:5001`.
 
 *Nota de Arquitectura:* El archivo `apps/pos/config.js` estÃ¡ programado dinÃ¡micamente. Si detecta acceso vÃ­a localhost/LAN, enruta las llamadas de red al puerto `5001`. Si detecta acceso desde internet, cambia la base de la URL automÃ¡ticamente hacia el subdominio `api.*`, previniendo errores de CORS o puertos cerrados.
 
@@ -1323,6 +1325,77 @@ Al instalar la app en el mÃ³vil, el usuario reportÃ³ **dos defectos visuales
 - **OBLIGATORIO** que el `<meta name="theme-color">` de `index.html` **coincida** con el `theme_color` del manifest. Un valor desalineado genera un destello de color incorrecto al abrir la app.
 - **OBLIGATORIO** que los iconos PWA sean **PNG** (no JPEG) cuando lleven fondo plano: el JPEG introduce artefactos de compresiÃ³n en los bordes del logo.
 - **REGLA DE DIAGNÃ“STICO:** si un icono PWA se ve "mordido" o recortado, la causa es la **zona segura maskable**, no el diseÃ±o del logo. Si la pantalla de arranque se ve "parchada", comparar el hex del fondo del icono contra el `background_color` del manifest.
+
+### 16.15 Enlace de Acceso Limpio y Renombrado de Subdominio PÃºblico (v19.5)
+
+**Archivos afectados:** `apps/ExperimentCenterUI.jsx`, `vite.config.js`
+**Fecha:** 23 de Septiembre de 2026
+**Commits:** `413fa99` (cÃ³digo)
+
+**Contexto del Problema (dos necesidades del dueÃ±o):**
+
+1. **El enlace pÃºblico entraba directo al ERP ya logueado.** El dueÃ±o probÃ³ la app en su telÃ©fono y quedÃ³ su sesiÃ³n guardada (persistencia de 12 h de la v19.4, ver Â§16.13). Al compartir el enlace con un colaborador, este abrÃ­a el ERP **con la sesiÃ³n del dueÃ±o**, no con la pantalla de PIN. El dueÃ±o quiere entregar el enlace a **colaboradores con distinto PIN, perfil y nivel de acceso**, y que el enlace **siempre** muestre la pantalla de acceso.
+
+2. **El subdominio `reparto.*` ya no describÃ­a el alcance.** El ERP se servÃ­a en `reparto.rdericotoluca.com`, nombre heredado de cuando el sistema solo gestionaba el reparto. Al abrirlo a **todos los colaboradores**, la etiqueta "reparto" quedÃ³ obsoleta.
+
+**AclaraciÃ³n de seguridad (IMPORTANTE):** un enlace **no es una capa de seguridad**. Cualquiera con la URL pÃºblica llega a la pantalla de PIN. La seguridad real es el **PIN + los permisos del perfil**. El parÃ¡metro `?logout=1` solo garantiza que se **vea** el login; no impide el acceso a quien tenga credenciales vÃ¡lidas.
+
+**SoluciÃ³n 1 â€” Enlace de acceso limpio (`?logout=1`):**
+Se aÃ±adieron dos funciones en `apps/ExperimentCenterUI.jsx` (v19.5), ejecutadas **antes** de leer la sesiÃ³n persistida:
+```javascript
+/** Detecta `?logout=1` (o `?logout=true`) en la URL actual. */
+const esAccesoLimpio = () => {
+    try {
+        const valor = new URLSearchParams(window.location.search).get('logout');
+        return valor === '1' || valor === 'true';
+    } catch (e) { return false; }
+};
+
+/** Purga la sesiÃ³n y limpia el parÃ¡metro `?logout` de la URL (sin recargar). */
+const aplicarAccesoLimpio = () => {
+    if (!esAccesoLimpio()) return false;
+    borrarSesionPersistida();
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('logout');
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    } catch (e) { /* no-op: si falla, la sesiÃ³n ya fue purgada */ }
+    return true;
+};
+```
+Se conectÃ³ al estado inicial de sesiÃ³n, de modo que la purga ocurre **antes** de restaurar:
+```javascript
+const [sesionInicial] = useState(() => {
+    aplicarAccesoLimpio();
+    return leerSesionPersistida();
+});
+```
+El parÃ¡metro se elimina de la URL con `history.replaceState` para que un *refresh* posterior no vuelva a purgar ni quede el `?logout` a la vista.
+
+**SoluciÃ³n 2 â€” Renombrado de subdominio (`erp.rdericotoluca.com`):**
+Se actualizÃ³ `vite.config.js` (`allowedHosts`) para incluir el nuevo subdominio, **conservando** `reparto.rdericotoluca.com` durante la transiciÃ³n:
+```javascript
+allowedHosts: [
+    'erp.rdericotoluca.com',
+    'reparto.rdericotoluca.com',
+    'api.rdericotoluca.com',
+],
+```
+**`api.rdericotoluca.com` NO se toca:** `apps/shared/config.js` deriva la URL del API desde el hostname y el tÃºnel Cloudflare enruta ese host a `:5001`. Cambiarlo romperÃ­a el acceso por internet (ver Incidente 16.6 â€” Error G).
+
+**Evidencia de AceptaciÃ³n:**
+- **Build:** `npx vite build` â†’ 1829 mÃ³dulos transformados, `built in 8.62s`, exit 0.
+- **Commit:** `413fa99` (2 archivos, 60 inserciones, 2 eliminaciones), pusheado a `main`.
+- **Enlace limpio:** `erp.rdericotoluca.com/?logout=1` purga la sesiÃ³n y muestra el `LoginUI`.
+- **Enlace normal:** `erp.rdericotoluca.com/` respeta la sesiÃ³n persistida (12 h).
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que cualquier enlace destinado a colaboradores use `?logout=1` para garantizar la pantalla de PIN, dado que la sesiÃ³n persiste 12 h (Â§16.13).
+- **PROHIBIDO** presentar el enlace de acceso limpio como una medida de seguridad. La seguridad es el PIN + permisos del perfil. Documentarlo siempre como **conveniencia de UX**, no como control de acceso.
+- **OBLIGATORIO** que el parÃ¡metro de acceso limpio se **elimine de la URL** tras aplicarse (`history.replaceState`), para evitar purgas repetidas en *refresh* y no exponer el parÃ¡metro.
+- **OBLIGATORIO** que el subdominio pÃºblico del frontend sea **`erp.rdericotoluca.com`** (v19.5+). El nombre debe describir el alcance real del sistema, no un mÃ³dulo histÃ³rico.
+- **PROHIBIDO** cambiar `api.rdericotoluca.com`: la derivaciÃ³n de la URL del API en `apps/shared/config.js` depende del hostname y el tÃºnel enruta ese host a `:5001`.
+- **OBLIGATORIO** mantener el subdominio antiguo en `allowedHosts` mientras existan enlaces compartidos, y retirarlo solo tras confirmar que ya no se usa.
 
 ---
 
