@@ -1496,6 +1496,37 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.19 Responsividad del MÃ³dulo GestiÃ³n de Productos (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** Ajuste de layout (responsividad mÃ³vil)
+**Motivo:** El mÃ³dulo "Maestro de Productos" usaba un layout de dos columnas con `flex gap-8` y `p-8` fijos, sin breakpoints. En mÃ³vil las columnas se comprimÃ­an y los modales (`p-10`, `rounded-[40px]`) desbordaban la pantalla.
+
+**Cambio aplicado** (`apps/inventory/ProductCatalogUI.jsx`):
+
+| Elemento | Antes | DespuÃ©s |
+|---|---|---|
+| Contenedor raÃ­z | `p-8 flex gap-8` | `p-4 sm:p-8 flex flex-col lg:flex-row gap-4 lg:gap-8` |
+| Encabezado | `flex justify-between items-start` | `flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4` |
+| TÃ­tulo | `text-4xl` | `text-2xl sm:text-4xl` |
+| Botones Importar/Exportar | `flex gap-3` | `flex flex-wrap gap-3` |
+| 5 modales (card) | `p-10 rounded-[40px]` | `p-6 sm:p-10 rounded-[24px] sm:rounded-[40px] max-h-[92vh] overflow-y-auto custom-scrollbar my-auto` |
+| Overlays de modales | `p-6` | `p-4 sm:p-6` |
+| Grids internos (datos, masas, temps, reventa) | `grid-cols-2` / `grid-cols-5` / `grid-cols-3` | `grid-cols-1 sm:grid-cols-N` |
+| Selectores POS/Rol (categorÃ­a) | `grid-cols-3` | `grid-cols-2 sm:grid-cols-3` |
+| BotÃ³n flotante | `bottom-10 right-10 px-8 py-4` | `bottom-4 right-4 sm:bottom-10 sm:right-10 px-5 py-3 sm:px-8 sm:py-4` |
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que todo modal del ERP declare `max-h-[92vh] overflow-y-auto custom-scrollbar my-auto` en su tarjeta. Sin esto, un modal alto desborda en mÃ³vil horizontal y el usuario no puede alcanzar los botones de acciÃ³n.
+- **OBLIGATORIO** que los layouts de dos columnas usen `flex-col lg:flex-row` (o `md:`) para apilarse en mÃ³vil. Un `flex` horizontal sin breakpoint comprime las columnas hasta ser ilegibles.
+- **OBLIGATORIO** que los grids de formulario usen `grid-cols-1 sm:grid-cols-N`. Un `grid-cols-5` fijo deja campos de ~40px en un telÃ©fono.
+- **OBLIGATORIO** que los botones flotantes usen `bottom-4 right-4 sm:bottom-10 sm:right-10` para no tapar contenido en pantallas pequeÃ±as.
+- **PROHIBIDO** usar `p-8`/`p-10` fijos en contenedores raÃ­z o modales: siempre `p-4 sm:p-8` / `p-6 sm:p-10`.
+
+**VerificaciÃ³n:** `npx vite build` â†’ 1829 mÃ³dulos, exit 0. Commit `9101658`.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
