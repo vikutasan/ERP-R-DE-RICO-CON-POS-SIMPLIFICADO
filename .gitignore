@@ -41,6 +41,16 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+# Capturas de pantalla de diagnostico (no versionar)
+C.jpeg
+*.jpeg
+*.jpg
+*.png
+!public/assets/**/*.png
+!public/assets/**/*.jpg
+!INSPIRACION/**/*.jpeg
+!INSPIRACION/**/*.jpg
+
 # AI Models (large binaries)
 *.h5
 *.onnx
