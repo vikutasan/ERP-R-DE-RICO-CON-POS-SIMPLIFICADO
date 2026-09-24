@@ -1411,6 +1411,35 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.16 Renombrado Visible del MÃ³dulo "EstadÃ­sticas de Ventas" â†’ "EstadÃ­sticas" (v2.4)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** Cambio de etiqueta visible (NO de ID interno)
+**Motivo:** El mÃ³dulo ya no es solo de ventas. AlbergarÃ¡ estadÃ­sticas de **producciÃ³n, compras y otros mÃ³dulos**. El nombre visible debe describir el alcance real, no una fuente Ãºnica de datos.
+
+**Cambio aplicado:**
+
+| Capa | Antes | DespuÃ©s | Archivo |
+|---|---|---|---|
+| Etiqueta del menÃº | `EstadÃ­sticas de Ventas` | `EstadÃ­sticas` | `apps/ExperimentCenterUI.jsx` (array `allModules`) |
+| TÃ­tulo interno (H1) | `EstadÃ­sticas de Ventas` | `EstadÃ­sticas` | `apps/analytics/EstadisticasVentasUI.jsx` |
+| SubtÃ­tulo | `AnalÃ­tica de rendimiento y proyecciÃ³n de valor` | `AnalÃ­tica de ventas, producciÃ³n, compras y demÃ¡s mÃ³dulos` | `apps/analytics/EstadisticasVentasUI.jsx` |
+| Comentario de cabecera | `mÃ³dulo de EstadÃ­sticas de Ventas` | `mÃ³dulo de EstadÃ­sticas` | `apps/analytics/analyticsConfig.js` |
+| Documento del mÃ³dulo | `DOCUMENTACION_MODULO_ESTADISTICA_DE_VENTAS.md` | `DOCUMENTACION_MODULO_ESTADISTICAS.md` | `ESPECIFICACIONES DEL PROYECTO/` |
+
+**Lo que NO cambiÃ³ (intencionalmente):**
+- **ID interno `analytics`** â€” es la clave de permisos (`userPermissions['analytics']`) y el `activeModule` del router de React. Cambiarlo romperÃ­a la visibilidad del mÃ³dulo para todos los perfiles.
+- **Permiso `analytics_financial_data`** â€” clave del JSON de permisos en `security_profiles`. Renombrarlo invalidarÃ­a los perfiles existentes.
+- **Ruta del API `/api/v1/analytics/*`** â€” contrato con el backend (`apps/api/modules/analytics/`). Renombrarla romperÃ­a los endpoints.
+- **Carpetas `apps/analytics/` y `apps/api/modules/analytics/`** â€” nombres internos de cÃ³digo, no visibles al usuario.
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** distinguir entre **etiqueta visible** (`name` en `allModules`) e **ID interno** (`id`). Renombrar la etiqueta es seguro; renombrar el `id` rompe permisos y navegaciÃ³n.
+- **OBLIGATORIO** que el nombre visible de un mÃ³dulo describa su **alcance real**, no su fuente de datos original. Si un mÃ³dulo se generaliza, renombrar solo la etiqueta.
+- **PROHIBIDO** renombrar el `id` de un mÃ³dulo o el nombre de un permiso sin migrar simultÃ¡neamente el JSON de `security_profiles` de todos los perfiles.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:

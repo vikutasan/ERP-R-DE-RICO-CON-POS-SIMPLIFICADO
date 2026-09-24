@@ -349,7 +349,7 @@ export const ExperimentCenterUI = () => {
         { id: 'pickup', name: 'Gestión de Pickup', color: 'bg-orange-600', icon: '🏪', access: ['ADMIN', 'MANAGER', 'BAKER'] },
         { id: 'repartos', name: 'Gestión de Repartos', color: 'bg-blue-700', icon: '🚗', access: ['ADMIN', 'MANAGER', 'LOGISTICS'] },
         { id: 'financials', name: 'Módulo Financiero', color: 'bg-emerald-800', icon: '📈', access: ['ADMIN', 'MANAGER'] },
-        { id: 'analytics', name: 'Estadísticas de Ventas', color: 'bg-indigo-700', icon: '📊', access: ['ADMIN', 'MANAGER'] },
+        { id: 'analytics', name: 'Estadísticas', color: 'bg-indigo-700', icon: '📊', access: ['ADMIN', 'MANAGER'] },
         { id: 'invoicing', name: 'Facturación CFDI', color: 'bg-blue-600', icon: '🧾', access: ['ADMIN', 'MANAGER', 'CASHIER'] },
         { id: 'purchasing', name: 'Gestión de Compras', color: 'bg-indigo-900', icon: '🛒', access: ['ADMIN', 'MANAGER'] },
         { id: 'procurement', name: 'B2B Procurement', color: 'bg-blue-900', icon: '🤝', access: ['ADMIN', 'MANAGER'] },

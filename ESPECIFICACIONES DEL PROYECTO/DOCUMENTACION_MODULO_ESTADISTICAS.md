@@ -1,9 +1,11 @@
-# 📊 DOCUMENTACIÓN — MÓDULO DE ESTADÍSTICAS DE VENTAS
+# 📊 DOCUMENTACIÓN — MÓDULO DE ESTADÍSTICAS
 
-> **Versión:** 2.3.0
-> **Última actualización:** 14 de septiembre de 2026
+> **Versión:** 2.4.0
+> **Última actualización:** 24 de septiembre de 2026
 > **Autor:** Sistema de IA / Arquitectura R de Rico
-> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 22 mejoras (v2.1 + v2.2) + Alineación V20 (v2.3)
+> **Estado:** ✅ Dashboard + KPIs + Estadística de Productos + 22 mejoras (v2.1 + v2.2) + Alineación V20 (v2.3) + Renombrado a "Estadísticas" (v2.4)
+
+> ⚠️ **NOTA DE RENOMBRADO (v2.4):** El módulo se llamaba **"Estadísticas de Ventas"**. Se renombró a **"Estadísticas"** porque su alcance ya no es solo ventas: albergará estadísticas de **producción, compras y otros módulos**. El **ID interno `analytics` NO cambió** (es la clave de permisos `analytics_financial_data` y la ruta `/api/v1/analytics/*`); solo cambió la **etiqueta visible** al usuario.
 
 ---
 
@@ -25,15 +27,18 @@
 
 ## 1. VISIÓN GENERAL
 
-El módulo de Estadísticas de Ventas es el **centro de inteligencia comercial** de R de Rico. Permite al Socio Fundador y gerentes visualizar el rendimiento de ventas a través de dashboards personalizables, KPIs en tiempo real y análisis granular producto por producto.
+El módulo de **Estadísticas** es el **centro de inteligencia analítica** de R de Rico. Permite al Socio Fundador y gerentes visualizar el rendimiento del negocio a través de dashboards personalizables, KPIs en tiempo real y análisis granular producto por producto.
+
+> **Alcance (v2.4):** El módulo nació enfocado en **ventas**, pero su arquitectura es transversal. Está diseñado para albergar estadísticas de **producción, compras y otros módulos** conforme se integren nuevas fuentes de datos. Por eso el nombre visible es genérico: **"Estadísticas"**.
 
 ### Objetivos del módulo
 
-- **Visualizar** métricas clave de ventas (ingreso, volumen, margen, ticket promedio)
+- **Visualizar** métricas clave (ingreso, volumen, margen, ticket promedio)
 - **Analizar** tendencias cronológicas por día, semana y periodo personalizado
 - **Comparar** rendimiento entre productos, categorías y periodos
 - **Detectar** productos de bajo margen y oportunidades de mejora
 - **Personalizar** dashboards con secciones configurables y persistentes
+- **Extender** el análisis a otras áreas del negocio (producción, compras) sin renombrar el módulo
 
 ### Principios de diseño
 

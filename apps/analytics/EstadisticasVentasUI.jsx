@@ -797,8 +797,8 @@ export const EstadisticasVentasUI = ({ userPermissions = {} }) => {
       <header className="flex flex-wrap items-center justify-between px-8 py-5 bg-white border-b border-slate-100/50 shadow-[0_2px_15px_rgba(0,0,0,0.02)] z-20">
         <div className="flex items-center gap-8">
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-800">Estadísticas de Ventas</h1>
-            <p className="text-xs font-semibold text-slate-400 mt-0.5">Analítica de rendimiento y proyección de valor</p>
+            <h1 className="text-2xl font-black tracking-tight text-slate-800">Estadísticas</h1>
+            <p className="text-xs font-semibold text-slate-400 mt-0.5">Analítica de ventas, producción, compras y demás módulos</p>
           </div>
           <div className="flex items-center bg-slate-100 p-1 rounded-xl">
             <button onClick={()=>setDashboardTab('dashboard')}

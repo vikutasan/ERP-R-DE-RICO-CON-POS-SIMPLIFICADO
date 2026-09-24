@@ -1,4 +1,4 @@
-// ── Configuración y constantes del módulo de Estadísticas de Ventas ──
+// ── Configuración y constantes del módulo de Estadísticas ──
 import {
   DollarSign, Package, TrendingUp, Percent, Target, Zap, Activity,
   BarChart2, BarChart, PieChart as PieChartIcon, Table, List

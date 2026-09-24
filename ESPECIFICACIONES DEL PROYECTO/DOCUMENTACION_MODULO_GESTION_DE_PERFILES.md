@@ -99,7 +99,7 @@ Los perfiles personalizados (ej: "RG", "EMBOLSADOR") sí son eliminables.
 | `access_any_terminal` | Navegar entre terminales sin restricción | ✅ Frontend (`RetailVisionPOS.jsx`) |
 | `access_terminal_manager` | Acceso al gestor de terminales | ✅ Frontend |
 | `inventory_delete` | Botón de eliminar productos | ✅ Frontend (`ProductCatalogUI.jsx`) |
-| `analytics_financial_data` | Ver cifras monetarias en estadísticas | ✅ Frontend (`EstadisticasVentasUI.jsx`) |
+| `analytics_financial_data` | Ver cifras monetarias en el módulo Estadísticas | ✅ Frontend (`EstadisticasVentasUI.jsx`) |
 | `grandeza_params` | Configuración de Pan Grandeza | ✅ Frontend |
 | `grandeza_daily` | Herramienta de gerente Grandeza | ✅ Frontend (`RepartoPanGrandezaUI.jsx`) |
 | `grandeza_driver` | Herramienta de repartidor Grandeza | ✅ Frontend (`RepartoPanGrandezaUI.jsx`) |
