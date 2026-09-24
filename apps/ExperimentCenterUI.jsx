@@ -415,11 +415,12 @@ export const ExperimentCenterUI = () => {
 
             {/* Sidebar de Control */}
             <aside className={`
-                ${isSidebarCollapsed ? 'md:w-20 pointer-events-none md:pointer-events-auto' : 'md:w-80 pointer-events-auto'}
-                fixed md:relative top-0 h-full w-0 md:w-auto max-w-[85vw] md:max-w-none
+                fixed md:relative top-0 h-full max-w-[85vw] md:max-w-none
                 bg-[#050505] md:bg-black/40 border-r border-gray-800
                 p-0 md:p-8 flex flex-col backdrop-blur-3xl transition-all duration-500 ease-in-out group shadow-2xl md:shadow-none
-                ${isSidebarCollapsed ? '-left-full md:left-auto' : 'left-0 md:left-auto'}
+                ${isSidebarCollapsed
+                    ? 'w-0 -left-full md:left-auto md:w-20 pointer-events-none md:pointer-events-auto'
+                    : 'w-72 left-0 md:left-auto md:w-80 pointer-events-auto'}
             `}
             style={{ zIndex: 999990 }}>
 
