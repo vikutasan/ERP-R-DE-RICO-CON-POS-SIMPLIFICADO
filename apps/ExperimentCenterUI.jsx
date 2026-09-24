@@ -551,33 +551,33 @@ export const ExperimentCenterUI = () => {
                         return (
                         <div className="animate-in fade-in zoom-in-95 duration-700 h-full flex flex-col">
 
-                            <div className="w-full bg-black py-8 px-10 text-center space-y-3 relative">
-                                <h2 className="text-8xl font-black uppercase tracking-tighter leading-none text-white">{bizInfo.business_name}</h2>
-                                <p className="text-xl text-white font-black uppercase tracking-[0.3em]">{bizInfo.branch_name}</p>
+                            <div className="w-full bg-black py-5 px-4 sm:py-8 sm:px-10 text-center space-y-2 sm:space-y-3 relative">
+                                <h2 className="text-3xl sm:text-5xl lg:text-7xl xl:text-8xl font-black uppercase tracking-tighter leading-none text-white break-words">{bizInfo.business_name}</h2>
+                                <p className="text-sm sm:text-lg lg:text-xl text-white font-black uppercase tracking-[0.2em] sm:tracking-[0.3em] break-words">{bizInfo.branch_name}</p>
                                 <div className="h-[2px] bg-gray-500 max-w-xl mx-auto my-2"></div>
-                                <p className="text-sm text-gray-200 font-bold">{bizInfo.business_address}</p>
-                                <p className="text-lg text-orange-400 font-black tracking-wider">Tel: {bizInfo.business_phone}</p>
+                                <p className="text-xs sm:text-sm text-gray-200 font-bold break-words">{bizInfo.business_address}</p>
+                                <p className="text-sm sm:text-lg text-orange-400 font-black tracking-wider break-words">Tel: {bizInfo.business_phone}</p>
                                 {(userPermissions?.editar_info_negocio || userPermissions?.all === 'full') && (
-                                    <button onClick={() => { setBizForm({...bizInfo}); setShowBizModal(true); }} className="absolute top-4 right-4 text-gray-600 hover:text-white transition-colors text-xs uppercase tracking-widest font-bold flex items-center gap-1 opacity-50 hover:opacity-100" title="Editar info del negocio">&#9998; Editar</button>
+                                    <button onClick={() => { setBizForm({...bizInfo}); setShowBizModal(true); }} className="absolute top-2 right-2 sm:top-4 sm:right-4 text-gray-600 hover:text-white transition-colors text-[10px] sm:text-xs uppercase tracking-widest font-bold flex items-center gap-1 opacity-50 hover:opacity-100" title="Editar info del negocio">&#9998; Editar</button>
                                 )}
                             </div>
 
-                            <div className="flex-1 flex flex-col items-center justify-center p-12">
-                                <div className="flex flex-col items-center gap-6 bg-black/60 backdrop-blur-sm rounded-[40px] p-12 border border-gray-700/30">
-                                    <div className="text-center">
-                                        <p className="text-[10rem] font-black leading-none tracking-tighter text-white" style={{fontVariantNumeric: 'tabular-nums'}}>{horaStr}</p>
+                            <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 lg:p-12">
+                                <div className="flex flex-col items-center gap-4 sm:gap-6 bg-black/60 backdrop-blur-sm rounded-[30px] sm:rounded-[40px] p-6 sm:p-10 lg:p-12 border border-gray-700/30 w-full max-w-3xl">
+                                    <div className="text-center w-full">
+                                        <p className="text-6xl sm:text-8xl lg:text-[10rem] font-black leading-none tracking-tighter text-white" style={{fontVariantNumeric: 'tabular-nums'}}>{horaStr}</p>
                                     </div>
-                                    <div className="text-center space-y-3">
-                                        <p className="text-3xl font-bold text-white capitalize">{fechaLarga}</p>
-                                        <p className="text-6xl font-black uppercase tracking-[0.2em] text-orange-500 mt-4">Semana {numSemana}</p>
+                                    <div className="text-center space-y-2 sm:space-y-3">
+                                        <p className="text-lg sm:text-2xl lg:text-3xl font-bold text-white capitalize">{fechaLarga}</p>
+                                        <p className="text-3xl sm:text-5xl lg:text-6xl font-black uppercase tracking-[0.15em] sm:tracking-[0.2em] text-orange-500 mt-2 sm:mt-4">Semana {numSemana}</p>
                                     </div>
                                 </div>
                             </div>
 
                             {showBizModal && (
-                                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowBizModal(false)}>
-                                    <div className="bg-gray-900 rounded-3xl p-8 w-full max-w-lg border border-gray-700 space-y-6" onClick={e => e.stopPropagation()}>
-                                        <h3 className="text-2xl font-black uppercase text-orange-500 tracking-wider">Informacion del Negocio</h3>
+                                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowBizModal(false)}>
+                                    <div className="bg-gray-900 rounded-3xl p-5 sm:p-8 w-full max-w-lg border border-gray-700 space-y-5 sm:space-y-6 my-auto max-h-[92vh] overflow-y-auto custom-scrollbar" onClick={e => e.stopPropagation()}>
+                                        <h3 className="text-xl sm:text-2xl font-black uppercase text-orange-500 tracking-wider">Informacion del Negocio</h3>
                                         <div className="space-y-4">
                                             <div>
                                                 <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Nombre del Negocio</label>
@@ -632,7 +632,7 @@ export const ExperimentCenterUI = () => {
                                                 </select>
                                             </div>
                                         </div>
-                                        <div className="flex gap-4 pt-2">
+                                        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-2">
                                             <button onClick={() => setShowBizModal(false)} className="flex-1 p-3 rounded-xl border border-gray-600 text-gray-400 font-bold uppercase text-sm hover:bg-gray-800 transition-colors">Cancelar</button>
                                             <button onClick={saveBizInfo} className="flex-1 p-3 rounded-xl bg-orange-500 text-white font-black uppercase text-sm hover:bg-orange-600 transition-colors">Guardar</button>
                                         </div>
@@ -641,11 +641,11 @@ export const ExperimentCenterUI = () => {
                             )}
 
                             {tzWarning && (
-                            <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[60]">
-                                <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-8 max-w-md w-full mx-4 shadow-[0_0_60px_rgba(249,115,22,0.3)]">
-                                    <div className="text-center mb-6">
-                                        <div className="text-5xl mb-3">⚠️</div>
-                                        <h3 className="text-xl font-black text-orange-400 uppercase tracking-wider">Cambio de Zona Horaria</h3>
+                            <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[60] p-4 overflow-y-auto">
+                                <div className="bg-gray-900 border-2 border-orange-500/50 rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-[0_0_60px_rgba(249,115,22,0.3)] my-auto max-h-[92vh] overflow-y-auto custom-scrollbar">
+                                    <div className="text-center mb-5 sm:mb-6">
+                                        <div className="text-4xl sm:text-5xl mb-3">⚠️</div>
+                                        <h3 className="text-lg sm:text-xl font-black text-orange-400 uppercase tracking-wider">Cambio de Zona Horaria</h3>
                                     </div>
                                     <div className="space-y-3 text-sm text-gray-300 mb-6">
                                         <p className="font-bold text-white">Esto afectará todo el sistema:</p>
@@ -662,7 +662,7 @@ export const ExperimentCenterUI = () => {
                                         </div>
                                         <p className="text-gray-500 text-xs italic mt-2">Los datos existentes no se modifican.</p>
                                     </div>
-                                    <div className="flex gap-3">
+                                    <div className="flex flex-col sm:flex-row gap-3">
                                         <button onClick={() => setTzWarning(null)} className="flex-1 p-3 rounded-xl border border-gray-600 text-gray-400 font-bold uppercase text-sm hover:bg-gray-800 transition-colors">Cancelar</button>
                                         <button onClick={() => { setBizForm(p => ({...p, business_timezone: tzWarning.newTz})); setTzWarning(null); }} className="flex-1 p-3 rounded-xl bg-orange-500 text-white font-black uppercase text-sm hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/30">Confirmar</button>
                                     </div>
