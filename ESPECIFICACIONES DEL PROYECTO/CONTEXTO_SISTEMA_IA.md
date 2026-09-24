@@ -1440,6 +1440,34 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.17 Responsividad del MÃ³dulo Vista General (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** Ajuste de UI (solo clases Tailwind, sin cambio de lÃ³gica)
+**Motivo:** Con la apertura del acceso remoto (`erp.rdericotoluca.com`), dueÃ±os y gerentes consultan la Vista General desde **telÃ©fonos mÃ³viles**. Los tamaÃ±os fijos provocaban desbordes horizontales y modales cortados.
+
+**Cambio aplicado** (`apps/ExperimentCenterUI.jsx`, bloque `activeModule === 'overview'`):
+
+| Bloque | Antes (fijo) | DespuÃ©s (responsivo) |
+|---|---|---|
+| Nombre del negocio | `text-8xl` | `text-3xl sm:text-5xl lg:text-7xl xl:text-8xl` + `break-words` |
+| Sucursal / DirecciÃ³n / TelÃ©fono | `text-xl` / `text-sm` / `text-lg` | escalas `sm:`/`lg:` + `break-words` |
+| Hora del reloj | `text-[10rem]` | `text-6xl sm:text-8xl lg:text-[10rem]` |
+| Fecha / Semana | `text-3xl` / `text-6xl` | escalas `sm:`/`lg:` |
+| Tarjeta del reloj | `p-12`, `rounded-[40px]` | `p-6 sm:p-10 lg:p-12`, `rounded-[30px] sm:rounded-[40px]`, `max-w-3xl` |
+| Modales (negocio y zona horaria) | sin lÃ­mite de altura | `max-h-[92vh] overflow-y-auto custom-scrollbar` + `my-auto` |
+| Botones de modal | `flex` horizontal | `flex flex-col sm:flex-row` |
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que el valor **base** (sin prefijo) de cualquier tamaÃ±o de texto sea el de **pantalla pequeÃ±a**, y que los breakpoints (`sm:`, `lg:`, `xl:`) escalen hacia arriba. Nunca al revÃ©s.
+- **PROHIBIDO** usar un tamaÃ±o fijo grande (`text-8xl`, `text-[10rem]`) sin un breakpoint que lo reduzca en mÃ³vil.
+- **OBLIGATORIO** que todo modal tenga `max-h-[92vh]` + `overflow-y-auto` para sobrevivir a mÃ³viles con **teclado abierto** y **tablets en horizontal**.
+- **OBLIGATORIO** usar `break-words` en textos que provienen de la BD (`business_name`, `business_address`), ya que su longitud no se controla desde el cÃ³digo.
+
+**VerificaciÃ³n:** `npx vite build` â†’ 1829 mÃ³dulos, exit 0. Commit `d377fc9`.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:

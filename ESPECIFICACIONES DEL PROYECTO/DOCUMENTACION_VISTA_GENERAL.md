@@ -1,7 +1,7 @@
 ﻿# DOCUMENTACION — VISTA GENERAL (OVERVIEW)
 
-> **Version:** 1.4.0
-> **Ultima actualizacion:** 22 de septiembre de 2026
+> **Version:** 1.5.0
+> **Ultima actualizacion:** 24 de septiembre de 2026
 > **Archivos gobernados:** `apps/ExperimentCenterUI.jsx` (seccion overview), `apps/api/modules/settings/` (schemas.py, service.py, router.py)
 
 ---
@@ -419,6 +419,78 @@ Pedidos 1). V23 las migro a `Numeric(12,2)`:
 
 ---
 
-> **Esta documentacion refleja el estado del sistema al 22 de septiembre de 2026.**
+## 10. RESPONSIVIDAD (Implementado 24 Sep 2026)
+
+La Vista General fue disenada originalmente para **pantallas de escritorio o terminales fijas**. Con la
+apertura del acceso remoto via `erp.rdericotoluca.com` (ver `DOCUMENTACION_ENLACES_REMOTOS_AL_ERP.md`),
+duenos y gerentes empezaron a consultarla desde **telefonos moviles**, donde los tamanos fijos provocaban
+desbordes horizontales y modales cortados.
+
+### 10.1 Principio: "Escritorio intacto, movil legible"
+
+Todos los cambios usan **breakpoints de Tailwind** (`sm:`, `lg:`, `xl:`) con el valor **movil como base**.
+Esto garantiza que:
+
+- En **escritorio** (`lg`/`xl`) se conserva el impacto visual original (nombre a `text-8xl`, reloj a `10rem`).
+- En **movil** los tamanos se reducen y el texto se envuelve (`break-words`) en lugar de desbordarse.
+
+> **REGLA:** Nunca usar un tamano fijo grande (`text-8xl`, `text-[10rem]`) sin un breakpoint que lo reduzca
+> en movil. El valor base (sin prefijo) es SIEMPRE el de pantalla pequena.
+
+### 10.2 Encabezado del negocio
+
+| Elemento | Valor movil (base) | Escritorio |
+|---|---|---|
+| Nombre del negocio | `text-3xl` | `sm:text-5xl lg:text-7xl xl:text-8xl` |
+| Sucursal | `text-sm` | `sm:text-lg lg:text-xl` |
+| Direccion | `text-xs` | `sm:text-sm` |
+| Telefono | `text-sm` | `sm:text-lg` |
+| Padding de la franja | `py-5 px-4` | `sm:py-8 sm:px-10` |
+| Boton "Editar" | `top-2 right-2` | `sm:top-4 sm:right-4` |
+
+Ademas, todos los textos llevan `break-words` para que nombres largos (ej. "PANADERIA Y PASTELERIA
+R DE RICO SUCURSAL CENTRO") se envuelvan en varias lineas en lugar de empujar el layout.
+
+### 10.3 Reloj y calendario
+
+| Elemento | Valor movil (base) | Escritorio |
+|---|---|---|
+| Hora | `text-6xl` | `sm:text-8xl lg:text-[10rem]` |
+| Fecha completa | `text-lg` | `sm:text-2xl lg:text-3xl` |
+| "Semana N" | `text-3xl` | `sm:text-5xl lg:text-6xl` |
+| Padding de la tarjeta | `p-6` | `sm:p-10 lg:p-12` |
+| Radio de la tarjeta | `rounded-[30px]` | `sm:rounded-[40px]` |
+| Ancho de la tarjeta | `w-full max-w-3xl` | igual (centrada) |
+
+El `max-w-3xl` evita que la tarjeta del reloj se estire de forma antinatural en monitores ultra anchos.
+
+### 10.4 Modales (Informacion del Negocio y Advertencia de Zona Horaria)
+
+Ambos modales comparten el mismo patron responsivo:
+
+| Aspecto | Solucion |
+|---|---|
+| Desborde vertical en pantallas bajas | `max-h-[92vh] overflow-y-auto custom-scrollbar` en la tarjeta |
+| Centrado con scroll | `my-auto` en la tarjeta + `overflow-y-auto` en el overlay |
+| Margen en movil | `p-4` en el overlay (evita que la tarjeta toque los bordes) |
+| Padding interno | `p-5 sm:p-8` |
+| Botones (Cancelar / Guardar) | `flex flex-col sm:flex-row` — apilados en movil, lado a lado en escritorio |
+| Icono ⚠️ (solo zona horaria) | `text-4xl sm:text-5xl` |
+| Titulo | `text-lg sm:text-xl` |
+
+> **IMPORTANTE:** El `max-h-[92vh]` + `overflow-y-auto` es critico en moviles con el **teclado abierto**
+> (reduce el viewport visible) y en **tablets en horizontal**. Sin esto, el boton "Guardar" queda fuera
+> de pantalla y el usuario no puede confirmar.
+
+### 10.5 Verificacion
+
+- **Build:** `npx vite build` → 1829 modulos transformados, exit 0.
+- **Commit:** `d377fc9` — `feat(ui): hacer responsivo el modulo Vista General (encabezado, reloj y modales)`.
+- **Archivo:** `apps/ExperimentCenterUI.jsx`, bloque `activeModule === 'overview'` (lineas ~542-675).
+
+---
+
+> **Esta documentacion refleja el estado del sistema al 24 de septiembre de 2026.**
 > **V19 (Plan Transversal) — COMPLETO.** Bloques 1-5 cerrados. `grandeza` diferido a V20 Bloque 9.c.
 > **V23 (Dinero Decimal + Selector de Moneda) — COMPLETO.** 36 columnas migradas a `Numeric(12,2)`.
+> **Responsividad Vista General — COMPLETO (24 Sep 2026).** Encabezado, reloj y modales adaptados a movil.
