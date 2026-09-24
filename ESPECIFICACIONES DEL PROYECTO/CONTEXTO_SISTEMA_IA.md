@@ -1549,6 +1549,35 @@ Valores usados para la entrada `erp`: Subdominio `erp`, Dominio `rdericotoluca.c
 
 ---
 
+### 16.21 `w-0` NO Colapsa si el Elemento Conserva Padding (24 Sep 2026)
+
+**Fecha:** 24/Septiembre/2026
+**Tipo:** CorrecciÃ³n de bug de layout (segunda iteraciÃ³n del fix 16.20)
+**Motivo:** Tras el fix 16.20 (`w-0` en el `<aside>`), el mÃ³dulo "GestiÃ³n de Productos" **seguÃ­a** viÃ©ndose NO responsivo en el telÃ©fono, incluso despuÃ©s de que el usuario **borrara cachÃ© y datos** de la app. La causa real: el `<aside>` conservaba la clase **`p-8`** (32px de padding) sin override responsive. Con `box-sizing: border-box` (default de Tailwind), un elemento con `width: 0` y `padding: 32px` **no puede medir menos de 64px** (32px izq + 32px der): el padding es parte del border-box y el navegador lo respeta como mÃ­nimo. AsÃ­, el sidebar seguÃ­a ocupando ~64px en mÃ³vil y aplastaba `<main>`.
+
+**Segundo problema detectado:** el posicionamiento del sidebar se calculaba con `window.innerWidth < 768` dentro de un `style` inline. Ese valor se evalÃºa **una sola vez en el render** y no reacciona a rotaciÃ³n de pantalla ni a cambios de tamaÃ±o. Se sustituyÃ³ por clases CSS puras (`fixed md:relative`, `-left-full md:left-auto`), que sÃ­ son reactivas.
+
+**Cambio aplicado** (`apps/ExperimentCenterUI.jsx`):
+
+| Elemento | Antes | DespuÃ©s |
+|---|---|---|
+| `<aside>` padding | `p-8` (base, sin override) | `p-0 md:p-8` |
+| `<aside>` posiciÃ³n | `style={{ position: window.innerWidth < 768 ? 'fixed' : 'relative', left: ... }}` | clases `fixed md:relative top-0 h-full` + `-left-full md:left-auto` / `left-0 md:left-auto` |
+| `<aside>` ancho | `w-0 md:relative` | `w-0 md:w-auto max-w-[85vw] md:max-w-none` |
+| Logo / nav / acciones internas | sin padding propio | `px-6 md:px-0` (compensan el `p-0` mÃ³vil) |
+| PestaÃ±ita flotante (abrir sidebar) | visible en todos los tamaÃ±os | `md:hidden` (solo mÃ³vil) |
+| Backdrop de cierre | no existÃ­a | `md:hidden fixed inset-0 bg-black/60` que cierra al tocar fuera |
+
+**Reglas ArquitectÃ³nicas Derivadas (OBLIGATORIAS):**
+- **OBLIGATORIO** que un elemento que deba colapsar a ancho cero (`w-0`) **tambiÃ©n** tenga su padding en cero en ese breakpoint (`p-0 md:p-<n>`). Con `box-sizing: border-box`, el padding impone un ancho mÃ­nimo y `w-0` no colapsa. Esta es la razÃ³n por la que el fix 16.20 fue insuficiente.
+- **OBLIGATORIO** que el posicionamiento responsive de un panel off-canvas se haga con **clases CSS** (`fixed md:relative`, `-left-full md:left-auto`), **nunca** con `window.innerWidth` en un `style` inline. `window.innerWidth` se congela en el render y no responde a rotaciÃ³n ni resize.
+- **REGLA DE DIAGNÃ“STICO (ampliada):** si un mÃ³dulo "sigue sin ser responsivo" tras corregir el ancho del contenedor, revisar el **padding** del contenedor. Un `w-0` con `p-8` mide 64px, no 0.
+- **REGLA DE DIAGNÃ“STICO (verificaciÃ³n de despliegue):** antes de asumir cachÃ© obsoleta, verificar que el contenedor sirve el cÃ³digo nuevo: `docker exec rderico-pos-dev grep -n '<patrÃ³n>' /app/<archivo>`. El contenedor `pos` corre el **Vite dev server** con bind mount `.:/app`, por lo que sirve el cÃ³digo fuente en vivo; `npx vite build` NO afecta lo que ve el mÃ³vil.
+
+**VerificaciÃ³n:** `docker compose exec -T pos npx vite build` â†’ 1829 mÃ³dulos, exit 0. Commit `cb513a2`.
+
+---
+
 ## 17. CREDENCIALES TÃ‰CNICAS DEL SISTEMA
 
 Para garantizar la correcta comunicaciÃ³n entre la API y la Base de Datos (PostgreSQL en Docker), se establecieron credenciales fijas y encriptadas. Estas NO son contraseÃ±as de usuario, son de acceso interno a nivel contenedor:
